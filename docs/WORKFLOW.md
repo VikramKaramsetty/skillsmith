@@ -22,7 +22,9 @@ what to build is in `docs/PLAN.md` and the briefs in `docs/workstreams/`.
 |---|---|---|
 | WS1 | Hardware: robotd, real arm, cameras, gripper signals | `workstreams/WS1_hardware.md` |
 | WS2 | Kinematics & MuJoCo sim | `workstreams/WS2_kinematics_sim.md` |
-| WS3 | Perception & live world state | `workstreams/WS3_perception_world.md` |
+| WS3a | Perception: geometry & frames | `workstreams/WS3A_geometry_frames.md` |
+| WS3b | Perception: detectors & annotation | `workstreams/WS3B_detect_annotate.md` |
+| WS3c | Perception: world model & wrist | `workstreams/WS3C_world_wrist.md` |
 | WS4 | Runtime, safety & failure analysis | `workstreams/WS4_runtime_safety_analysis.md` |
 | WS5 | Droid loop (SDK, evidence, benchmark) | `workstreams/WS5_droid_loop.md` |
 | WS6 | Dashboard | `workstreams/WS6_dashboard.md` |

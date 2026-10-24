@@ -14,10 +14,17 @@
 set -euo pipefail
 source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_lib.sh"
 
-ALL_WS="ws1 ws2 ws3 ws4 ws5 ws6 ws7 qa"
+ALL_WS="ws1 ws2 ws3a ws3b ws3c ws4 ws5 ws6 ws7 qa"  # fallback; `all` reads main's ownership.yml each pass
 HOST=${HOST_TAG:-$(hostname -s 2>/dev/null || hostname)}
 MARK="🤖 claim"
 log() { echo "agent-loop[$HOST]: $*"; }
+
+workstreams() {  # every queue in main's ownership.yml (minus docs), so a new or split workstream reaches running loops
+  local ws
+  git fetch -q origin main 2>/dev/null || true
+  ws=$(git show origin/main:.github/ownership.yml 2>/dev/null | sed -n 's/^  \([a-z0-9]*\):$/\1/p' | grep -vx docs | tr '\n' ' ')
+  echo "${ws:-$ALL_WS}"
+}
 
 rotate() {  # start each machine at a different workstream so they spread out instead of racing
   local a=("$@") n=$# i off
@@ -73,13 +80,14 @@ preflight() {  # fail fast instead of burning the queue: every tool must be logg
 main() {
 [[ $# -eq 0 ]] && { sed -n '2,14p' "$0"; exit 1; }
 cd "$(git rev-parse --show-toplevel)"
-if [[ "$1" == "all" ]]; then set -- $ALL_WS; fi
+DYNAMIC=""; if [[ "$1" == "all" ]]; then DYNAMIC=1; set -- $(workstreams); fi
 preflight
 log "ready: ${AGENT:-claude} on $*"
 
 while true; do
   if [[ -f .agent-stop ]]; then log ".agent-stop found; stopping"; exit 0; fi
 
+  [[ -n "$DYNAMIC" ]] && set -- $(workstreams)
   NUM=""
   for ws in $(rotate "$@"); do
     busy "$ws" && continue
