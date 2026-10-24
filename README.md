@@ -78,6 +78,7 @@ judging criteria live in [`docs/NORTH_STAR.md`](docs/NORTH_STAR.md).
 | **What Droid can't do** | Run shell commands (disabled), edit any other file (refused by our permission handler, with the reason sent back), or touch the real arm (never a tool). |
 | **What Droid returns** | The edited skill plus a structured result: diagnosis, change, sim_checked, confidence, lesson. |
 | **What happens next** | We re-run static → sim → safety ourselves, a human approves, the real arm retries, the camera verifies. Success saves a new skill version and Droid's lesson (`skills/lessons.md`). |
+| **What it needs** | The Droid Python SDK (`droid-sdk`, `--extra droid`), the `droid` CLI it drives, and `FACTORY_API_KEY` from https://app.factory.ai/settings/api-keys (an account with credits). Setup: `SETUP.md`. |
 | **How you can see it** | Every Droid message, tool call, tool result, permission decision, diff and result is an event in `runs/<id>/events.jsonl` and on the dashboard. |
 
 ## Tracks we are aiming at

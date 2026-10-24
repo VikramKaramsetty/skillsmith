@@ -89,11 +89,15 @@ ssh -t asus@100.103.96.17 '~/robot/.venv/bin/lerobot-teleoperate --robot.type=so
 ## Droid on the GX10
 
 ```bash
-curl -fsSL https://app.factory.ai/cli | sh       # check Factory docs for the current installer
-export FACTORY_API_KEY=...                        # put it in ~/.bashrc on the GX10, never in the repo
-droid exec --list-tools --auto low                # confirm "Execute" exists before removing it
-droid exec "reply with ok"                        # auth + network check
+curl -fsSL https://app.factory.ai/cli | sh       # official installer (checksum-verified, ~/.local/bin)
+echo 'export FACTORY_API_KEY=<key>' >> ~/.bashrc  # key from https://app.factory.ai/settings/api-keys; never in the repo
+source ~/.bashrc
+droid exec "Reply with ok" -o json                # must show "is_error":false (402 = no plan/credits on the account)
+uv run --extra droid skillsmith demo-fake --author droid   # live check of OUR SDK path (DroidSDKAuthor) on the fake world
 ```
+
+The product uses the **Droid Python SDK** (`droid-sdk`), which drives the `droid` CLI and reads
+`FACTORY_API_KEY`. The orchestrator inherits the variable from the shell that starts it.
 
 If the GX10's Wi-Fi drops, run Droid on the Mac instead: set `droid_ws_root` to a folder
 synced both ways over the Ethernet link (or run the orchestrator on the Mac with
