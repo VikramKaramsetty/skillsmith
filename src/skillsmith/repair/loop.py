@@ -11,6 +11,9 @@ Library skills (already approved) go straight to the target.
 Environment-bucket failures (camera moved, object out of reach, ...) never reach the author:
 the loop asks a human to fix the table, then retries the same code. Before each repair the
 classification is marked `escalate` when the same class repeats after a "parameter" change.
+
+`evidence="v1"` (the WS5.6 benchmark baseline) sends the author the pre-v2 report and no
+evidence tools: no failure class, phases, frames, expected-vs-actual or lessons.
 """
 
 from __future__ import annotations
@@ -23,12 +26,20 @@ from typing import Callable, List, Optional, Tuple
 from skillsmith.events import EventBus
 from skillsmith.hal.base import Env
 from skillsmith.repair.protocols import Approver, RepairContext, SkillAuthor
-from skillsmith.repair.report import attempt_report, rejection_report, static_report
+from skillsmith.repair.report import (
+    attempt_report,
+    attempt_report_v1,
+    rejection_report,
+    static_report,
+    unlabelled_reason,
+)
 from skillsmith.repair.workspace import lessons_path
 from skillsmith.skills.library import SkillLibrary
 from skillsmith.skills.runtime import run_skill
 from skillsmith.skills.validator import validate
 from skillsmith.types import BUCKET_ENVIRONMENT, AttemptResult, Classification, Scene, TaskSpec
+
+EVIDENCE_VERSIONS = ("v1", "v2")
 
 
 @dataclass
@@ -42,7 +53,10 @@ class RunResult:
 
 class RepairLoop:
     def __init__(self, cfg, target: Env, make_check_env: Optional[Callable[[Scene], Env]],
-                 library: SkillLibrary, author: SkillAuthor, approver: Approver, bus: EventBus):
+                 library: SkillLibrary, author: SkillAuthor, approver: Approver, bus: EventBus,
+                 evidence: str = "v2"):
+        if evidence not in EVIDENCE_VERSIONS:
+            raise ValueError(f"evidence must be one of {EVIDENCE_VERSIONS}, got {evidence!r}")
         if target.name == "real" and make_check_env is None and cfg.safety.require_sim_before_real:
             raise ValueError("the real arm requires a sim check env (safety.require_sim_before_real)")
         self.cfg = cfg
@@ -52,6 +66,7 @@ class RepairLoop:
         self.author = author
         self.approver = approver
         self.bus = bus
+        self.evidence = evidence
         self.history: List[str] = []
         self._last_check: Optional[AttemptResult] = None
         self._gate_failure: Optional[AttemptResult] = None  # the sim run the last gate rejected
@@ -121,8 +136,8 @@ class RepairLoop:
             rounds += 1
             self._mark_escalation(attempt)
             expected = self._last_check if needs_gates else None  # the sim run of this same source
-            report = attempt_report(task, attempt, self.history, expected=expected, lessons=self._lessons())
-            self.history.append(f"v{attempt.version} on {attempt.env}: {attempt.reason()}")
+            report = self._report(task, attempt, expected)
+            self.history.append(f"v{attempt.version} on {attempt.env}: {self._why(attempt)}")
             self._reset_scene()
             scene = self._observe()
             source = self._repair(task, source, report, rounds, scene, attempt, expected)
@@ -156,12 +171,12 @@ class RepairLoop:
         if sim_ok and sim.safety.ok:
             self._last_check = sim
             return True, ""
-        self.history.append(f"v{rnd} failed in {env.name}: {sim.reason()}")
+        self.history.append(f"v{rnd} failed in {env.name}: {self._why(sim)}")
         self._gate_failure = sim
         if _needs_human(sim):
             return False, ""
         self._mark_escalation(sim)
-        return False, attempt_report(task, sim, self.history, lessons=self._lessons())
+        return False, self._report(task, sim, None)
 
     def _approve(self, task: TaskSpec, source: str, rnd: int) -> Tuple[bool, str]:
         check = self._last_check
@@ -223,12 +238,21 @@ class RepairLoop:
         self.bus.emit("repair.started", round=rnd, reason=report.splitlines()[0] if report else "")
         snapshot = self._snapshot(rnd)
         ctx = self._ctx(rnd, scene, snapshot)
-        ctx.attempt, ctx.expected = attempt, expected
+        if self.evidence == "v2":  # v1 has no evidence tools
+            ctx.attempt, ctx.expected = attempt, expected
         new = self.author.repair(task, source, report, ctx)
         self.bus.emit("skill.diff", old_version=rnd - 1, new_version=rnd, diff=_diff(source, new))
         return new
 
     # ---- helpers --------------------------------------------------------------------
+    def _report(self, task: TaskSpec, attempt: AttemptResult, expected: Optional[AttemptResult]) -> str:
+        if self.evidence == "v1":
+            return attempt_report_v1(task, attempt, self.history)
+        return attempt_report(task, attempt, self.history, expected=expected, lessons=self._lessons())
+
+    def _why(self, attempt: AttemptResult) -> str:
+        return attempt.reason() if self.evidence == "v2" else unlabelled_reason(attempt)
+
     def _ctx(self, rnd: int, scene: Optional[Scene], snapshot: Optional[str] = None) -> RepairContext:
         return RepairContext(self.bus.run_id, rnd, scene, snapshot, self.library.sources())
 
