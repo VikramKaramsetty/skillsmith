@@ -151,8 +151,11 @@ class RepairTools:
                       ok=result.ok, reason=result.reason())
         if result.ok:
             self.last_pass = result
-        verdict = "PASS: the task succeeded in simulation." if result.ok else f"FAIL: {result.reason()}"
-        return f"{verdict}\n\n{attempt_report(self.task, result, [])}"
+        if result.ok:  # a pass is not a failure report: short and unambiguous
+            detail = result.verify.detail if result.verify else "no success check"
+            return (f"PASS: the task succeeded in simulation ({detail}; {len(result.trace)} calls, "
+                    f"safety: {result.safety.summary()}).\n\nScene after:\n{_scene_table(result.scene_after)}")
+        return f"FAIL: {result.reason()}\n\n{attempt_report(self.task, result, [])}"
 
     def read_file(self, name: str) -> str:
         """Read a text file inside the workspace (rules, evidence, skill.py, lessons, library/*.py)."""

@@ -40,8 +40,9 @@ succeeds outright, say so and ask the judge for a harder variant.
 
 - *SDK in the running product:* point at README "Where and how Droid is used" and `repair/droid_sdk.py`.
 - *Designed trigger:* the classifier labels a skill failure; environment failures go to a human instead.
-- *Control:* autonomy LOW, no shell, a permission handler that refuses anything except `skill.py`
-  and our tools (show a refusal in the drawer); our gates; human approval.
+- *Control:* an explicit allowlist, so Droid's only capabilities are our functions (show the
+  allowlist and the `make droid-sandbox-check` output: shell, fs, fetch and path traversal all
+  blocked); our code writes its fix; our gates; human approval.
 - *Visible:* failure class, Droid's messages, tool calls, permission decisions, diff, diagnosis, events log.
 - *Improvement:* the lesson line in `skills/lessons.md`; the second task reusing the skill; benchmark numbers.
 

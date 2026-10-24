@@ -121,9 +121,13 @@ after every attempt.
 ## Droid integration (WS5)
 
 - **SDK**: `DroidSDKAuthor` keeps one `droid_sdk.Session` per run, open across rounds (memory),
-  with `cwd` set to a workspace outside the repo, autonomy LOW, `Execute` disabled, and a
-  permission handler (`droid_tools.decide`): edits only to `skill.py`, calls only to the
-  `skillsmith` tools, everything else refused with a reason.
+  with `cwd` set to a workspace outside the repo and an **explicit tool allowlist**: only
+  `ToolSearch`, `Script`, `WaitForScript`, `TodoWrite` and our `skillsmith` functions. No file,
+  shell, web, automation or sub-agent tools. Droid reads and writes only through `read_file` /
+  `write_skill` (workspace only), and its fix also arrives as `skill_source`, which our code
+  writes. Autonomy is HIGH only so it never pauses for approval; nothing it can reach is
+  dangerous, and `make droid-sandbox-check` proves escapes are blocked. The permission handler
+  (`droid_tools.decide`) stays as a backstop.
 - **Evidence v2** (prompt + `failure.md` + images): failure class and phase → phase table →
   annotated key frames → cropped before/after → expected-vs-actual (sim render or the last
   successful run) → the success check's numbers → scene tables → trace with the failing line →

@@ -66,6 +66,18 @@ Within an attempt, closed-loop alignment and step checks handle small correction
 public Wi-Fi drops; Tailscale adds 125–235 ms). Droid needs internet; if the GX10 loses it, run
 the orchestrator on the Mac (robotd with `--host` + token).
 
+**D14. Droid control = an explicit tool allowlist (autonomy HIGH), verified live.** In Droid CLI
+0.249 custom (MCP) tools are callable only from a `Script`, and droid-sdk 0.5.0 cannot parse Script
+permission requests: at autonomy LOW or MEDIUM every call to our tools was cancelled ("Permission
+interaction handler failed"). Measured live: LOW → cancelled, MEDIUM → cancelled, HIGH + allowlist →
+our tool ran with no prompt. So the session gets `restrict_tools` = ToolSearch, Script,
+WaitForScript, TodoWrite + our `skillsmith` functions, and autonomy HIGH, which only means "don't
+pause for approval". This is *tighter* than LOW + a denylist: Droid's every capability is a
+function we wrote. `make droid-sandbox-check` (run with Droid's default instructions so it really
+tries) showed shell, `require('fs')`, `fetch`, Deno/Bun/`process` and path traversal all blocked.
+Droid's fix also arrives as `skill_source` in its JSON result, and our code writes it. Re-run the
+sandbox check after any Droid CLI/SDK upgrade.
+
 ## Hard truths
 
 1. **URDF ↔ calibration mismatch is the #1 hardware risk.** Verify joint signs and offsets

@@ -23,9 +23,10 @@ Serves NORTH_STAR: 1, 2, 3.
 - Product path: `repair/droid_sdk.py` (`DroidSDKAuthor`, verified against droid-sdk 0.5.0).
   Policy and tools: `repair/droid_tools.py` (`decide`, `RepairTools`). `droid_client.py` (CLI)
   is a stage-emergency fallback only.
-- **Never widen permissions or weaken a gate** to raise the fix rate: autonomy LOW, Execute
-  disabled, `decide()` allows only `skill.py` edits and `skillsmith` tools, workspace outside the
-  repo. If WS5.1 finds the real built-in tool ids, propose `droid.restrict_tools` to the lead.
+- **Never widen the allowlist or weaken a gate** to raise the fix rate. Droid's capabilities are
+  `restrict_tools` (ToolSearch, Script, WaitForScript, TodoWrite) + our `skillsmith` functions,
+  autonomy HIGH (safe only because of the allowlist; re-run `make droid-sandbox-check` after any
+  change). Custom tools are callable only from a Script in this Droid CLI.
 - Evidence v2 (WS5.3) order: classification line → phase table → task/params → camera check →
   annotated key frames + cropped before/after pair (WS3.8) → expected-vs-actual (sim frames from
   WS2.5 or the last successful run) → trace → scene tables → earlier rounds → LESSONS.md.

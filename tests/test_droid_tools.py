@@ -108,7 +108,11 @@ def test_sdk_config_and_permission_handler(tmp_path):
     author = DroidSDKAuthor(cfg, bus, lambda s: make_env("fake", cfg, s))
     t = tools_for(tmp_path, demo_sources()[1])
     config = author.build_config(t)
-    assert config.autonomy == sdk.Autonomy.LOW and len(config.mcp_servers) == 1
+    assert config.autonomy == sdk.Autonomy.HIGH and len(config.mcp_servers) == 1
+    allow = list(config.restrict_tools)
+    assert {"ToolSearch", "Script", "WaitForScript", "TodoWrite"} <= set(allow)  # SDK may reorder
+    assert "skillsmith___write_skill" in allow and "skillsmith___simulate_skill" in allow
+    assert not {"Read", "Execute", "ApplyPatch", "FetchUrl", "WebSearch", "Task"} & set(allow)
 
     handler = author.build_interactions(tmp_path, t).on_permission
     Opt = type("Opt", (), {})
