@@ -60,13 +60,25 @@ def run(robot, scene, skills, top, bottom):
 
 ## Static rules (code breaking these is rejected before it runs)
 
+`write_skill` and `validate_skill` run this checker; the orchestrator runs it again.
+
 - No `import` (`math` is already available), `while`, `try`/`except`, `with`, `class`,
-  `lambda`, `global`, `nonlocal`, `del`, generators or `async`.
-- No attribute starting with `_`. No `eval exec compile open getattr setattr type …`.
-- Use `robot`, `scene`, `skills` only as `robot.method(...)` or as a call argument.
-  Don't assign them to other names or reassign them.
-- Only the methods listed in `API.md`.
-- `range()` with a literal bound of at most 50. At most 200 lines.
+  `global`, `nonlocal`, `async`, `yield` (no generators) or `lambda`. No decorators.
+- No attribute starting with `_`. None of the names `eval exec compile open __import__ getattr
+  setattr delattr globals locals vars input breakpoint type object super`.
+- Only the names the runtime gives you (the builtins listed in `API.md`, `math`, `SkillError`,
+  `ValueError`, `RuntimeError`) and names your skill binds itself. No `print`: use `robot.note`.
+- Only the `robot.*`, `scene.*`, `skills.*` attributes listed in `API.md`. No frame or
+  generator introspection attributes, no `.format` (use f-strings), no `.mro`.
+- Use `robot`, `scene`, `skills` only as `robot.attr` or as a call argument: no aliasing,
+  no reassigning. Pass them to your own helper functions only as parameters of the same name
+  (`helper(robot, x, y)` with `def helper(robot, x, y)`).
+- No attribute assignment (`obj.x = ...`) and no mutating robot or scene data.
+- `range()` bound at most 50 (it must fold to a constant). No recursion.
+- Exponents must be constants with |e| ≤ 10; no `<<`; sequence repetition (`[0] * n`) at
+  most 1000.
+- Top-level assignments are constants only. At most 200 lines.
+- A `def run(robot, scene, skills, ...)` must exist.
 
 ## Units and frame
 
