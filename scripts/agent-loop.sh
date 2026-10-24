@@ -53,10 +53,28 @@ release() {
   gh issue edit "$1" --remove-assignee @me --remove-label in-progress --add-label ready >/dev/null
 }
 
+preflight() {  # fail fast instead of burning the queue: every tool must be logged in
+  gh auth status >/dev/null 2>&1 || { log "gh is not logged in: run 'gh auth login'"; exit 1; }
+  case "${AGENT:-claude}" in
+    claude)
+      local out
+      out=$(claude -p "Reply with the word ok." --output-format json 2>&1 || true)
+      if ! printf '%s' "$out" | python3 -c 'import json,sys; sys.exit(0 if json.load(sys.stdin).get("is_error") is False else 1)' 2>/dev/null; then
+        log "Claude CLI is not ready: $(printf '%s' "$out" | head -c 200)"
+        log "Fix: run 'claude' once, type /login, then start the loop again."
+        exit 1
+      fi ;;
+    droid)
+      command -v droid >/dev/null || { log "droid CLI not found (and set FACTORY_API_KEY)"; exit 1; } ;;
+  esac
+}
+
 main() {
 [[ $# -eq 0 ]] && { sed -n '2,14p' "$0"; exit 1; }
 cd "$(git rev-parse --show-toplevel)"
 if [[ "$1" == "all" ]]; then set -- $ALL_WS; fi
+preflight
+log "ready: ${AGENT:-claude} on $*"
 
 while true; do
   if [[ -f .agent-stop ]]; then log ".agent-stop found; stopping"; exit 0; fi
@@ -83,11 +101,17 @@ while true; do
   fi
 
   log "working #$NUM ($WS) $TITLE"
-  if scripts/agent-run.sh "$WS" "$TITLE" --issue "$NUM"; then
+  set +e
+  scripts/agent-run.sh "$WS" "$TITLE" --issue "$NUM"
+  rc=$?
+  set -e
+  if [[ $rc -eq 0 ]]; then
     gh issue edit "$NUM" --remove-label in-progress >/dev/null || true
   else
+    reason="the agent run did not finish cleanly (exit $rc)"
+    [[ $rc -eq 3 ]] && reason="the agent made no changes (task unclear, already done, or the agent CLI failed)"
     gh issue edit "$NUM" --remove-label in-progress --add-label blocked >/dev/null
-    gh issue comment "$NUM" --body "agent-loop on $HOST: the agent run did not finish cleanly; needs a human. $WS is paused until this is unblocked (relabel \`ready\` or close)." >/dev/null
+    gh issue comment "$NUM" --body "agent-loop on $HOST: $reason. Needs a human; $WS is paused until this is unblocked (relabel \`ready\` or close). Log: ../skillsmith-logs/" >/dev/null
   fi
 done
 }
