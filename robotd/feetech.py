@@ -16,12 +16,13 @@ only then runs LeRobot's `configure()` (torque off, modes, PID, gripper limits, 
 from __future__ import annotations
 
 import logging
-from typing import Any, Callable, List, Optional, Sequence
+from typing import Any, Callable, List, Optional, Sequence, Tuple
 
 from robotd.controller import JOINT_NAMES
 
 RETRIES = 2  # Feetech buses sometimes return a corrupt status packet; LeRobot retries at once
 LOAD_SIGN_BIT = 1024  # STS3215 Present_Load: bit 10 is the direction, bits 0-9 the magnitude
+STS3215_STEPS = 4096  # ticks per turn; every SO101 motor is an STS3215 (LeRobot: degrees = (ticks - mid) * 360 / 4095)
 
 log = logging.getLogger("robotd")
 
@@ -54,6 +55,15 @@ class FeetechBus:
     def torque_enabled(self) -> bool:
         flags = self._bus.sync_read("Torque_Enable", num_retry=RETRIES)
         return all(bool(flags[name]) for name in JOINT_NAMES)
+
+    def joint_limits(self) -> List[Tuple[float, float]]:
+        """The calibrated ranges in LeRobot's units: degrees about each range's middle, gripper 0..100."""
+        limits = []
+        for name in JOINT_NAMES[:-1]:
+            cal = self._robot.calibration[name]
+            half = (cal.range_max - cal.range_min) / 2 * 360 / (STS3215_STEPS - 1)
+            limits.append((-half, half))
+        return limits + [(0.0, 100.0)]
 
     def close(self) -> None:
         log.warning("disconnecting the arm: torque goes off and the arm goes limp, support it")

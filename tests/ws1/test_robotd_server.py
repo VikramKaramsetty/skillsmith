@@ -43,6 +43,14 @@ def test_bad_target_returns_400_with_a_reason():
     assert r.json()["ok"] is False and "6" in r.json()["error"]
 
 
+def test_target_outside_the_joint_limits_returns_400_and_does_not_move():
+    client = make_client()
+    r = client.post("/move_joints", json={"target": [500, 0, 0, 0, 0, OPEN], "speed_dps": 30})
+    assert r.status_code == 400
+    assert "shoulder_pan" in r.json()["outside"]
+    assert client.get("/state").json()["joints"][0] == 0.0
+
+
 def test_gripper_reports_holding():
     r = make_client(MockBus(object_at=30.0)).post("/gripper", json={"pct": 0})
     assert r.status_code == 200 and r.json() == {"ok": True, "holding": True}

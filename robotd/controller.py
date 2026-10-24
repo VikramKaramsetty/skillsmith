@@ -1,16 +1,21 @@
 """robotd's arm controller: the last layer between HTTP callers and the servo bus. OWNER: WS1.
 
-It owns one `Bus` (the mock today, the Feetech bus in WS1.2) and turns API calls into goal writes:
-- `move_joints` moves the 5 arm joints from where they actually are, in steps of at most
-  `max_step_deg`, paced by `speed_dps` (capped at `max_speed_dps`), then waits until every joint is
-  within `settle_tol_deg` of the target, else 409 with how far each joint still is.
+It owns one `Bus` (MockBus, or FeetechBus on the real arm) and turns API calls into goal writes:
+- `move_joints` refuses (400, nothing moves) a target outside the bus's joint limits shrunk by
+  `limit_margin_deg`. LeRobot's degree mode does not clamp goals, so this is the only software limit
+  in front of the servos' own calibrated position limits.
+- It then moves the 5 arm joints from where they actually are, in steps of at most `max_step_deg`,
+  paced by `speed_dps` (capped at `max_speed_dps`), and waits until every joint is within
+  `settle_tol_deg` of the target, else 409 with how far each joint still is.
   The gripper value in the target is ignored: only `set_gripper` moves the jaws, so a seed copied
   before a grasp can never loosen the grip mid-carry.
+- Watchdog: after each step, a joint more than `max_lag_deg` behind its goal is blocked or stalled;
+  the arm is held where it is and the move answers 409 with the lag. A move that does not settle, and
+  a bus error mid-motion (503), also end with Goal = Present, so a servo never keeps straining.
 - `stop` holds the arm where it is (Goal = Present) and makes a running motion raise 409.
   The gripper keeps its goal, so a held object stays gripped.
 - One motion at a time: a second one gets 409 instead of queueing behind the first.
 - Torque on writes Goal = Present first, so the arm does not jump to a stale goal.
-Joint limits and the command watchdog arrive in WS1.3.
 """
 
 from __future__ import annotations
@@ -20,7 +25,7 @@ import math
 import threading
 import time
 from contextlib import contextmanager
-from typing import Any, Dict, Iterator, List, Optional, Protocol, Sequence
+from typing import Any, Dict, Iterator, List, Optional, Protocol, Sequence, Tuple
 
 JOINT_NAMES = ("shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper")
 ARM = 5  # indices 0..4 are the arm joints; index 5 is the gripper
@@ -46,6 +51,9 @@ class Bus(Protocol):
 
     def torque_enabled(self) -> bool: ...
 
+    def joint_limits(self) -> List[Tuple[float, float]]:
+        """(min, max) per joint in JOINT_NAMES order, same units as the positions."""
+
     def close(self) -> None: ...
 
 
@@ -64,13 +72,17 @@ class RobotdError(Exception):
 
 class ArmController:
     def __init__(self, bus: Bus, max_step_deg: float = 10.0, max_speed_dps: float = 60.0,
-                 settle_tol_deg: float = 1.5, settle_timeout_s: float = 2.0, gripper_timeout_s: float = 1.5):
+                 settle_tol_deg: float = 1.5, settle_timeout_s: float = 2.0, gripper_timeout_s: float = 1.5,
+                 limit_margin_deg: float = 2.0, max_lag_deg: Optional[float] = None):
         self.bus = bus
         self.max_step_deg = max_step_deg
         self.max_speed_dps = max_speed_dps
         self.settle_tol_deg = settle_tol_deg
         self.settle_timeout_s = settle_timeout_s
         self.gripper_timeout_s = gripper_timeout_s
+        # a joint that is free keeps up with paced steps; one a whole step behind is not moving
+        self.max_lag_deg = max_step_deg if max_lag_deg is None else max_lag_deg
+        self._limits = [(lo + limit_margin_deg, hi - limit_margin_deg) for lo, hi in bus.joint_limits()[:ARM]]
         self._bus_lock = threading.RLock()  # the serial bus takes one transaction at a time
         self._motion_lock = threading.Lock()
         self._stop = threading.Event()
@@ -92,6 +104,7 @@ class ArmController:
     def move_joints(self, target: Sequence[float], speed_dps: float) -> None:
         goal = _vector(target, len(JOINT_NAMES), "target")[:ARM]
         speed = min(_positive(speed_dps, "speed_dps"), self.max_speed_dps)
+        self._check_limits(goal)
         with self._motion("move_joints"):
             start = self._read()[:ARM]
             biggest = max(abs(g - s) for g, s in zip(goal, start))
@@ -99,6 +112,7 @@ class ArmController:
             for k in range(1, steps + 1):
                 self._write(arm=[s + (g - s) * k / steps for s, g in zip(start, goal)])
                 self._pause(biggest / steps / speed, "move_joints")
+                self._watch()
             self._settle(goal)
 
     def set_gripper(self, pct: float) -> bool:
@@ -138,6 +152,11 @@ class ArmController:
                 raise RobotdError(409, f'{what} refused: torque is off (POST /torque {{"on": true}})')
             self._stop.clear()
             yield
+        except RobotdError:
+            raise
+        except Exception as e:  # the serial bus failed mid-motion: hold if we still can, then report
+            self._try_halt()
+            raise RobotdError(503, f"{what} aborted by an arm bus error: {type(e).__name__}: {e}") from e
         finally:
             self._motion_lock.release()
 
@@ -157,6 +176,30 @@ class ArmController:
         with self._bus_lock:
             self._write(arm=self._read()[:ARM])
 
+    def _try_halt(self) -> None:
+        try:
+            self._halt()
+        except Exception:
+            log.exception("could not hold the arm after a bus error")
+
+    def _check_limits(self, goal: Sequence[float]) -> None:
+        outside = {JOINT_NAMES[i]: {"target": g, "min": round(lo, 2), "max": round(hi, 2)}
+                   for i, (g, (lo, hi)) in enumerate(zip(goal, self._limits)) if not lo <= g <= hi}
+        if outside:
+            what = ", ".join(f"{name} {v['target']:.1f} not in [{v['min']:.1f}, {v['max']:.1f}]"
+                             for name, v in outside.items())
+            raise RobotdError(400, f"target outside the joint limits (deg): {what}", outside=outside)
+
+    def _watch(self) -> None:
+        """Watchdog: a joint more than max_lag_deg behind its goal is blocked or stalled, so hold the arm."""
+        present = self._read()
+        lag = {JOINT_NAMES[i]: round(self._goal[i] - present[i], 2)
+               for i in range(ARM) if abs(self._goal[i] - present[i]) > self.max_lag_deg}
+        if lag:
+            self._halt()
+            raise RobotdError(409, f"watchdog: {', '.join(lag)} not following its goal (blocked or stalled); "
+                                   "arm held where it is", lag=lag, joints=self._read())
+
     def _pause(self, seconds: float, what: str) -> None:
         """Sleep, but wake at once on stop: hold position and fail the running command."""
         if self._stop.wait(seconds):
@@ -170,6 +213,7 @@ class ArmController:
             if not errors:
                 return
             if time.monotonic() >= deadline:
+                self._halt()  # stop straining toward a target the joint cannot reach
                 raise RobotdError(409, "move_joints did not reach the target", errors=errors,
                                   tolerance_deg=self.settle_tol_deg, joints=self._read())
             self._pause(POLL_S, "move_joints")
