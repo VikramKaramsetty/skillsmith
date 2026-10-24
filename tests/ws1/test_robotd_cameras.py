@@ -1,0 +1,169 @@
+"""WS1.4: robotd cameras: newest frame wins, capture timestamps, stale -> 503 (fake captures only)."""
+
+import threading
+import time
+
+import pytest
+
+from robotd.cameras import CaptureCamera
+from robotd.controller import ArmController, RobotdError
+from robotd.mock import MockBus, MockCamera
+from robotd.server import create_app
+from skillsmith.perception.frames import MjpegParser
+
+
+def jpeg(tag) -> bytes:
+    return b"\xff\xd8" + str(tag).encode() + b"\xff\xd9"
+
+
+class FakeCapture:
+    """Delivers the given JPEGs, one per read (`gap_s` apart), then nothing; records close()."""
+
+    def __init__(self, frames, gap_s=0.005, fail=False):
+        self.frames = list(frames)
+        self.gap_s = gap_s
+        self.fail = fail
+        self.closed = False
+
+    def read(self):
+        time.sleep(self.gap_s)
+        if self.fail:
+            raise OSError("select() timeout")
+        return self.frames.pop(0) if self.frames else None
+
+    def close(self):
+        self.closed = True
+
+
+def wait_for(predicate, timeout=2.0):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        time.sleep(0.005)
+    return False
+
+
+def camera(*captures, stale_s=1.0, reopen_s=0.01):
+    queue = list(captures)
+    cam = CaptureCamera("front", lambda: queue.pop(0) if queue else FakeCapture([]), stale_s=stale_s,
+                        reopen_s=reopen_s)
+    return cam
+
+
+def test_the_newest_frame_wins():
+    cam = camera(FakeCapture([jpeg(i) for i in range(1, 6)]))
+    try:
+        assert wait_for(lambda: cam.frames_captured >= 5)
+        assert cam.latest()[0] == jpeg(5)
+    finally:
+        cam.close()
+
+
+def test_each_frame_carries_its_capture_time():
+    cam = camera(FakeCapture([jpeg(1)]))
+    try:
+        before = time.time()
+        assert wait_for(lambda: cam.frames_captured >= 1)
+        _, t = cam.latest()
+        assert before - 0.1 <= t <= time.time()
+    finally:
+        cam.close()
+
+
+def test_a_camera_that_stops_delivering_answers_503_not_a_stale_frame():
+    cam = camera(FakeCapture([jpeg(1)]), stale_s=0.15)
+    try:
+        assert wait_for(lambda: cam.frames_captured >= 1)
+        time.sleep(0.25)
+        with pytest.raises(RobotdError) as e:
+            cam.latest()
+        assert e.value.status == 503 and "front" in e.value.message
+    finally:
+        cam.close()
+
+
+def test_a_camera_that_never_delivered_says_why():
+    cam = CaptureCamera("front", lambda: FakeCapture([], fail=True), stale_s=0.1, reopen_s=0.01)
+    try:
+        time.sleep(0.15)
+        with pytest.raises(RobotdError) as e:
+            cam.latest()
+        assert e.value.status == 503 and "select() timeout" in e.value.message
+    finally:
+        cam.close()
+
+
+def test_a_failing_capture_is_reopened():
+    broken, fresh = FakeCapture([], fail=True), FakeCapture([jpeg("after-reopen")])
+    cam = camera(broken, fresh)
+    try:
+        assert wait_for(lambda: cam.frames_captured >= 1)
+        assert cam.latest()[0] == jpeg("after-reopen")
+        assert broken.closed
+    finally:
+        cam.close()
+
+
+def test_close_stops_the_thread_and_releases_the_capture():
+    capture = FakeCapture([jpeg(1)])
+    cam = camera(capture)
+    assert wait_for(lambda: cam.frames_captured >= 1)
+    cam.close()
+    assert capture.closed
+    assert not any(t.name == "camera front" for t in threading.enumerate())
+
+
+# ---- over HTTP ---------------------------------------------------------------------------
+pytest.importorskip("fastapi")
+from fastapi.testclient import TestClient  # noqa: E402
+
+
+def client(cameras, **kw):
+    return TestClient(create_app(ArmController(MockBus()), cameras, **kw))
+
+
+def test_frame_has_a_capture_time_header_that_moves_forward():
+    cam = camera(FakeCapture([jpeg(i) for i in range(200)], gap_s=0.01))
+    try:
+        c = client({"front": cam})
+        assert wait_for(lambda: cam.frames_captured >= 1)
+        first = c.get("/frame/front")
+        time.sleep(0.05)
+        second = c.get("/frame/front")
+        assert first.status_code == second.status_code == 200
+        assert float(second.headers["X-Frame-Time"]) > float(first.headers["X-Frame-Time"])
+    finally:
+        cam.close()
+
+
+def test_stale_camera_frame_is_503_over_http():
+    cam = camera(FakeCapture([]), stale_s=0.05)
+    try:
+        r = client({"front": cam}).get("/frame/front")
+        assert r.status_code == 503 and r.json()["ok"] is False
+    finally:
+        cam.close()
+
+
+def test_mock_frames_carry_a_capture_time_too():
+    r = client({"front": MockCamera("front")}).get("/frame/front")
+    assert abs(float(r.headers["X-Frame-Time"]) - time.time()) < 5
+
+
+def test_stream_parts_parse_with_the_world_models_parser_and_carry_times():
+    body = client({"wrist": MockCamera("wrist")}, stream_max_frames=3).get("/stream/wrist").content
+    parts = MjpegParser().feed(body)
+    assert len(parts) == 3
+    times = [float(headers["x-frame-time"]) for headers, _ in parts]
+    assert times == sorted(times)
+    assert all(body.startswith(b"\xff\xd8") for _, body in parts)
+
+
+def test_stream_ends_when_the_camera_goes_stale():
+    cam = camera(FakeCapture([]), stale_s=0.05)
+    try:
+        r = client({"front": cam}, stream_max_frames=5).get("/stream/front")
+        assert r.status_code == 200 and MjpegParser().feed(r.content) == []
+    finally:
+        cam.close()

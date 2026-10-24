@@ -5,14 +5,15 @@ so this module imports with core deps only. Endpoints are plain `def`, so FastAP
 its threadpool: `/stop` and `/state` answer while a blocking `/move_joints` is still running.
 Errors answer `{"ok": false, "error": "...", ...details}` with 400 (bad request), 401 (token),
 404 (unknown camera), 409 (motion refused, stopped, not settled or halted by the watchdog) or
-503 (the arm bus failed mid-motion).
+503 (the arm bus failed mid-motion, or a camera has no fresh frame).
+Frames carry their capture time in `X-Frame-Time` (unix seconds), per part on /stream.
 With a token set, every request must carry it in the `X-Robotd-Token` header.
 No `from __future__ import annotations` here: FastAPI must resolve the locally defined body models.
 """
 
 import hmac
 import time
-from typing import Dict, Iterator, List, Optional, Protocol
+from typing import Dict, Iterator, List, Optional, Protocol, Tuple
 
 from robotd.controller import ArmController, RobotdError
 
@@ -21,18 +22,27 @@ STREAM_FPS = 15.0
 BOUNDARY = "frame"
 
 
+TIME_HEADER = "X-Frame-Time"  # capture time, unix seconds (read by skillsmith.perception.frames)
+
+
 class Camera(Protocol):
-    def jpeg(self) -> bytes: ...
+    def latest(self) -> Tuple[bytes, float]:
+        """(jpeg, capture time). Raises RobotdError 503 when the camera has no fresh frame."""
 
 
 def mjpeg(camera: Camera, fps: float = STREAM_FPS, max_frames: Optional[int] = None) -> Iterator[bytes]:
-    """multipart/x-mixed-replace parts, one JPEG each. Endless unless max_frames is set."""
+    """multipart/x-mixed-replace parts, one JPEG each with its capture time.
+    Endless unless max_frames is set; ends when the camera goes stale."""
     sent = 0
     while max_frames is None or sent < max_frames:
         if sent:
             time.sleep(1.0 / fps)
-        frame = camera.jpeg()
-        head = f"--{BOUNDARY}\r\nContent-Type: image/jpeg\r\nContent-Length: {len(frame)}\r\n\r\n"
+        try:
+            frame, t = camera.latest()
+        except RobotdError:
+            return
+        head = (f"--{BOUNDARY}\r\nContent-Type: image/jpeg\r\nContent-Length: {len(frame)}\r\n"
+                f"{TIME_HEADER}: {t:.6f}\r\n\r\n")
         yield head.encode() + frame + b"\r\n"
         sent += 1
 
@@ -96,7 +106,8 @@ def create_app(controller: ArmController, cameras: Dict[str, Camera], token: Opt
 
     @app.get("/frame/{cam}")
     def frame(cam: str):
-        return Response(camera(cam).jpeg(), media_type="image/jpeg")
+        jpeg, t = camera(cam).latest()
+        return Response(jpeg, media_type="image/jpeg", headers={TIME_HEADER: f"{t:.6f}"})
 
     @app.get("/stream/{cam}")
     def stream(cam: str):

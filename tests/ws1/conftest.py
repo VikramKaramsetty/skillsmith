@@ -27,6 +27,31 @@ def goals(bus: MockBus, joint: int = 0) -> list[float]:
     return [g[joint] for kind, g in bus.log if kind == "goal"]
 
 
+class NoCapture:
+    """Stands in for a real camera in every ws1 test: delivers nothing, opens nothing."""
+
+    opened: list = []
+
+    def __init__(self, source, size=None):
+        NoCapture.opened.append((source, size))
+
+    def read(self):
+        return None
+
+    def close(self):
+        pass
+
+
+@pytest.fixture(autouse=True)
+def never_open_real_cameras(monkeypatch):
+    """Agents must never open /dev/video* or a real stream: robotd's capture factory is faked everywhere."""
+    from robotd import cameras
+
+    NoCapture.opened = []
+    monkeypatch.setattr(cameras, "OpenCVCapture", NoCapture)
+    return NoCapture
+
+
 @pytest.fixture
 def bus() -> MockBus:
     return MockBus()
