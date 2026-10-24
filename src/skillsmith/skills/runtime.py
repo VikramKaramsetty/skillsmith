@@ -140,6 +140,7 @@ def run_skill(source: str, env, params: dict, cfg, bus: EventBus, *, skill: str,
     guard = SafetyGuard(cfg)
     deadline = _Deadline(attempt_timeout_s(cfg))
     robot = _TimedRobot(env, guard, bus, cfg, deadline)
+    guard.bind(robot)  # WS4.3: carry-path check before every motion, on the robot the skill uses
     scene_before = env.perception.observe()
     robot.last_scene = scene_before
     skills = SkillCaller(library, robot, scene_before, depth=1,
@@ -162,7 +163,7 @@ def run_skill(source: str, env, params: dict, cfg, bus: EventBus, *, skill: str,
     scene_after = env.perception.observe()
     verify = evaluate(success, scene_after, cfg.verify.xy_tol, cfg.verify.z_tol) if success else None
     extra = getattr(env.arm, "safety_issues", lambda: [])()
-    safety = audit_trace(robot.trace, cfg, extra)
+    safety = audit_trace(robot.trace, cfg, extra, scene=scene_before)
     ok = error is None and safety.ok and (verify.ok if verify else True)
     if verify:
         bus.emit("verify.result", ok=verify.ok, detail=verify.detail)
