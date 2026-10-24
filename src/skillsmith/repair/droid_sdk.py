@@ -22,6 +22,8 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import shutil
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Callable, Dict, Optional
 
@@ -99,10 +101,18 @@ class DroidSDKAuthor:
 
         self.bus.emit("droid.started", round=ctx.round, via="droid-sdk", workspace=str(ws),
                       autonomy=self.d.autonomy, disabled_tools=list(self.d.disabled_tools or []))
-        result = self._loop.run_until_complete(self._stream(ws, report_md, ctx, tools))
+        self.last_result = None
+        try:
+            result = self._loop.run_until_complete(self._stream(ws, report_md, ctx, tools))
+        except Exception as e:  # timeout, droid process died, not logged in, ...
+            self.bus.emit("error", where="droid.round", round=ctx.round, message=repr(e))
+            self._drop_session(ctx.run_id)  # a broken session must not be reused next round
+            raise
         new = (ws / "skill.py").read_text()
         if not _succeeded(result) and new == source:
-            raise RuntimeError(f"Droid finished with '{getattr(result, 'subtype', '?')}' without changing skill.py")
+            message = f"Droid finished with '{getattr(result, 'subtype', '?')}' without changing skill.py"
+            self.bus.emit("error", where="droid.round", round=ctx.round, message=message)
+            raise RuntimeError(message)
         out = self.last_result or {}
         if out.get("lesson") and append_lesson(lessons_path(self.cfg), task.text, out["lesson"]):
             self.bus.emit("droid.lesson", round=ctx.round, lesson=out["lesson"])
@@ -120,23 +130,26 @@ class DroidSDKAuthor:
             async for event in stream:
                 self._emit(event, ctx.round)
         result = stream.result
+        # droid-sdk 0.5 returns JSON as read-only MappingProxyType/tuples, not dict/list.
         out = getattr(result, "output", None) or getattr(result, "structured_output", None)
-        self.last_result = dict(out) if isinstance(out, dict) else None
+        self.last_result = _plain(out) if isinstance(out, Mapping) else None
         usage = getattr(result, "usage", None)
         self.bus.emit("droid.result", round=ctx.round, subtype=getattr(result, "subtype", None),
                       result=self.last_result, text=getattr(result, "text", ""),
                       session_id=getattr(result, "session_id", None),
-                      duration=getattr(result, "duration", None),
-                      credits=getattr(usage, "factory_credits", None) if usage else None)
+                      duration=_seconds(getattr(result, "duration", None)),
+                      credits=getattr(usage, "factory_credits", None) if usage else None,
+                      error=_failure_reason(result))
         return result
 
     async def _session(self, run_id: str, ws: Path, tools: RepairTools):
         if run_id in self._sessions:
             return self._sessions[run_id]
-        from droid_sdk import Session
+        from droid_sdk import Runtime, Session
 
-        session = Session(cwd=ws, model=self.d.model or None, config=self.build_config(tools),
-                          interactions=self.build_interactions(ws, tools))
+        session = Session(cwd=ws, model=self.d.model or None, reasoning_effort=self._reasoning(),
+                          config=self.build_config(tools), interactions=self.build_interactions(ws, tools),
+                          runtime=Runtime(executable=self._executable()))
         await session.__aenter__()
         self._sessions[run_id] = session
         try:  # show judges exactly which tools Droid has
@@ -145,6 +158,32 @@ class DroidSDKAuthor:
         except Exception as e:
             self.bus.emit("error", where="droid.list_tools", message=repr(e))
         return session
+
+    def _drop_session(self, run_id: str) -> None:
+        session = self._sessions.pop(run_id, None)
+        if session is None:
+            return
+        try:
+            self._loop.run_until_complete(session.__aexit__(None, None, None))
+        except Exception as e:
+            self.bus.emit("error", where="droid.close", message=repr(e))
+
+    def _executable(self) -> str:
+        """The droid CLI the SDK drives. Fail early with a fix the operator can act on."""
+        name = str(self.d.get("bin") or "droid")
+        found = shutil.which(name)
+        if found is None:
+            raise RuntimeError(f"droid CLI '{name}' not found on PATH. Install it "
+                               "(curl -fsSL https://app.factory.ai/cli | sh), then run `droid` once "
+                               "to log in or set FACTORY_API_KEY.")
+        return found
+
+    def _reasoning(self):
+        if not self.d.get("reasoning"):
+            return None
+        from droid_sdk import ReasoningEffort
+
+        return ReasoningEffort(str(self.d.reasoning).lower())
 
     # ---- control -------------------------------------------------------------------------
     def build_config(self, tools: RepairTools):
@@ -175,7 +214,14 @@ class DroidSDKAuthor:
             refused = "; ".join(why for ok, why in decisions if not ok) or "approval option not offered"
             return request.respond(ToolConfirmationOutcome.CANCEL, comment=f"Refused by Skillsmith policy: {refused}")
 
-        return InteractionHandlers(on_permission=on_permission)
+        def on_question(request):
+            # No human sits in the loop mid-repair; Droid must decide from the evidence.
+            asked = "; ".join(q.question for q in request.questions)
+            self.bus.emit("droid.permission", round=tools.round, action="AskUser", target=asked,
+                          allowed=False, reason="no questions mid-repair; decide from the evidence")
+            return request.cancel()
+
+        return InteractionHandlers(on_permission=on_permission, on_question=on_question)
 
     # ---- visibility ----------------------------------------------------------------------
     def _emit(self, event, rnd: int) -> None:
@@ -206,6 +252,29 @@ def _succeeded(result) -> bool:
     return getattr(result, "subtype", None) == "success"
 
 
+def _plain(value):
+    """SDK JSON (MappingProxyType, tuples) -> plain dict/list, so it serialises and compares."""
+    if isinstance(value, Mapping):
+        return {str(k): _plain(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_plain(v) for v in value]
+    return value
+
+
+def _seconds(duration) -> Optional[float]:
+    if duration is None:
+        return None
+    return round(duration.total_seconds(), 2) if hasattr(duration, "total_seconds") else duration
+
+
+def _failure_reason(result) -> Optional[str]:
+    for attr in ("error", "structured_output_error"):
+        err = getattr(result, attr, None)
+        if err is not None:
+            return getattr(err, "message", None) or repr(err)
+    return None
+
+
 def _short(value, limit: int = 1500) -> str:
-    text = value if isinstance(value, str) else json.dumps(value, default=str)
+    text = value if isinstance(value, str) else json.dumps(_plain(value), default=str)
     return text if len(text) <= limit else text[:limit] + " …"
