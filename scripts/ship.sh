@@ -6,6 +6,7 @@
 #
 # Exit codes: 0 shipped, 1 checks failed, 2 rebase conflict (resolve by hand).
 set -euo pipefail
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_lib.sh"
 
 TITLE=${1:?usage: ship.sh "<title>" [issue-number]}
 ISSUE=${2:-}

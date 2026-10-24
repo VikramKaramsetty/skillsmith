@@ -8,6 +8,7 @@
 # Env: AGENT=claude|droid (default claude), MAX_FIX=3, MODEL=<id> (optional)
 # Needs: git, uv, gh (logged in), and `claude` or `droid` (FACTORY_API_KEY set).
 set -euo pipefail
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_lib.sh"
 
 usage() { sed -n '2,10p' "$0"; exit 1; }
 WS=${1:-}; TASK=${2:-}
