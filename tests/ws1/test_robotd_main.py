@@ -1,9 +1,11 @@
-"""WS1.1: `python -m robotd` argument handling (uvicorn is replaced by a recorder)."""
+"""WS1.1/WS1.2: `python -m robotd` argument handling (uvicorn is replaced by a recorder, the arm by a mock)."""
 
 import pytest
+import yaml
 from conftest import goals
 
-from robotd.__main__ import build_controller, main
+from robotd import feetech
+from robotd.__main__ import DEFAULT_CONFIG, build_controller, main
 from robotd.mock import MockBus
 
 
@@ -20,11 +22,50 @@ def no_token_env(monkeypatch):
     monkeypatch.delenv("ROBOTD_TOKEN", raising=False)
 
 
-def test_without_mock_it_refuses_until_the_feetech_backend_exists(capsys):
+class ClosingBus(MockBus):
+    closed = False
+
+    def close(self):
+        self.closed = True
+
+
+def test_without_mock_it_opens_the_follower_port_named_in_the_config(monkeypatch):
+    pytest.importorskip("fastapi")
+    from fastapi.testclient import TestClient
+
+    robot = yaml.safe_load(DEFAULT_CONFIG.read_text())["robot"]
+    opened = []
+    monkeypatch.setattr(feetech, "connect_follower", lambda port, cid: opened.append((port, cid)) or ClosingBus())
+    serve = Recorder()
+    assert main([], serve=serve) == 0
+    assert opened == [(robot["follower_port"], robot["calibration_id"])]
+    [(app, _, _)] = serve.calls
+    assert TestClient(app).get("/frame/front").status_code == 404  # no mock frames on the real arm
+
+
+def test_when_the_arm_cannot_be_opened_it_exits_1_with_the_reason(monkeypatch, capsys):
+    def fail(port, cid):
+        raise RuntimeError("calibration mismatch on shoulder_lift")
+
+    monkeypatch.setattr(feetech, "connect_follower", fail)
     serve = Recorder()
     assert main([], serve=serve) == 1
     assert serve.calls == []
-    assert "--mock" in capsys.readouterr().err
+    assert "calibration mismatch on shoulder_lift" in capsys.readouterr().err
+
+
+def test_the_bus_is_closed_when_the_server_stops(monkeypatch):
+    bus = ClosingBus()
+    monkeypatch.setattr(feetech, "connect_follower", lambda port, cid: bus)
+    assert main([], serve=Recorder()) == 0
+    assert bus.closed is True
+
+
+def test_a_refused_host_never_opens_the_arm(monkeypatch):
+    opened = []
+    monkeypatch.setattr(feetech, "connect_follower", lambda port, cid: opened.append(port) or ClosingBus())
+    assert main(["--host", "0.0.0.0"], serve=Recorder()) != 0
+    assert opened == []
 
 
 def test_a_non_loopback_host_needs_a_token(capsys):
