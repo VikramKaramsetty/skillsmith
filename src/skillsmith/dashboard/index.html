@@ -16,7 +16,24 @@
   #mode { padding: 2px 10px; border-radius: 4px; background: #2a6; font-weight: 600; }
   #mode.replay { background: #c80; }
   #status { color: #999; }
-  main { padding: 20px 28px; display: grid; gap: 18px; max-width: 1400px; }
+  main { padding: 20px 28px; display: grid; gap: 24px; grid-template-columns: minmax(0, 1fr) minmax(360px, 40%);
+         align-items: start; max-width: 1900px; }
+  #story { display: grid; gap: 18px; min-width: 0; }
+  @media (max-width: 1100px) { main { grid-template-columns: minmax(0, 1fr); } }
+  #world-box { display: grid; gap: 10px; }
+  #cam-wrap { position: relative; background: #000; border-radius: 10px; overflow: hidden; min-height: 120px; }
+  #camera { width: 100%; display: block; }
+  #cam-msg { padding: 10px 14px; color: #888; font-size: 15px; }
+  #map { position: absolute; right: 8px; bottom: 8px; width: 42%; background: #0d1a12cc;
+         border: 1px solid #3a5; border-radius: 6px; }
+  #cam-wrap.solo #map { position: static; width: 100%; border: 0; border-radius: 0; }
+  #map.bumped { border: 3px solid #e33; }
+  #map text { fill: #eee; font: 18px system-ui, sans-serif; }
+  #world-text { font-size: 18px; color: #ccc; }
+  #world-bump { font-size: 20px; font-weight: 700; color: #f77; }
+  #cams button { font-size: 13px; padding: 2px 10px; border: 0; border-radius: 4px; background: #333; color: #ccc; cursor: pointer; }
+  #cams button.on { background: #2a6; color: #fff; }
+  #sim-video { width: 100%; border-radius: 8px; background: #000; }
   .label { color: #888; font-size: 14px; text-transform: uppercase; letter-spacing: .08em; }
   #task { font-size: 34px; font-weight: 600; }
   #task.empty { color: #555; }
@@ -95,6 +112,7 @@
   <h2>Droid session</h2><div id="session"></div>
 </aside>
 <main>
+ <div id="story">
   <section><div class="label">Task</div><div id="task" class="empty">waiting for a task…</div>
     <form id="task-form"><input id="task-input" placeholder="stack the blue cup on the red cup" autocomplete="off">
       <button id="task-run" type="submit">Run</button></form>
@@ -121,6 +139,16 @@
     <span id="approval-text"></span>
   </section>
   <details><summary>event log</summary><div id="log"></div></details>
+ </div>
+  <aside id="world-box">
+    <div class="label"><span id="cam-label">Live camera</span> <span id="cams"></span></div>
+    <div id="cam-wrap" class="solo"><img id="camera" class="hidden" alt="camera"><div id="cam-msg"></div>
+      <svg id="map" viewBox="0 0 500 400" role="img" aria-label="world state, top-down"></svg></div>
+    <div id="world-bump" class="hidden"></div>
+    <div id="world-text"></div>
+    <section id="sim-box" class="hidden"><div class="label">Sim replay <span id="sim-name"></span></div>
+      <video id="sim-video" muted autoplay loop controls playsinline></video></section>
+  </aside>
 </main>
 
 <script id="story-reducer">
@@ -139,7 +167,89 @@ function initialState() {
     approval: null,           // {state: pending|approved|rejected, kind: approval|reset, title, note}
     saved: null, lesson: null, finished: null,
     drawer: initialDrawer(),
+    world: initialWorld(),
   };
+}
+
+// The table (WS6.5): the last observed scene, the gripper from the trace, the sim replay.
+function initialWorld() {
+  return {
+    objects: [],              // SceneObject dicts, plus `estimated: true` once moved by the arm
+    source: null, image_path: null, t: null,
+    ee: null,                 // [x, y, z] m, gripper tip after the latest primitive call
+    held: null,               // id of the object the gripper closed on (follows the gripper)
+    bumped: null,             // world.bumped message until the next scene.observed
+    video: null,              // sim replay mp4 of the current version (sim.video)
+  };
+}
+
+const GRAB_RADIUS = 0.05;     // m: grasp() takes the nearest object within this of the tip
+
+function nearestObject(objects, ee) {
+  let best = null, bestD = GRAB_RADIUS;
+  for (const o of objects) {
+    const d = Math.hypot(o.x - ee[0], o.y - ee[1]);
+    if (d <= bestD) { best = o; bestD = d; }
+  }
+  return best;
+}
+
+function reduceWorld(w, e) {
+  const d = e.data || {};
+  switch (e.type) {
+    case "scene.observed": {
+      const sc = d.scene || {};
+      return { ...w, objects: sc.objects || [], source: sc.source || null, t: sc.t ?? e.t ?? null,
+               image_path: d.image_path || sc.image_path || null, bumped: null,
+               held: (sc.objects || []).some((o) => o.id === w.held) ? w.held : null };
+    }
+    case "primitive.call": {
+      const ee = d.ee_after || d.ee_before || w.ee;
+      if (d.name === "grasp" && d.ok && ee) {
+        const o = d.result === false ? null : nearestObject(w.objects, ee);
+        return { ...w, ee, held: o ? o.id : null };
+      }
+      if (d.name === "release" && w.held && ee) {
+        // Dropped where the gripper is; marked estimated until the camera sees it again.
+        const objects = w.objects.map((o) => o.id === w.held ? { ...o, x: ee[0], y: ee[1], estimated: true } : o);
+        return { ...w, ee, objects, held: null };
+      }
+      return { ...w, ee };
+    }
+    case "world.bumped":
+      return { ...w, bumped: d.message || "an object moved" };
+    case "sim.video":
+      return { ...w, video: d.path || null };
+    case "skill.diff":
+      return { ...w, video: null };  // a new version: its sim run has not happened yet
+    default:
+      return w;
+  }
+}
+
+// Top-down table map in SVG units (1 px = 1 mm). Robot base at the bottom centre,
+// x forward = up, y left = left (robot frame, docs/INTERFACES.md).
+const MAP = { w: 500, h: 400, xMax: 0.40, yMax: 0.25, scale: 1000 };
+const toMap = (x, y) => ({ cx: Math.round((MAP.yMax - y) * MAP.scale), cy: Math.round((MAP.xMax - x) * MAP.scale) });
+
+function tableMap(w) {
+  const ee = w.ee ? toMap(w.ee[0], w.ee[1]) : null;
+  const objects = w.objects.map((o) => {
+    const held = o.id === w.held;
+    const at = held && ee ? ee : toMap(o.x, o.y);
+    return { id: o.id, label: o.label, color: o.color, kind: o.kind, ...at,
+             r: Math.max(Math.round((o.width || 0.03) * MAP.scale / 2), 6), held,
+             visible: o.visible !== false, uncertain: (o.confidence ?? 1) < 0.5, estimated: !!o.estimated };
+  });
+  return { objects, ee, z: w.ee ? w.ee[2] : null };
+}
+
+function worldLine(w) {
+  const held = w.objects.find((o) => o.id === w.held);
+  const parts = [`${w.objects.length} object(s)${w.source ? ` from ${w.source}` : ""}`];
+  if (held) parts.push(`holding ${held.label}`);
+  if (w.ee) parts.push(`gripper at (${w.ee.map((v) => Math.round(v * 100)).join(", ")}) cm`);
+  return parts.join(" · ");
 }
 
 // The detail drawer (WS6.4): everything behind the click, kept for the whole run.
@@ -234,7 +344,7 @@ function reduce(s, e) {
     s = { ...s, approval: { ...s.approval, state: "approved" } };
   }
   s = reduceEvent(s, e);
-  return { ...s, drawer: reduceDrawer(s.drawer || initialDrawer(), e) };
+  return { ...s, drawer: reduceDrawer(s.drawer || initialDrawer(), e), world: reduceWorld(s.world || initialWorld(), e) };
 }
 
 function reduceEvent(s, e) {
@@ -317,7 +427,7 @@ function reduceEvent(s, e) {
   }
 }
 
-if (typeof module !== "undefined") module.exports = { initialState, reduce, shortDiff, keyframes };
+if (typeof module !== "undefined") module.exports = { initialState, reduce, shortDiff, keyframes, tableMap, worldLine };
 </script>
 
 <script>
@@ -381,7 +491,100 @@ function render(s) {
     : `${a.state}${a.note ? ": " + a.note : ""}`;
 
   renderDrawer(s.drawer);
+  renderWorld(s.world);
 }
+
+// ---- WS6.5: live camera (robotd via GET /camera), world-state map, sim replay ----
+const CAMS = ["front", "wrist"];
+const CAM_RETRY_MS = 5000;
+const OBJECT_COLORS = { red: "#e44", blue: "#48f", green: "#3c6", yellow: "#ed3", orange: "#f93", purple: "#a6e",
+                        white: "#eee", black: "#555", pink: "#f8c" };
+let cam = params.get("cam") || "front";
+let camSrc = null, camRetry = null;
+const SVG_NS = "http://www.w3.org/2000/svg";
+
+function svg(tag, attrs, text) {
+  const n = document.createElementNS(SVG_NS, tag);
+  for (const [k, v] of Object.entries(attrs)) n.setAttribute(k, v);
+  if (text != null) n.textContent = text;
+  return n;
+}
+
+function showCamera(src, label) {
+  $("cam-label").textContent = label;
+  if (src === camSrc) return;
+  camSrc = src;
+  clearTimeout(camRetry);
+  const img = $("camera");
+  if (!src) { img.removeAttribute("src"); img.classList.add("hidden"); $("cam-wrap").classList.add("solo"); return; }
+  $("cam-msg").textContent = "connecting to the camera…";
+  img.onload = () => { img.classList.remove("hidden"); $("cam-wrap").classList.remove("solo"); $("cam-msg").textContent = ""; };
+  img.onerror = () => {
+    img.classList.add("hidden");
+    $("cam-wrap").classList.add("solo");
+    if (replay) { $("cam-msg").textContent = "recorded scene image unavailable"; return; }
+    $("cam-msg").textContent = `camera ${cam} offline (robotd not reachable) · retrying`;
+    camRetry = setTimeout(() => { camSrc = null; showCamera(src, label); }, CAM_RETRY_MS);
+  };
+  img.src = replay ? src : `${src}?t=${Date.now()}`;  // cache-buster so a retry really reconnects
+}
+
+function renderCams() {
+  $("cams").replaceChildren(...(replay ? [] : CAMS.map((c) => {
+    const b = el("button", c === cam ? "on" : null, c);
+    b.type = "button";
+    b.onclick = () => { cam = c; renderCams(); render(state); };
+    return b;
+  })));
+}
+
+function renderWorld(w) {
+  if (replay) {
+    showCamera(w.image_path ? frameUrl(w.image_path) : null, "Recorded scene");
+    if (!w.image_path) $("cam-msg").textContent = "recorded run: no live camera, world state from the events";
+  } else {
+    showCamera(`/camera/${cam}`, `Live camera · ${cam}`);
+  }
+
+  const m = tableMap(w);
+  const map = $("map");
+  map.classList.toggle("bumped", !!w.bumped);
+  const nodes = [svg("rect", { x: 0, y: 0, width: MAP.w, height: MAP.h, fill: "none" }),
+                 svg("circle", { cx: MAP.w / 2, cy: MAP.h, r: 40, fill: "#345" }),  // the robot base
+                 svg("text", { x: MAP.w / 2, y: MAP.h - 8, "text-anchor": "middle" }, "robot")];
+  for (const o of m.objects) {
+    const fill = OBJECT_COLORS[o.color] || "#ccc";
+    const shape = o.kind === "block"
+      ? svg("rect", { x: o.cx - o.r, y: o.cy - o.r, width: 2 * o.r, height: 2 * o.r })
+      : svg("circle", { cx: o.cx, cy: o.cy, r: o.r });
+    shape.setAttribute("fill", o.visible ? fill : "none");
+    shape.setAttribute("stroke", o.held ? "#fff" : fill);
+    shape.setAttribute("stroke-width", o.held ? 4 : 2);
+    if (!o.visible || o.estimated) shape.setAttribute("stroke-dasharray", "6 4");
+    if (o.estimated) shape.setAttribute("fill-opacity", "0.4");
+    const tag = [o.label, o.held ? "(held)" : "", o.uncertain ? "?" : "", o.estimated ? "(est.)" : ""].filter(Boolean).join(" ");
+    nodes.push(shape, svg("text", { x: o.cx, y: o.cy + o.r + 20, "text-anchor": "middle" }, tag));
+  }
+  if (m.ee) {
+    nodes.push(svg("line", { x1: m.ee.cx - 14, y1: m.ee.cy, x2: m.ee.cx + 14, y2: m.ee.cy, stroke: "#ff0", "stroke-width": 3 }),
+               svg("line", { x1: m.ee.cx, y1: m.ee.cy - 14, x2: m.ee.cx, y2: m.ee.cy + 14, stroke: "#ff0", "stroke-width": 3 }),
+               svg("text", { x: m.ee.cx + 16, y: m.ee.cy - 10 }, `z ${Math.round(m.z * 100)} cm`));
+  }
+  map.replaceChildren(...nodes);
+
+  $("world-bump").classList.toggle("hidden", !w.bumped);
+  $("world-bump").textContent = w.bumped ? `BUMP · ${w.bumped}` : "";
+  $("world-text").textContent = w.objects.length || w.ee ? worldLine(w) : "no world state yet";
+
+  $("sim-box").classList.toggle("hidden", !w.video);
+  const video = $("sim-video");
+  const want = w.video ? `/video?path=${encodeURIComponent(w.video)}` : "";
+  if (video.getAttribute("src") !== want) {
+    if (want) { video.src = want; $("sim-name").textContent = w.video.split("/").pop(); }
+    else video.removeAttribute("src");
+  }
+}
+renderCams();
 
 const frameUrl = (path) => `/frame?path=${encodeURIComponent(path)}`;
 const mark = (ok) => ok == null ? el("span", null, "·") : el("span", ok ? "ok" : "bad", ok ? "✓" : "✗");
