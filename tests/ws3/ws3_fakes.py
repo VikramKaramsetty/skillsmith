@@ -23,6 +23,8 @@ class FakeRobotd:
         self.stream_parts = [jpeg("s1"), jpeg("s2"), jpeg("s3")]
         self.stream_lengths = True  # send Content-Length per part
         self.stream_hold_s = 2.0  # keep the stream open after the last part
+        self.stream_t0 = None  # X-Frame-Time of part i is stream_t0 + i; None: the send time, "omit": no header
+        self.stream_refusal = None  # (code, error) to refuse /stream with, e.g. robotd's 503 for a dead camera
         self.stream_connections = 0
         self.url = ""
 
@@ -53,6 +55,8 @@ def robotd_handler(state: FakeRobotd):
                 self.wfile.write(state.frame)
             elif self.path == "/stream/front":
                 state.stream_connections += 1
+                if state.stream_refusal:
+                    return self._refuse(*state.stream_refusal)
                 self.send_response(200)
                 self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=frame")
                 self.end_headers()
@@ -60,7 +64,10 @@ def robotd_handler(state: FakeRobotd):
                     head = "--frame\r\nContent-Type: image/jpeg\r\n"
                     if state.stream_lengths:
                         head += f"Content-Length: {len(part)}\r\n"
-                    head += f"X-Frame-Time: {1000.0 + i}\r\n\r\n"
+                    if state.stream_t0 != "omit":
+                        stamp = time.time() if state.stream_t0 is None else state.stream_t0 + i
+                        head += f"X-Frame-Time: {stamp}\r\n"
+                    head += "\r\n"
                     self.wfile.write(head.encode() + part + b"\r\n")
                     self.wfile.flush()
                 time.sleep(state.stream_hold_s)
