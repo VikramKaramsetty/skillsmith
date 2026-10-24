@@ -21,8 +21,10 @@ from __future__ import annotations
 
 import functools
 from pathlib import Path
+from typing import Optional
 
 import pytest
+from qa_extras import built
 from test_event_schema import _analysis_built, _cfg, _unexpected, _violations
 
 from skillsmith.config import load_config
@@ -56,21 +58,19 @@ def run(robot, scene, skills, top, bottom):
 
 
 @functools.cache
-def _sim_status() -> str:
-    """'' if make_sim_env builds an Env, else why not (the skip reason)."""
+def _sim_error() -> Optional[Exception]:
+    """None if make_sim_env builds an Env, else why not."""
     try:
         env = make_env("sim", load_config())
-    except NotImplementedError:
-        return "waiting on WS2.4 (make_sim_env)"
-    except ImportError as e:
-        return f"sim extra not installed ({e.name}): uv pip install -e '.[sim]'"
+    except (NotImplementedError, ImportError) as e:
+        return e
     env.close()
-    return ""
+    return None
 
 
 def _check_env(backend: str, cfg):
-    if backend == "sim" and _sim_status():
-        pytest.skip(_sim_status())
+    if backend == "sim":
+        built(_sim_error(), "sim", "waiting on WS2.4 (make_sim_env)")
     return lambda scene: make_env(backend, cfg, scene)
 
 
