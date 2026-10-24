@@ -8,18 +8,26 @@ Real Droid fixes real failures, quickly and visibly. This is the Factory track: 
 designed trigger (task failure), controlled permissions, and work shown on screen.
 
 ## Tasks (one PR each, in order)
-- [ ] WS5.1 Fake droid shim for CI, plus DroidAuthor plumbing tests (workspace layout, flags, session reuse, timeout)
-- [ ] WS5.2 Run real droid exec against the fake env end to end and fix stream-json parsing of session id and final text
+- [ ] WS5.1 Run DroidSDKAuthor with real Droid end to end on the fake env and fix what breaks (tool ids, permission actions, structured output, session reuse)
+- [ ] WS5.2 Fake droid_sdk module for CI plus plumbing tests for DroidSDKAuthor (rounds, session reuse, refusals, timeout, lessons)
 - [ ] WS5.3 Seeded-bug benchmark: 6 broken skills with a script that reports Droid's fix rate and rounds
 - [ ] WS5.4 Failure-report tuning from benchmark results (snapshot, previous diffs, hints)
 - [ ] WS5.5 Draft-path prompts for brand-new tasks (put_in, tower) using library skills
 - [ ] WS5.6 Calibration trigger: repeated grasp xy error starts a Droid calibration run (with WS7)
+- [ ] WS5.7 Lessons in action: show a lesson from one task changing Droid's first draft on the next, with a test
+- [ ] WS5.8 Audit trail: commit each saved skill version with Droid's diagnosis and change as the commit message
 
 ## Design notes
-- Keep the permissions story tight: `--auto low`, `--remove-tools Execute`, workspace
-  outside the repo, only `skill.py` read back. Log the exact command in `droid.started`.
-- CI has no Droid and no API key: WS5.1's shim is a tiny script on PATH that edits
-  `skill.py` from a fixture and prints stream-json lines. Point `cfg.droid.bin` at it in tests.
+- **Read `docs/NORTH_STAR.md` first.** WS5 *is* the award: Droid SDK doing real work,
+  designed trigger, controlled touch, visible work.
+- The product path is `repair/droid_sdk.py` (`DroidSDKAuthor`, droid-sdk 0.5.0). The policy
+  and tools live in `repair/droid_tools.py`. `droid_client.py` (CLI) is a fallback only.
+- Keep the permissions story tight: autonomy LOW, `Execute` disabled, `decide()` allows only
+  `skill.py` edits + `skillsmith` tools, workspace outside the repo. If WS5.1 finds the real
+  tool IDs, set `droid.restrict_tools` in a CONTRACT CHANGE REQUEST.
+- CI has no Droid binary or API key. The heavy job installs `droid-sdk`, so real SDK classes
+  are testable (`tests/test_droid_tools.py`); WS5.2 adds a fake `droid_sdk.Session` that
+  streams scripted events and edits `skill.py`.
 - Benchmark bugs (WS5.3): rim grip, missing place height, wrong object, unreachable
   travel height, forgot release, infinite-ish loop. Track fix rate and median rounds;
   put the table in the PR. Target ≥ 5/6 fixed in ≤ 2 rounds.

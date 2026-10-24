@@ -41,7 +41,7 @@ Switch rungs without apologising: "Here's the same loop from our run an hour ago
 
 - [ ] GX10 up, no NVIDIA errors in `sudo dmesg | tail`; robotd running; `/state` responds.
 - [ ] USB-Ethernet link between the Mac and the GX10; dashboard loads over it.
-- [ ] Droid authenticated (`droid exec "say ok"` works) on whichever machine runs it.
+- [ ] Droid authenticated (`droid` logged in or `FACTORY_API_KEY` set; `skillsmith demo-fake --author droid` completes) on whichever machine runs it.
 - [ ] Camera fixed, homography fresh (re-run after any bump), lighting checked; HSV
       thresholds tested on the actual objects.
 - [ ] Objects at their taped start positions; workspace clear.
@@ -55,10 +55,15 @@ Switch rungs without apologising: "Here's the same loop from our run an hour ago
 **Factory Droid**
 - *Designed trigger*: Droid runs only when the camera says a task failed (or a gate
   rejects code). That's the event-driven trigger, not a chat window.
-- *Controlled permissions*: `--auto low`, command execution removed, one writable file,
-  then AST, sim, safety and human gates that Droid cannot touch.
-- *Visible work*: every Droid tool call, diff and gate result streams to the dashboard
-  and is saved in `events.jsonl`.
+- *Uses the Droid SDK in the running product*: `droid_sdk.Session` is opened by the robot's
+  failure, not by us typing. Point at `README.md` "Where and how Droid is used".
+- *Controlled permissions*: autonomy LOW, shell disabled, a permission handler that allows
+  only `skill.py` edits and our own tools (show a refused action in the Droid panel), then
+  AST, sim, safety and human gates that Droid cannot touch.
+- *Visible work*: Droid's plan text, every tool call (including its own `simulate_skill`
+  runs), every permission decision, the diff and its structured diagnosis stream to the
+  dashboard and are saved in `events.jsonl`.
+- *Constant improvement*: show `skills/lessons.md` gaining a line, and task 2 reusing task 1's skill.
 
 **Most Technically Complex**: an agent, physics simulation, vision, IK and real hardware
 in one closed loop, with a skill library that grows.

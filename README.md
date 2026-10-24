@@ -54,10 +54,26 @@ src/skillsmith/
 tests/                    run with `make test`
 ```
 
+## Where and how Droid is used
+
+Factory Droid is the part of the running product that **writes and repairs the robot's
+skills**. It runs through the **Droid Python SDK** (`droid-sdk`), in
+[`src/skillsmith/repair/droid_sdk.py`](src/skillsmith/repair/droid_sdk.py). The objective and
+judging criteria live in [`docs/NORTH_STAR.md`](docs/NORTH_STAR.md).
+
+| | |
+|---|---|
+| **Trigger** | The robot's own failure: after a real attempt the camera check fails (also: a gate rejects Droid's code, a human rejects with a note, a new task arrives). `RepairLoop` then calls Droid. No chat box. |
+| **What Droid gets** | An evidence package: the task and success check, why it failed (with numbers), scene before/after, the full motion trace with the failing line, the camera snapshot (as an image), earlier rounds, lessons from past tasks, and the saved skill library. |
+| **What Droid can do** | Edit one file (`skill.py`) in a workspace outside the repo, and call our tools: `validate_skill`, `simulate_skill` (sim only), `get_scene`, `list_library`, `read_library_skill`. |
+| **What Droid can't do** | Run shell commands (disabled), edit any other file (refused by our permission handler, with the reason sent back), or touch the real arm (never a tool). |
+| **What Droid returns** | The edited skill plus a structured result: diagnosis, change, sim_checked, confidence, lesson. |
+| **What happens next** | We re-run static → sim → safety ourselves, a human approves, the real arm retries, the camera verifies. Success saves a new skill version and Droid's lesson (`skills/lessons.md`). |
+| **How you can see it** | Every Droid message, tool call, tool result, permission decision, diff and result is an event in `runs/<id>/events.jsonl` and on the dashboard. |
+
 ## Tracks we are aiming at
 
-- **Factory Droid**: Droid fires on a trigger we designed (task failure), runs with
-  controlled permissions (`--auto low`, edits one file, AST + sim + safety gates), and
-  every step shows on the dashboard.
+- **Best Use of the Factory Droid SDK**: see "Where and how Droid is used" above and the
+  criteria checklist in `docs/NORTH_STAR.md`.
 - **Most Technically Complex**: agent + simulation + vision + real hardware.
 - **Best Hardware Hack**: the arm is the point.

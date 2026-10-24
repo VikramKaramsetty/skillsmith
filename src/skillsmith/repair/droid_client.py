@@ -1,4 +1,7 @@
-"""DroidAuthor: runs Factory `droid exec` headless to write or repair one skill file.
+"""DroidAuthor (CLI FALLBACK): runs Factory `droid exec` headless to write or repair one skill.
+
+The product path is DroidSDKAuthor in droid_sdk.py (docs/NORTH_STAR.md). Use this only if the
+SDK breaks on stage (`droid.mode: cli`), and say so.
 
 Permissions are controlled here, not trusted to Droid:
 - `--auto low`: file edits only (no installs, no system changes, no remote writes).
@@ -15,17 +18,15 @@ tighten `_session_id` / `_final_text`. Docs: https://docs.factory.ai/cli/droid-e
 from __future__ import annotations
 
 import json
-import shutil
-import stat
 import subprocess
 import threading
 from pathlib import Path
 from typing import List, Optional
 
-from skillsmith.config import REPO_ROOT
 from skillsmith.events import EventBus
 from skillsmith.repair.protocols import AuthorContext
 from skillsmith.repair.report import draft_brief
+from skillsmith.repair.workspace import prepare_workspace, workspace_dir
 from skillsmith.types import TaskSpec
 
 PROMPT_HEADER = """\
@@ -53,7 +54,6 @@ class DroidAuthor:
         self.cfg = cfg
         self.bus = bus
         self.d = cfg.droid
-        self.template_dir = REPO_ROOT / "droid_template"
         self.session_ids: dict = {}
 
     # ---- SkillAuthor ----------------------------------------------------------------
@@ -67,37 +67,15 @@ class DroidAuthor:
 
     # ---- internals ------------------------------------------------------------------
     def workspace(self, run_id: str) -> Path:
-        return self.cfg.path(self.cfg.repair.droid_ws_root) / run_id
+        return workspace_dir(self.cfg, run_id)
 
     def _round(self, source: str, report_md: str, ctx: AuthorContext) -> str:
-        ws = self._prepare(source, report_md, ctx)
+        ws = prepare_workspace(self.cfg, source, PROMPT_HEADER + report_md, report_md, ctx)
         code = self._exec(ws, ctx)
         new = (ws / "skill.py").read_text()
         if code != 0 and new == source:
             raise RuntimeError(f"droid exec exited {code} without changing skill.py")
         return new
-
-    def _prepare(self, source: str, report_md: str, ctx: AuthorContext) -> Path:
-        ws = self.workspace(ctx.run_id)
-        (ws / "history").mkdir(parents=True, exist_ok=True)
-        for name in ("AGENTS.md", "API.md"):
-            shutil.copy(self.template_dir / name, ws / name)
-        (ws / "skill.py").write_text(source)
-        (ws / "failure.md").write_text(PROMPT_HEADER + report_md)
-        (ws / "history" / f"round_{ctx.round}.md").write_text(report_md)
-        if ctx.scene is not None:
-            (ws / "scene.json").write_text(json.dumps(ctx.scene.to_dict(), indent=2))
-        if ctx.snapshot_path and Path(ctx.snapshot_path).exists():
-            shutil.copy(ctx.snapshot_path, ws / "snapshot.jpg")
-        lib = ws / "library"
-        if lib.exists():
-            shutil.rmtree(lib, onerror=_force_remove)
-        lib.mkdir()
-        for name, src in ctx.library.items():
-            p = lib / f"{name}.py"
-            p.write_text(src)
-            p.chmod(stat.S_IRUSR | stat.S_IRGRP | stat.S_IROTH)
-        return ws
 
     def command(self, ws: Path, run_id: str) -> List[str]:
         cmd = [self.d.bin, "exec", "-f", str(ws / "failure.md"), "--auto", self.d.auto,
@@ -169,8 +147,3 @@ def _final_text(event: dict) -> Optional[str]:
             if isinstance(event.get(key), str):
                 return event[key]
     return None
-
-
-def _force_remove(func, path, _exc):
-    Path(path).chmod(stat.S_IWUSR | stat.S_IRUSR)
-    func(path)

@@ -12,6 +12,7 @@ kin = ["placo>=0.9"]
 vision = ["opencv-contrib-python>=4.9", "numpy>=1.26"]
 dashboard = ["fastapi>=0.110", "uvicorn>=0.29", "httpx>=0.27"]
 robotd = ["fastapi>=0.110", "uvicorn>=0.29"]  # + LeRobot's feetech driver from ~/robot/.venv on the GX10
+droid = ["droid-sdk[mcp]>=0.5"]  # Factory Droid Python SDK: the product's repair agent (docs/NORTH_STAR.md)
 
 [project.scripts]
 skillsmith = "skillsmith.cli:main"

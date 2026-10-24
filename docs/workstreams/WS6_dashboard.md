@@ -15,6 +15,8 @@ real arm → SUCCESS → skill saved. It must also replay a recorded `events.jso
 - [ ] WS6.4 Live camera panel (robotd MJPEG) and sim video player
 - [ ] WS6.5 Replay mode for the demo fallback with speed control
 - [ ] WS6.6 Big-screen polish: judge-readable type, current-step banner, dark theme
+- [ ] WS6.7 Droid panel: live messages, tool calls, permission decisions (allowed/refused + reason) and the structured diagnosis
+- [ ] WS6.8 Improvement panel: rounds to fix, sim runs, skills saved, reuse count and lessons over all runs
 
 ## Contract with the CLI (already wired)
 - `skillsmith serve` calls `skillsmith.dashboard.server.main(cfg) -> int`.

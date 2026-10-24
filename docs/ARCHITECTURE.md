@@ -27,7 +27,7 @@ robotics risk lives in code we write and test once.
 │    ├── skill runtime (AST-validated, restricted globals)                  │
 │    ├── backends: sim (MuJoCo, in-process)  |  real (robotd client)        │
 │    ├── safety envelope + verify predicates                                │
-│    ├── repair loop → `droid exec` subprocess in ~/.skillsmith/droid_ws    │
+│    ├── repair loop → Droid SDK session in ~/.skillsmith/droid_ws        │
 │    ├── event bus → runs/<run_id>/events.jsonl                             │
 │    └── dashboard server :8080 (SSE events, MJPEG proxy, approve button)   │
 │                                                                           │
@@ -71,7 +71,7 @@ All three implement the same `ArmBackend` + `Kinematics` + `Perception` protocol
            fail   │  (verify predicate false, exception, or safety stop)
                   ▼
              ┌─────────┐  failure report (trace, exception, scene diff, snapshot)
-             │ REPAIR  │  droid exec --auto low → edits skill.py only
+             │ REPAIR  │  Droid SDK session (autonomy LOW, our tools) → edits skill.py only
              └────┬────┘
                   ▼
              ┌─────────┐  fail → back to REPAIR with the reason (max N rounds)
@@ -94,7 +94,7 @@ All three implement the same `ArmBackend` + `Kinematics` + `Perception` protocol
 ```
 
 Repair rounds are capped (`repair.max_rounds` in config). Each round continues the same
-Droid session (`droid exec --session-id`), so Droid remembers what it already tried.
+Droid SDK session (kept open for the run), so Droid remembers what it already tried.
 A human "reject with note" becomes the next round's failure report.
 
 ## Where the Droid runs and what it sees
@@ -111,12 +111,16 @@ scene.json           detected objects
 library/*.py         read-only copies of saved skills, to call or imitate
 ```
 
-It runs `droid exec -f failure.md --auto low -o stream-json --cwd <ws>`. `--auto low`
-allows file edits only: no installs, no system changes, no remote writes. The
-orchestrator reads back `skill.py`; any other file change is ignored and logged. Static
-checks, sim and safety run in the orchestrator, not in Droid, so Droid cannot skip or
-weaken them. The workspace sits outside the repo so Droid never sees the build-time
-`AGENTS.md`.
+Droid runs through the **Droid Python SDK** (`repair/droid_sdk.py`): one `droid_sdk.Session`
+per run with `cwd` set to the workspace, kept open across repair rounds so Droid remembers
+what it tried. The session has autonomy LOW, `Execute` disabled, and our `skillsmith` SDK
+MCP server (`validate_skill`, `simulate_skill`, `get_scene`, `list_library`,
+`read_library_skill`). A permission handler (`droid_tools.decide`) allows only edits to
+`skill.py` and calls to our tools; everything else is refused with the reason sent back.
+Each round returns a JSON-schema result (diagnosis, change, sim_checked, confidence,
+lesson). We read back `skill.py` and re-run static, sim and safety ourselves, so Droid cannot
+skip or weaken them. The workspace sits outside the repo so Droid never sees the build-time
+`AGENTS.md`. Details and the judging checklist: `docs/NORTH_STAR.md`.
 
 ## Perception
 

@@ -23,8 +23,8 @@ Droid is allowed to write anything for it.
 |---|---|---|
 | 0–1 | Lead: push repo, run `make check`, start Wave 1. Arm operator: start robotd skeleton testing with teleop off, tape the workspace, place ArUco markers. | Wave 1 launch: WS1, WS2, WS3, WS4, WS6 |
 | 1–4 | Arm operator: verify joint signs/offsets (RUNBOOK §G3 step 1–2). Demo owner: buy/pick objects, fix camera mount. | Wave 1 building against `fake` |
-| 4–6 | Lead merges Wave 1 in order (WS4 → WS2 → WS1 → WS3 → WS6). Arm operator: homography calibration. | **G2** |
-| 6–9 | Arm operator runs pick_place on real at 0.05 m/s. | Wave 2: WS5 (real `droid exec`), QA (sim integration) → **G3**, **G4** |
+| 4–6 | Lead watches `make status`, unblocks Wave 1 (CI merges green PRs). Arm operator: homography calibration. | **G2** |
+| 6–9 | Arm operator runs pick_place on real at 0.05 m/s. | Wave 2: WS5 (real Droid via the SDK), QA (sim integration) → **G3**, **G4** |
 | 9–13 | Integration on real arm: robotd + camera + sim + Droid. | Fixes from hardware hand-offs |
 | 13–17 | Sleep in shifts (keep one person + agents on fixes). | WS7 stretch, dashboard polish |
 | 17–21 | **G5**: full loop on real with demo tasks; tune verify tolerances. | Bug fixes only |
@@ -33,9 +33,9 @@ Droid is allowed to write anything for it.
 
 ## Human roles
 
-- **Lead / merger**: owns contracts, `config/robot.yaml`, `docs/STATUS.md`, merge
-  order, and every `CONTRACT CHANGE REQUEST`. Launches and re-briefs agents. Only the lead
-  merges to `main`.
+- **Lead**: owns `docs/NORTH_STAR.md`, contracts, `config/robot.yaml` and every
+  `CONTRACT CHANGE REQUEST` (merged by hand). CI auto-merges everything else; the lead
+  watches `make status`, unblocks `blocked` issues and re-briefs agents.
 - **Arm operator**: owns the physical arm, GX10, robotd and cameras. Runs every hardware
   test that agents hand off, and is the hand on the stop button during real runs.
 - **Demo / dashboard owner**: owns `DEMO.md`, the objects and table setup, dashboard

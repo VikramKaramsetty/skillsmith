@@ -42,7 +42,8 @@ uv sync -q --extra dev
 
 PROMPT="You are a coding agent on the Skillsmith hackathon project (robot arm that writes its own skills).
 Workstream: $WS. Task: $TASK.${ISSUE:+ GitHub issue #$ISSUE.}
-1. Read AGENTS.md, docs/INTERFACES.md${WSFILE:+ and $WSFILE} before writing code.
+1. Read docs/NORTH_STAR.md (objective + award criteria; it wins over every other doc), then AGENTS.md,
+   docs/INTERFACES.md${WSFILE:+ and $WSFILE} before writing code.
 2. Edit ONLY the paths listed for '$WS' in .github/ownership.yml, plus tests/$WS/. Shared files belong to the lead:
    if you need one changed, describe it under CONTRACT CHANGE REQUEST in HANDOFF.md instead.
 3. Never touch real hardware (no serial ports, cameras, or --env real). Use the fake or sim env.

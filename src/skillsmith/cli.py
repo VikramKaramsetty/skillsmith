@@ -35,12 +35,23 @@ def _task(args) -> TaskSpec:
     return parse_task(args.task)
 
 
-def _author(name: str, cfg, bus, drafts=(), repairs=()):
+def _author(name: str, cfg, bus, make_check_env, drafts=(), repairs=()):
+    """'droid' = real Factory Droid: the SDK (product path) unless config says the CLI fallback."""
     if name == "droid":
-        from skillsmith.repair.droid_client import DroidAuthor
-        return DroidAuthor(cfg, bus)
+        if cfg.droid.get("mode", "sdk") == "cli":
+            from skillsmith.repair.droid_client import DroidAuthor
+            print("WARNING: using the droid exec CLI fallback, not the Droid SDK")
+            return DroidAuthor(cfg, bus)
+        from skillsmith.repair.droid_sdk import DroidSDKAuthor
+        return DroidSDKAuthor(cfg, bus, make_check_env)
     from skillsmith.repair.scripted import ScriptedAuthor
     return ScriptedAuthor(list(drafts), list(repairs))
+
+
+def _check_env_factory(name: str, cfg):
+    def make_check_env(scene):
+        return make_env(name, cfg, scene)
+    return make_check_env
 
 
 def _approver(name: str, env_name: str):
@@ -53,16 +64,16 @@ def _approver(name: str, env_name: str):
     return CliApprover()
 
 
-def _run(task: TaskSpec, target, check_env_name, library, author, approver, cfg, bus) -> int:
+def _run(task: TaskSpec, target, make_check_env, library, author, approver, cfg, bus) -> int:
     from skillsmith.repair.loop import RepairLoop
-
-    def make_check_env(scene):
-        return make_env(check_env_name, cfg, scene)
 
     loop = RepairLoop(cfg, target, make_check_env, library, author, approver, bus)
     try:
         result = loop.run(task)
     finally:
+        close = getattr(author, "close", None)
+        if callable(close):
+            close()
         target.close()
         bus.close()
     print(f"\n{'SUCCESS' if result.ok else 'FAILED'} after {result.rounds} repair round(s); "
@@ -74,9 +85,9 @@ def cmd_run(args, cfg) -> int:
     task = _task(args)
     bus = EventBus(new_run_id(), cfg.path(cfg.repair.runs_dir), echo=True)
     target = make_env(args.env, cfg)
-    check = "fake" if args.env == "fake" else "sim"
+    make_check_env = _check_env_factory("fake" if args.env == "fake" else "sim", cfg)
     library = SkillLibrary(cfg.path(cfg.repair.library_dir))
-    return _run(task, target, check, library, _author(args.author, cfg, bus),
+    return _run(task, target, make_check_env, library, _author(args.author, cfg, bus, make_check_env),
                 _approver(args.approver, args.env), cfg, bus)
 
 
@@ -91,9 +102,10 @@ def cmd_demo_fake(args, cfg) -> int:
     world = FakeWorld.demo(cfg, rim_slip=True)  # the "real" world has a sim-to-real gap
     target = Env("fake", world, world, world)
     library = SkillLibrary(temp_library())
-    author = _author(args.author, cfg, bus, drafts=[v1], repairs=[v2])
+    make_check_env = _check_env_factory("fake", cfg)
+    author = _author(args.author, cfg, bus, make_check_env, drafts=[v1], repairs=[v2])
     print(f"Task: {task.text}\nLibrary: {library.names()} (temp copy)\n")
-    return _run(task, target, "fake", library, author, _approver("auto", "fake"), cfg, bus)
+    return _run(task, target, make_check_env, library, author, _approver("auto", "fake"), cfg, bus)
 
 
 def cmd_serve(args, cfg) -> int:

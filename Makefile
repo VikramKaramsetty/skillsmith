@@ -1,6 +1,6 @@
 PY ?= 3.12
 UV := uv run --python $(PY) --extra dev --extra dashboard
-UV_HEAVY := uv run --python $(PY) --extra dev --extra dashboard --extra sim --extra kin --extra vision
+UV_HEAVY := uv run --python $(PY) --extra dev --extra dashboard --extra sim --extra kin --extra vision --extra droid
 
 .PHONY: setup check check-heavy test lint fmt demo-fake validate-library status sync-gx10
 

@@ -229,7 +229,8 @@ class AuthorContext:
     library: dict[str, str]             # name → source, read-only
 ```
 
-Implementations: `DroidAuthor` (real `droid exec`), `ScriptedAuthor` (tests/demo-fake);
+Implementations: `DroidSDKAuthor` (the product: Droid Python SDK, `repair/droid_sdk.py`),
+`DroidAuthor` (`droid exec` CLI, stage-emergency fallback), `ScriptedAuthor` (tests/demo-fake);
 `CliApprover`, `AutoApprover` (**refuses** when the target env is `real`),
 `DashboardApprover` (WS6).
 
@@ -254,8 +255,15 @@ One JSON object per line in `runs/<run_id>/events.jsonl`, also pushed to subscri
 | `note` | `text` (from `robot.note`) |
 | `verify.result` | `ok`, `detail` |
 | `repair.started` | `round`, `reason` |
-| `droid.event` | raw stream-json event from `droid exec` |
-| `droid.finished` | `round`, `session_id`, `exit_code` |
+| `droid.started` | `round`, `via` ("droid-sdk" \| cli cmd), `workspace`, `autonomy`, `disabled_tools` |
+| `droid.tools` | `tools` (ids available to Droid this session) |
+| `droid.message` | `round`, `text` (Droid's plan/reasoning shown to the user) |
+| `droid.tool_call` / `droid.tool_result` | `round`, `name`, `input` / `round`, `tool`, `is_error`, `content` |
+| `droid.permission` | `round`, `action`, `target`, `allowed`, `reason` |
+| `droid.check` | `round`, `tool` (validate_skill \| simulate_skill), `ok`, `run`, `reason` |
+| `droid.result` | `round`, `subtype`, `result` {diagnosis, change, sim_checked, confidence, lesson}, `session_id`, `duration`, `credits` |
+| `droid.lesson` | `round`, `lesson` (appended to skills/lessons.md) |
+| `droid.event` / `droid.finished` | CLI fallback only: raw stream-json event / `round`, `session_id`, `exit_code` |
 | `skill.diff` | `old_version`, `new_version`, `diff` (unified) |
 | `gate.result` | `gate` ("static" \| "sim" \| "safety"), `ok`, `detail` |
 | `sim.video` | `path` |
