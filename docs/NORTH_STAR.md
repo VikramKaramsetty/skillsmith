@@ -99,6 +99,38 @@ fails, a new evidence package goes into **the same session**, so Droid remembers
 **5. On success:** the skill is saved as a new version (old versions kept), Droid's lesson is
 appended to `skills/lessons.md`, and the skill's success count goes up.
 
+## Demo speed is a hard requirement
+
+Judges watch the repair happen, so it must be fast and it must read as content, not dead air.
+
+- **Target: one repair round, under 60 s**, on the chosen demo task. About 2 minutes end to
+  end for fail → fix → success.
+- **Stage profile** (WS5.9, a separate profile; dev defaults stay as they are): `max_rounds: 2`,
+  `sim_tool_budget: 1`, ~90 s timeout per round, a fast model with low reasoning effort, and
+  the SDK session opened (warmed up) **before** the demo starts.
+- **Prompt rule:** the smallest edit that fixes the stated failure, never a rewrite.
+- **Pick demo tasks whose natural failure is quick to fix** (rim grip → slip → grip at
+  mid-height). Rehearse until Droid reliably fixes it in one round.
+- The WS5 benchmark reports **seconds-to-fix and one-round fix rate**, not just fix rate.
+- The dashboard streams Droid's diagnosis, tool calls and diff while it works (WS6.7).
+
+## The camera check: detect, decide, explain
+
+| Layer | What | Role |
+|---|---|---|
+| **Detect** | YOLO-World / YOLO-E open-vocabulary detector on the GX10 (fast); HSV colour blobs as the backup | finds objects and positions (WS3.7, promoted from stretch) |
+| **Decide** | geometric predicates (`on_top`, `inside`, ...) on the detected positions | **the pass/fail authority**: precise and numeric |
+| **Explain** | a local VLM on the GX10 (Qwen-VL class), given **cropped** before/after images | advisory second opinion and a plain-language reason for Droid (WS3.8). It never overrides geometry; if it disagrees with a geometric pass, that counts as a fail and the disagreement goes into Droid's evidence. |
+
+Why geometry decides: research reports VLM success judges near 0.77 balanced accuracy, under
+0.60 on contact-heavy tasks, with cropping helping (FailBench, arXiv 2609.03611), and VLMs
+calling missed grasps successes (Guardian, arXiv 2512.01946). These figures come from a
+teammate's research summary; check the papers before quoting them to judges.
+
+**Step-level checks:** after every `grasp()`, a wrist-camera check asks "is the gripper
+holding the object?" (WS3.9 + WS4.6). Failures are caught mid-skill with a specific reason
+("grasp at z=0.072 closed on air") instead of only at the end.
+
 ## Constant improvement, at four time scales
 
 | Scale | Mechanism | Metric we report |
@@ -113,11 +145,13 @@ The dashboard's improvement panel (WS6.7) shows these numbers.
 ## Scope
 
 - **Must (the demo):** G3 and G5 with "stack the blue cup on the red cup": a real failure, one
-  live Droid repair through the SDK, the dashboard showing Droid's steps and permission decisions,
-  approval, real success, skill saved.
-- **Should:** a second task that reuses the saved skill ("build a tower"); a measured fix rate
-  from the seeded-bug benchmark (WS5.3); a lesson from task 1 visibly used in task 2.
-- **Stretch:** self-calibration, open-vocabulary vision on the GX10, pyramid.
+  live Droid repair through the SDK **in one round, under 60 s**, the dashboard showing Droid's
+  steps and permission decisions, approval, real success, skill saved. Geometric camera check
+  with HSV detection as the floor.
+- **Should:** YOLO-World/YOLO-E as the main detector; the post-grasp wrist check; a second task
+  that reuses the saved skill ("build a tower"); benchmark numbers for fix rate, one-round fix
+  rate and seconds-to-fix (WS5.3); a lesson from task 1 visibly used in task 2.
+- **Stretch:** the VLM "explain" layer, self-calibration, pyramid.
 - **Not this project:** VLA/pi05 policies driving the arm, Droid controlling motors, a chat UI,
   training models, millimetre-precision tasks.
 

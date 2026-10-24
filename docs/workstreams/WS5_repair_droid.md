@@ -10,16 +10,22 @@ designed trigger (task failure), controlled permissions, and work shown on scree
 ## Tasks (one PR each, in order)
 - [ ] WS5.1 Run DroidSDKAuthor with real Droid end to end on the fake env and fix what breaks (tool ids, permission actions, structured output, session reuse)
 - [ ] WS5.2 Fake droid_sdk module for CI plus plumbing tests for DroidSDKAuthor (rounds, session reuse, refusals, timeout, lessons)
-- [ ] WS5.3 Seeded-bug benchmark: 6 broken skills with a script that reports Droid's fix rate and rounds
+- [ ] WS5.3 Seeded-bug benchmark: 6 broken skills, reporting fix rate, one-round fix rate and seconds-to-fix
 - [ ] WS5.4 Failure-report tuning from benchmark results (snapshot, previous diffs, hints)
 - [ ] WS5.5 Draft-path prompts for brand-new tasks (put_in, tower) using library skills
 - [ ] WS5.6 Calibration trigger: repeated grasp xy error starts a Droid calibration run (with WS7)
 - [ ] WS5.7 Lessons in action: show a lesson from one task changing Droid's first draft on the next, with a test
 - [ ] WS5.8 Audit trail: commit each saved skill version with Droid's diagnosis and change as the commit message
+- [ ] WS5.9 Stage profile for demo speed: 2 rounds, sim budget 1, 90 s per round, fast model, session warmed up before the demo
 
 ## Design notes
 - **Read `docs/NORTH_STAR.md` first.** WS5 *is* the award: Droid SDK doing real work,
   designed trigger, controlled touch, visible work.
+- **Speed is a hard requirement:** one round, under 60 s, on the demo task. Every change is
+  judged by one-round fix rate and seconds-to-fix from the WS5.3 benchmark. The stage profile
+  (WS5.9) is `config/stage.yaml`, merged over `robot.yaml` with `--profile stage` (request the
+  loader change from the lead); it adds `DroidSDKAuthor.warm_up(run_id)` to open the session early.
+- Prompts ask for the smallest edit that fixes the stated failure, never a rewrite.
 - The product path is `repair/droid_sdk.py` (`DroidSDKAuthor`, droid-sdk 0.5.0). The policy
   and tools live in `repair/droid_tools.py`. `droid_client.py` (CLI) is a fallback only.
 - Keep the permissions story tight: autonomy LOW, `Execute` disabled, `decide()` allows only

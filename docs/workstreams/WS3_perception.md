@@ -14,9 +14,21 @@ to about 1 cm on the table, fast (< 200 ms), from a fixed front/overhead camera.
 - [ ] WS3.4 HSV tuner tool with live sliders that saves thresholds
 - [ ] WS3.5 CameraPerception class implementing observe() and snapshot()
 - [ ] WS3.6 Measure position accuracy on the real table at marked points (hardware)
-- [ ] WS3.7 Stretch: open-vocabulary detector on the GX10 GPU behind the same interface
+- [ ] WS3.7 YOLO-World / YOLO-E open-vocabulary detector on the GX10 as the main detector, HSV as backup
+- [ ] WS3.8 Advisory VLM verifier on the GX10: cropped before/after images, never overrides geometry, disagreement fails into Droid's evidence
+- [ ] WS3.9 Post-grasp wrist-camera holding check that returns a specific reason (with WS4.6)
 
 ## Design notes
+- **Three layers (docs/NORTH_STAR.md "The camera check"):** *detect* with YOLO-World / YOLO-E
+  (fast open-vocabulary, the main detector; Grounding DINO / OWLv2 are much slower) with HSV
+  as the backup; *decide* with the geometric predicates in `verify.py` (the only pass/fail
+  authority); *explain* with a local Qwen-VL-class VLM on cropped before/after images,
+  advisory only. A VLM "fail" against a geometric "pass" is a fail, and its text goes into
+  Droid's evidence package.
+- Crop to the objects named in the success predicate before asking the VLM; full frames make
+  VLM judges noticeably worse.
+- The post-grasp check (WS3.9) uses the wrist camera: object pixels between the fingers,
+  plus the gripper position from robotd. It returns `(holding: bool, reason: str)`.
 - Objects sit on the table plane, so a homography (4+ ArUco markers at known robot-frame
   points) gives (x, y) with no depth. Measure the marker positions by touching them with
   the gripper tip and reading FK (needs WS2), or with a ruler from the base axis.

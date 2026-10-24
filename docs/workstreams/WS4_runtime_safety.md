@@ -13,6 +13,7 @@ the task parser enough coverage for every demo task.
 - [ ] WS4.3 Static carry-path check in safety.py so a held object never sweeps through a known object at travel height
 - [ ] WS4.4 More success predicates: tower, sorted_by_color, left_of, upright, with readable details
 - [ ] WS4.5 Task parser templates for sort, tower and put-in, plus a pluggable fallback hook for unparsed tasks
+- [ ] WS4.6 Step-level post-grasp check: after grasp(), call the perception holding check and fail mid-skill with its reason (lead adds the hook)
 
 ## Design notes
 - The validator is an allow-list; keep it one. Every new rejection needs a test whose
