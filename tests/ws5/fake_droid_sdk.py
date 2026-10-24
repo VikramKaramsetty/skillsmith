@@ -180,7 +180,15 @@ class SdkMcpTool:
     fn: Callable
 
     async def handler(self, args: dict) -> str:
-        return self.fn(**args)
+        value = self.fn(**args)
+        if not isinstance(value, str):  # droid-sdk 0.5 mcp.tool(): "must return str or ToolResponse"
+            raise TypeError("MCP tool handlers must return str or ToolResponse")
+        return value
+
+
+def mcp_content(text: str) -> list:
+    """What droid-sdk 0.5's MCP server sends the model for a tool result: one text block, never an image."""
+    return [{"type": "text", "text": text}]
 
 
 @dataclass
@@ -208,6 +216,7 @@ class Turn:
     commands: List[str] = field(default_factory=list)  # shell commands Droid asks to run
     questions: List[str] = field(default_factory=list)
     tools: List[str] = field(default_factory=lambda: ["validate_skill", "simulate_skill"])
+    tool_args: dict = field(default_factory=dict)  # tool name -> arguments Droid passes
     error_event: Optional[str] = None
     output: Any = None
     subtype: str = "success"
@@ -238,6 +247,7 @@ class Session:
         self.model, self.reasoning_effort = model, reasoning_effort
         self.config, self.interactions, self.runtime = config, interactions, runtime
         self.prompts: List[tuple] = []
+        self.tool_results: List[tuple] = []  # (tool name, MCP content) exactly as the model receives it
         self.responses: list = []  # every permission/question reply the author gave
         self.opened = self.closed = False
         CONTROLLER.sessions.append(self)
@@ -295,7 +305,9 @@ class Stream:
         handlers = {x.name: x for server in s.config.mcp_servers for x in server.tools}
         for name in t.tools:
             yield ToolCall(f"skillsmith___{name}", types.MappingProxyType({"why": ("check",)}))
-            yield ToolResult(name, [{"text": await handlers[name].handler({})}])
+            content = mcp_content(await handlers[name].handler(t.tool_args.get(name, {})))
+            s.tool_results.append((name, content))
+            yield ToolResult(name, content)
         if t.error_event:
             yield ErrorEvent(t.error_event)
         self.result = RunResult(subtype=t.subtype, text="done", structured_output=t.output,

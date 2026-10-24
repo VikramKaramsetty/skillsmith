@@ -4,6 +4,8 @@ Runs the block-tuned stack v1 on the fake world (rim_slip = the demo failure) wi
 filled in the way test_evidence_v2 does, plus real frame files so copying into the workspace is tested.
 """
 
+import asyncio
+import re
 from pathlib import Path
 
 import fake_droid_sdk as fake
@@ -52,7 +54,8 @@ def test_get_frame_copies_the_frame_and_shows_the_phase(runs, tmp_path):
     ws = tmp_path / "ws"
     out = et.get_frame(attempt, "Carry ", ws, 1)
     assert "**Check:** ✗ lost blue cup during 16 cm sideways move" in out
-    assert "`frames/round1_fake_carry_real_carry.jpg` (open it with Read)" in out
+    assert "`frames/round1_fake_carry_real_carry.jpg` (image; described here as text)" in out
+    assert "Read" not in out
     assert (ws / "frames" / "round1_fake_carry_real_carry.jpg").read_bytes() == b"real_carry.jpg"
     calls = out.split("## Calls in this phase")[1]
     assert "| 6 | move_to |" in calls and "**← failed here**" in calls and "| 5 |" not in calls
@@ -66,6 +69,30 @@ def test_get_frame_defaults_to_the_failing_phase_and_lists_what_exists(runs, tmp
     missing = et.get_frame(attempt, "wiggle", tmp_path, 1)
     assert "No phase or frame named 'wiggle'" in missing and "approach, grasp, lift, carry, crop_after" in missing
     assert et.get_frame(None, "carry", tmp_path, 1) == et.NO_ATTEMPT
+
+
+def test_get_frame_describes_what_the_frame_shows(runs, tmp_path):
+    _, attempt = runs
+    out = et.get_frame(attempt, "carry", tmp_path, 1).split("## Calls in this phase")[0]
+    assert "Objects, from the scene after the attempt (this phase ends the run):" in out
+    assert "| blue cup | 0.220 | -0.080 | 0.000 | 0.080 | 0.065 | 16.0 |" in out
+    assert "- Gripper tip (after call #6 move_to): (0.220, 0.080, 0.180)" in out
+    assert "- Planned target (call #6 move_to): (0.220, 0.080, 0.180)" in out
+    assert "- Error arrow, tip → target: dx +0.0, dy +0.0, dz +0.0 cm (0.0 cm in xy" in out
+    assert "- Nearest object to the tip: red cup, 0.0 cm away in xy; tip +10.0 cm from its top" in out
+    grasp = et.get_frame(attempt, "grasp", tmp_path, 1)
+    assert "Objects, from the scene before the attempt (no look() before this phase ended):" in grasp
+    assert "- Nearest object to the tip: blue cup, 0.0 cm away in xy; tip -1.0 cm from its top" in grasp
+    assert "Planned target" not in grasp  # no move_to in the grasp phase
+    assert "Objects, from the scene after the attempt:" in et.get_frame(attempt, "crop_after", tmp_path, 1)
+
+
+def test_error_arrow_points_from_the_tip_to_the_target(runs, tmp_path):
+    _, attempt = runs
+    move = attempt.trace[6]
+    move.ee_after = (0.205, 0.090, 0.175)  # stopped 1.5 cm short in x, 1 cm over in y, 0.5 cm low
+    out = et.get_frame(attempt, "carry", tmp_path, 1)
+    assert "- Error arrow, tip → target: dx +1.5, dy -1.0, dz +0.5 cm (1.8 cm in xy, 1.9 cm in 3D)" in out
 
 
 # ---- get_object_track --------------------------------------------------------------------------
@@ -101,6 +128,7 @@ def test_compare_puts_the_phase_side_by_side(runs, tmp_path):
     assert "| check | ✓ blue cup held through 16 cm sideways move (calls #6–#6) | ✗ lost blue cup" in out
     assert "| 1 | #6 move_to(0.220, 0.080, 0.180) |" in out
     assert "expected (fake): `frames/round2_expected_fake_carry_sim_carry.jpg`" in out
+    assert "; shows tip (0.220, 0.080, 0.180); nearest object: red cup, 0.0 cm away" in out
     assert "actual (fake): `frames/round2_actual_fake_carry_real_carry.jpg`" in out
     assert "| blue cup | (0.220, 0.080, 0.080) | (0.220, -0.080, 0.000) | 17.9 |" in out
 
@@ -194,3 +222,53 @@ def test_droid_calls_the_evidence_tools_through_the_sdk(runs, tmp_path, monkeypa
     assert "No object matching ''" in results[1]
     assert "# carry: passed on fake (v0, the sim gate run of this skill)" in results[2]
     assert (author.workspace("run-1") / "frames" / "round1_fake_carry_real_carry.jpg").is_file()
+
+
+def test_get_frame_output_reaches_the_model_through_the_sdk(runs, tmp_path, monkeypatch):
+    """Done-when for #156: Droid's get_frame call returns the frame as text the model receives."""
+    droid = fake.install(monkeypatch)
+    monkeypatch.setattr(author_mod.shutil, "which", lambda name: f"/opt/bin/{name}")
+    cfg = tmp_cfg(tmp_path)
+    _, attempt = runs
+    droid.turns = [fake.Turn(skill=V2, output=fake.output(), tools=["get_frame", "read_file"],
+                             tool_args={"get_frame": {"phase": "carry"},
+                                        "read_file": {"name": "frames/round1_fake_carry_real_carry.jpg"}})]
+    author = DroidSDKAuthor(cfg, NullBus(), lambda s: make_env("fake", cfg, s))
+    try:
+        ctx = RepairContext("run-1", 1, FakeWorld.demo(cfg).observe(), None, {}, attempt=attempt)
+        author.repair(TASK, V1, "# failure", ctx)
+    finally:
+        author.close()
+    (frame_name, frame), (read_name, read) = droid.sessions[0].tool_results
+    assert frame_name == "get_frame" and [block["type"] for block in frame] == ["text"]
+    text = frame[0]["text"]
+    assert text.startswith("# carry on fake (v0)") and "## What the frame shows (as text)" in text
+    assert "| blue cup | 0.220 | -0.080 | 0.000 | 0.080 | 0.065 | 16.0 |" in text
+    assert "- Error arrow, tip → target:" in text and "Read" not in text
+    # The image itself stays unreadable to Droid, so nothing may point it at the file.
+    assert read_name == "read_file" and "is an image" in read[0]["text"]
+
+
+def test_droid_template_names_only_the_sdk_tools_and_the_current_rules():
+    from skillsmith.repair.workspace import TEMPLATE_DIR
+
+    text = "\n".join((TEMPLATE_DIR / name).read_text() for name in ("AGENTS.md", "API.md"))
+    assert not re.search(r"\b(Read|Edit)\b", text)
+    for name in TOOL_NAMES:
+        assert f"`{name}(" in text
+    for rule in ("No decorators", "No recursion", "`.format`", "No attribute assignment", "|e| ≤ 10",
+                 "Top-level assignments are constants only", "same name"):
+        assert rule in text
+
+
+def test_real_sdk_tool_results_are_text_only(runs, tmp_path):
+    """Why get_frame describes the frame: droid-sdk 0.5 tools cannot return image content."""
+    mcp = pytest.importorskip("droid_sdk.mcp")
+    assert mcp.ToolResponse.__dataclass_fields__["content"].type in (str, "str")
+    cfg = load_config()
+    _, attempt = runs
+    t = RepairTools(cfg, NullBus(), tmp_path, TASK, {}, lambda s: make_env("fake", cfg, s))
+    t.update(None, 1, {}, attempt=attempt)
+    get_frame = next(mcp.tool(n, d, fn) for n, d, fn in t.functions() if n == "get_frame")
+    out = asyncio.run(get_frame.handler({"phase": "carry"}))
+    assert isinstance(out, str) and "## What the frame shows (as text)" in out

@@ -193,6 +193,7 @@ class RepairTools:
         return self.library.get(name, f"No saved skill named '{name}'. Call list_library.")
 
     def get_frame(self, phase: str = "") -> str:
+        """Text only: droid-sdk 0.5 tool results cannot carry images (see evidence_tools)."""
         return evidence_tools.get_frame(self.attempt, phase, self.workspace, self.round)
 
     def get_object_track(self, name: str = "") -> str:
@@ -219,9 +220,10 @@ class RepairTools:
             ("list_library", "Names of saved, working skills you can call with skills.call().", self.list_library),
             ("read_library_skill", "Source code of a saved skill.", self.read_library_skill),
             ("get_frame", "One phase of the failed attempt (approach, grasp, lift, carry, place, release, "
-                          "retreat, or crop_before/crop_after): its check, its calls and its annotated "
-                          "key frame, copied into frames/ for you to Read. Empty phase = the failing "
-                          "phase.", self.get_frame),
+                          "retreat, or crop_before/crop_after): its check, its calls and what its "
+                          "annotated key frame shows, as text (objects with positions, gripper tip, "
+                          "planned target, error arrow in cm). Empty phase = the failing phase.",
+             self.get_frame),
             ("get_object_track", "Where one object (e.g. 'blue cup') was through the failed attempt: "
                                  "camera positions before, at each look() and after, plus the stretch "
                                  "it rode in the gripper.", self.get_object_track),

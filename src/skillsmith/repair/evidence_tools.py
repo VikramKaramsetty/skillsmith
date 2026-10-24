@@ -1,7 +1,10 @@
 """Droid's evidence tools (WS5.4): pull more evidence on demand, like a human scrubbing video.
 
-- `get_frame(phase)`: the phase check, its calls and its annotated key frame, copied into the
-  workspace so Droid can open it with Read.
+- `get_frame(phase)`: the phase check, its calls and what its annotated key frame shows, as text:
+  objects with positions, gripper tip, planned target and the error arrow in cm. droid-sdk 0.5
+  tool results are text only (its MCP server wraps every return in one TextContent), and
+  read_file refuses images, so the frame reaches Droid as this description. The image itself
+  is copied into the workspace's frames/ for the dashboard and humans.
 - `get_object_track(name)`: where one object was through the attempt: observed positions
   (scene before, every `look()`, scene after) plus the stretch it rode in the gripper.
 - `compare_with_success(phase)`: one phase of the failed attempt next to the same phase of a
@@ -15,10 +18,10 @@ from __future__ import annotations
 import math
 import shutil
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from skillsmith.repair.report import CROP_KEYS, _fmt_xyz, _ordered_frames, _scene_delta, _trace_table
-from skillsmith.types import AttemptResult, PhaseCheck, PrimitiveCall, Scene
+from skillsmith.types import AttemptResult, PhaseCheck, PrimitiveCall, Scene, Vec3
 
 NO_ATTEMPT = ("No failed attempt this round (the skill was rejected by the static checks or by a "
               "reviewer before it ran). Use the evidence in failure.md.")
@@ -60,14 +63,14 @@ def _available(attempt: AttemptResult) -> str:
 
 
 def _localise(path: str, ws: Path, tag: str) -> str:
-    """Copy a frame into the workspace's frames/ so Droid can Read it; say so if it is missing."""
+    """Copy a frame into the workspace's frames/ (for humans); say so if it is missing."""
     src = Path(path)
     if not src.is_file():
         return f"`{path}` _(missing: the file was not saved)_"
     dest = ws / "frames" / f"{tag}_{src.name}"
     dest.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy(src, dest)
-    return f"`frames/{dest.name}` (open it with Read)"
+    return f"`frames/{dest.name}` (image; described here as text)"
 
 
 def _check_line(check: Optional[PhaseCheck]) -> str:
@@ -81,6 +84,94 @@ def _call_text(call: Optional[PrimitiveCall]) -> str:
         return "—"
     args = ", ".join(f"{v:.3f}" if isinstance(v, float) else str(v) for v in call.args.values() if v is not None)
     return f"#{call.index} {call.name}({args}){'' if call.ok else ' ✗'}"
+
+
+# ---- what a frame shows, as text ---------------------------------------------------------------
+def _scene_at(attempt: AttemptResult, phase: str, check: Optional[PhaseCheck]) -> Tuple[Optional[Scene], str]:
+    """The best estimate of the table at the end of a phase, and where it came from."""
+    if phase == "crop_before" or (check is None and phase != "crop_after"):
+        return attempt.scene_before, "the scene before the attempt"
+    if check is None:
+        return attempt.scene_after, "the scene after the attempt"
+    looks = [c for c in attempt.trace if c.name == "look" and isinstance(c.result, Scene) and c.index <= check.end_index]
+    last_index = attempt.trace[-1].index if attempt.trace else -1
+    if check.end_index >= last_index and attempt.scene_after is not None:
+        return attempt.scene_after, "the scene after the attempt (this phase ends the run)"
+    if looks:
+        return looks[-1].result, f"the look() at call #{looks[-1].index}"
+    return attempt.scene_before, "the scene before the attempt (no look() before this phase ended)"
+
+
+def _target(calls: List[PrimitiveCall]) -> Optional[Tuple[PrimitiveCall, Vec3]]:
+    """The last move_to in the phase: where the skill meant the tip to be (the crosshair)."""
+    for call in reversed(calls):
+        xyz = [call.args.get(k) for k in ("x", "y", "z")]
+        if call.name == "move_to" and all(isinstance(v, (int, float)) for v in xyz):
+            return call, (float(xyz[0]), float(xyz[1]), float(xyz[2]))
+    return None
+
+
+def _tip(calls: List[PrimitiveCall]) -> Optional[Tuple[PrimitiveCall, Vec3]]:
+    for call in reversed(calls):
+        if call.ee_after is not None:
+            return call, tuple(call.ee_after)
+    return None
+
+
+def _object_rows(scene: Scene, tip: Optional[Vec3]) -> List[str]:
+    rows = ["| object | x | y | z (base) | top | width | xy from tip cm |", "|---|---|---|---|---|---|---|"]
+    for o in scene.objects:
+        hidden = " (hidden: last seen)" if not o.visible else ""
+        apart = f"{_cm((o.x, o.y), tip):.1f}" if tip else "—"
+        rows.append(f"| {o.label}{hidden} | {o.x:.3f} | {o.y:.3f} | {o.z:.3f} | {o.top:.3f} | {o.width:.3f} | {apart} |")
+    return rows
+
+
+def _arrow(tip: Vec3, target: Vec3) -> str:
+    d = [(t - p) * 100 for p, t in zip(tip, target)]
+    return (f"dx {d[0]:+.1f}, dy {d[1]:+.1f}, dz {d[2]:+.1f} cm "
+            f"({math.hypot(d[0], d[1]):.1f} cm in xy, {math.dist(tip, target) * 100:.1f} cm in 3D)")
+
+
+def _nearest(scene: Optional[Scene], tip: Optional[Vec3]) -> Optional[str]:
+    if scene is None or tip is None or not scene.objects:
+        return None
+    o = min(scene.objects, key=lambda obj: _cm((obj.x, obj.y), tip))
+    return (f"{o.label}, {_cm((o.x, o.y), tip):.1f} cm away in xy; tip {(tip[2] - o.top) * 100:+.1f} cm "
+            f"from its top, {(tip[2] - o.z) * 100:+.1f} cm from its base")
+
+
+def describe_frame(attempt: AttemptResult, phase: str, check: Optional[PhaseCheck]) -> List[str]:
+    """The annotated frame's overlays as text: boxes (objects), tip dot, target crosshair, error arrow."""
+    calls = _calls(attempt, check)
+    tip, target = _tip(calls), _target(calls)
+    scene, source = _scene_at(attempt, phase, check)
+    tip_xyz = tip[1] if tip else None
+    lines = ["\n## What the frame shows (as text)"]
+    if scene is not None and scene.objects:
+        lines += [f"Objects, from {source}:"] + _object_rows(scene, tip_xyz)
+    else:
+        lines.append(f"No objects detected in {source}.")
+    if tip:
+        lines.append(f"- Gripper tip (after call #{tip[0].index} {tip[0].name}): {_fmt_xyz(tip_xyz)}")
+    if target:
+        lines.append(f"- Planned target (call #{target[0].index} move_to): {_fmt_xyz(target[1])}")
+    if tip and target:
+        lines.append(f"- Error arrow, tip → target: {_arrow(tip_xyz, target[1])}")
+    near = _nearest(scene, tip_xyz)
+    if near:
+        lines.append(f"- Nearest object to the tip: {near}")
+    return lines
+
+
+def _frame_summary(attempt: AttemptResult, phase: str) -> str:
+    """One line for compare_with_success: where the tip ended and the nearest object."""
+    check = _check(attempt, phase)
+    tip = _tip(_calls(attempt, check))
+    if tip is None:
+        return "no tip position recorded"
+    near = _nearest(_scene_at(attempt, phase, check)[0], tip[1])
+    return f"tip {_fmt_xyz(tip[1])}" + (f"; nearest object: {near}" if near else "")
 
 
 # ---- get_frame ------------------------------------------------------------------------------
@@ -98,6 +189,7 @@ def get_frame(attempt: Optional[AttemptResult], phase: str, ws: Path, rnd: int) 
         lines.append(f"**Annotated frame:** {_localise(path, ws, f'round{rnd}_{attempt.env}_{phase}')}")
     else:
         lines.append("_no frame captured for this phase_")
+    lines += describe_frame(attempt, phase, check)
     calls = _calls(attempt, check)
     if calls:
         lines.append("\n## Calls in this phase\n" + _trace_table(attempt, calls=calls))
@@ -219,7 +311,7 @@ def compare_with_success(attempt: Optional[AttemptResult], reference: Optional[A
         lines.append("\n## Frames")
         for who, run, path in frames:
             shown = _localise(path, ws, f"round{rnd}_{who}_{run.env}_{phase}") if path else "_none_"
-            lines.append(f"- {who} ({run.env}): {shown}")
+            lines.append(f"- {who} ({run.env}): {shown}; shows {_frame_summary(run, phase)}")
     if reference.scene_after is not None and attempt.scene_after is not None:
         lines.append("\n## Where objects ended\n"
                      + _scene_delta(reference.scene_after, attempt.scene_after, reference.env, attempt.env))
