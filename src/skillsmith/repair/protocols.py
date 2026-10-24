@@ -15,15 +15,11 @@ class AuthorContext:
     scene: Optional[Scene]
     snapshot_path: Optional[str]
     library: Dict[str, str] = field(default_factory=dict)  # name -> source, read-only
-
-
-@dataclass
-class RepairContext(AuthorContext):
-    """AuthorContext plus the run under repair, for Droid's evidence tools (WS5.4).
-    Local adapter until the lead folds these fields into AuthorContext (INTERFACES §6);
-    authors read them with getattr(ctx, "attempt", None)."""
     attempt: Optional[AttemptResult] = None   # the failed run (target attempt or sim gate)
     expected: Optional[AttemptResult] = None  # a run of the same skill that passed (sim gate)
+
+
+RepairContext = AuthorContext  # the WS5.4 adapter name; its fields are now in AuthorContext (§6)
 
 
 class SkillAuthor(Protocol):

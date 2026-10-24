@@ -39,7 +39,7 @@ Cropped before / after around the objects in the success check:
 ### Object positions: what the success check wanted vs where they ended up
 | object | wanted | expected (x, y, z) | actual (x, y, z) | xy error cm | z error cm |
 |---|---|---|---|---|---|
-| blue cup | on top of red cup | (0.220, 0.080, 0.080) | (0.220, -0.080, 0.190) | 16.0 | +11.0 |
+| blue cup | on top of red cup | (0.220, 0.080, 0.080) | (0.220, -0.080, 0.000) | 16.0 | -8.0 |
 
 ### This skill passed on fake (v0) but failed on fake
 | phase | expected (fake) | actual (fake) |
@@ -57,7 +57,7 @@ _no fake frame for release_
 
 | object | end (fake) | end (fake) | apart cm |
 |---|---|---|---|
-| blue cup | (0.220, 0.080, 0.165) | (0.220, -0.080, 0.190) | 16.2 |
+| blue cup | (0.220, 0.080, 0.080) | (0.220, -0.080, 0.000) | 17.9 |
 
 ## Trace
 | # | call | args | tip before | tip after | ok | result / error |
@@ -80,7 +80,7 @@ _no fake frame for release_
 ## Scene after
 | label | x | y | z (base) | top | width |
 |---|---|---|---|---|---|
-| blue cup | 0.220 | -0.080 | 0.190 | 0.270 | 0.065 |
+| blue cup | 0.220 | -0.080 | 0.000 | 0.080 | 0.065 |
 | red cup | 0.220 | 0.080 | 0.000 | 0.080 | 0.065 |
 | green block | 0.150 | 0.000 | 0.000 | 0.030 | 0.030 |
 

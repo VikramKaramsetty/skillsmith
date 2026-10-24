@@ -102,7 +102,7 @@ def test_compare_puts_the_phase_side_by_side(runs, tmp_path):
     assert "| 1 | #6 move_to(0.220, 0.080, 0.180) |" in out
     assert "expected (fake): `frames/round2_expected_fake_carry_sim_carry.jpg`" in out
     assert "actual (fake): `frames/round2_actual_fake_carry_real_carry.jpg`" in out
-    assert "| blue cup | (0.220, 0.080, 0.165) | (0.220, -0.080, 0.190) | 16.2 |" in out
+    assert "| blue cup | (0.220, 0.080, 0.080) | (0.220, -0.080, 0.000) | 17.9 |" in out
 
 
 def test_compare_marks_phases_the_failed_run_never_reached(runs, tmp_path):
