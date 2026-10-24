@@ -3,16 +3,33 @@
 You are writing or repairing one **skill**: a short Python program that moves a
 SO-ARM101 robot arm by combining safe primitive moves. You never control motors directly.
 
+## Your tools
+
+You have **only** these, all from the `skillsmith` tool server (call them from a Script as
+`tools.skillsmith.<name>({...})`). There are no other file, shell or web tools.
+
+| Tool | Use |
+|---|---|
+| `read_file(name)` | Text files in your workspace: `failure.md`, `skill.py`, `LESSONS.md`, `AGENTS.md`, `API.md`, `scene.json`, `library/<skill>.py`. It refuses images. |
+| `write_skill(source)` | Save the **complete** new `skill.py` (whole file, not a diff). The only way to change the skill; the static checker runs at once and lists any issue. |
+| `validate_skill()` | The static checker on your current `skill.py`. |
+| `simulate_skill()` | Runs your `skill.py` in simulation on a copy of the real table: PASS/FAIL, trace, safety report. A few runs per round. |
+| `get_scene()`, `list_library()`, `read_library_skill(name)` | The current objects; saved skills you can call or copy from. |
+
+Your reply also carries `skill_source`: the complete new `skill.py`. The orchestrator saves
+it and re-runs every check, so it must match what you last saved with `write_skill`.
+
 ## Your job
 
-1. Read the evidence (the prompt, also saved as `failure.md`), then `API.md` (everything
-   you may call), then `skill.py`.
+1. The evidence is in the prompt (also `failure.md`). The rules (this file) and the skill API
+   (`API.md`) are in your instructions. Get `skill.py` with `read_file`.
 2. Look at the **trace table** (every call, tip position before/after, errors, the failing
    line) and the **scene before/after** tables. The camera snapshot is attached as an image.
-   `library/*.py` are working skills you can call or copy from.
+   `library/*.py` are working skills you can call or copy from (`read_library_skill`).
 3. Make the **smallest change** to `skill.py` that fixes the stated failure. Never rewrite
    working parts. You are being timed live: aim to fix it in **one round**.
-4. Edit **only `skill.py`**. Any other edit, and any shell command, is refused.
+4. Change the skill **only with `write_skill`**. Nothing else can be changed, and there is
+   no shell.
 5. **Check your work with the `skillsmith` tools** before finishing:
    - `validate_skill`: the static checker. Fix everything it reports.
    - `simulate_skill`: runs your skill in simulation on a copy of the real table and returns
@@ -24,7 +41,7 @@ SO-ARM101 robot arm by combining safe primitive moves. You never control motors 
    you changed and why), `change_type` (`"parameter"` if you only changed numbers or
    constants, `"strategy"` if you changed the approach: which calls, their order, the logic),
    `sim_checked` (did `simulate_skill` pass on your final version), `confidence` (0–1), and
-   `lesson` (one reusable rule for future skills, or "").
+   `lesson` (one reusable rule for future skills, or ""), and `skill_source`.
 
 ## No magic offsets
 
@@ -60,13 +77,25 @@ def run(robot, scene, skills, top, bottom):
 
 ## Static rules (code breaking these is rejected before it runs)
 
+`write_skill` and `validate_skill` run this checker; the orchestrator runs it again.
+
 - No `import` (`math` is already available), `while`, `try`/`except`, `with`, `class`,
-  `lambda`, `global`, `nonlocal`, `del`, generators or `async`.
-- No attribute starting with `_`. No `eval exec compile open getattr setattr type …`.
-- Use `robot`, `scene`, `skills` only as `robot.method(...)` or as a call argument.
-  Don't assign them to other names or reassign them.
-- Only the methods listed in `API.md`.
-- `range()` with a literal bound of at most 50. At most 200 lines.
+  `global`, `nonlocal`, `async`, `yield` (no generators) or `lambda`. No decorators.
+- No attribute starting with `_`. None of the names `eval exec compile open __import__ getattr
+  setattr delattr globals locals vars input breakpoint type object super`.
+- Only the names the runtime gives you (the builtins listed in `API.md`, `math`, `SkillError`,
+  `ValueError`, `RuntimeError`) and names your skill binds itself. No `print`: use `robot.note`.
+- Only the `robot.*`, `scene.*`, `skills.*` attributes listed in `API.md`. No frame or
+  generator introspection attributes, no `.format` (use f-strings), no `.mro`.
+- Use `robot`, `scene`, `skills` only as `robot.attr` or as a call argument: no aliasing,
+  no reassigning. Pass them to your own helper functions only as parameters of the same name
+  (`helper(robot, x, y)` with `def helper(robot, x, y)`).
+- No attribute assignment (`obj.x = ...`) and no mutating robot or scene data.
+- `range()` bound at most 50 (it must fold to a constant). No recursion.
+- Exponents must be constants with |e| ≤ 10; no `<<`; sequence repetition (`[0] * n`) at
+  most 1000.
+- Top-level assignments are constants only. At most 200 lines.
+- A `def run(robot, scene, skills, ...)` must exist.
 
 ## Units and frame
 
