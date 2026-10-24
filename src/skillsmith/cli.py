@@ -12,7 +12,7 @@ import argparse
 import json
 import sys
 
-from skillsmith.config import load_config
+from skillsmith.config import REPO_ROOT, load_config
 from skillsmith.events import EventBus, new_run_id
 from skillsmith.hal.base import make_env
 from skillsmith.skills.library import SkillLibrary
@@ -102,10 +102,45 @@ def cmd_demo_fake(args, cfg) -> int:
     world = FakeWorld.demo(cfg, rim_slip=True)  # the "real" world has a sim-to-real gap
     target = Env("fake", world, world, world)
     library = SkillLibrary(temp_library())
+    seeded = getattr(args, "seed", False)
+    if seeded:  # the real demo story: start from the block-tuned stack, which slips on a cup
+        seed = REPO_ROOT / "skills" / "library" / "seeds" / "stack.py"
+        (library.dir / "stack.py").write_text(seed.read_text())
     make_check_env = _check_env_factory("fake", cfg)
     author = _author(args.author, cfg, bus, make_check_env, drafts=[v1], repairs=[v2])
-    print(f"Task: {task.text}\nLibrary: {library.names()} (temp copy)\n")
+    profile = cfg.get("profile") or "default"
+    print(f"Task: {task.text}\nLibrary: {library.names()} (temp copy{', block-tuned stack seed' if seeded else ''})"
+          f"\nProfile: {profile}\n")
     return _run(task, target, make_check_env, library, author, _approver("auto", "fake"), cfg, bus)
+
+
+def cmd_droid_check(args, cfg) -> int:
+    """Pre-demo check: Droid reachable, key valid, credits active, and how long a trivial call takes."""
+    import asyncio
+    import time
+
+    try:
+        from droid_sdk import run
+    except ImportError:
+        print("droid-sdk not installed: uv sync --extra droid")
+        return 1
+
+    async def ping():
+        t0 = time.time()
+        result = await run("Reply with exactly the word ok.", timeout=cfg.droid.timeout_s)
+        return result, time.time() - t0
+
+    try:
+        result, seconds = asyncio.run(ping())
+    except Exception as e:
+        print(f"DROID CHECK FAILED: {e!r}\n(installed? `droid --version`; key? FACTORY_API_KEY; credits?)")
+        return 1
+    text = getattr(result, "text", "") or str(getattr(result, "error", ""))
+    if getattr(result, "subtype", None) != "success":
+        print(f"DROID CHECK FAILED: {getattr(result, 'subtype', '?')}: {text[:200]}")
+        return 1
+    print(f"DROID CHECK OK: replied {text.strip()!r} in {seconds:.1f}s")
+    return 0
 
 
 def cmd_serve(args, cfg) -> int:
@@ -120,6 +155,7 @@ def cmd_serve(args, cfg) -> int:
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(prog="skillsmith")
     p.add_argument("--config", default=None)
+    p.add_argument("--profile", default=None, help="config overlay, e.g. stage (config/<name>.yaml)")
     sub = p.add_subparsers(dest="cmd", required=True)
 
     v = sub.add_parser("validate")
@@ -136,12 +172,16 @@ def main(argv=None) -> int:
 
     d = sub.add_parser("demo-fake")
     d.add_argument("--author", choices=["droid", "scripted"], default="scripted")
+    d.add_argument("--seed", action="store_true", help="start from the block-tuned stack seed (the demo failure)")
+
+    sub.add_parser("droid-check")
 
     sub.add_parser("serve")
 
     args = p.parse_args(argv)
-    cfg = load_config(args.config)
-    handler = {"validate": cmd_validate, "run": cmd_run, "demo-fake": cmd_demo_fake, "serve": cmd_serve}
+    cfg = load_config(args.config, args.profile)
+    handler = {"validate": cmd_validate, "run": cmd_run, "demo-fake": cmd_demo_fake,
+               "droid-check": cmd_droid_check, "serve": cmd_serve}
     return handler[args.cmd](args, cfg)
 
 
