@@ -62,7 +62,7 @@ _no fake frame for release_
 ## Trace
 | # | call | args | tip before | tip after | ok | result / error |
 |---|---|---|---|---|---|---|
-| 0 | note | text=stacking blue cup on red cup | (0.180, 0.000, 0.150) | (0.180, 0.000, 0.150) | ✓ | {'t': T, 'run_id': 'test', 'type': 'note', 'data': {'text': 'stacking blue cup on red cup'}} |
+| 0 | note | text=stacking blue cup on red cup | (0.180, 0.000, 0.150) | (0.180, 0.000, 0.150) | ✓ |  |
 | 1 | release |  | (0.180, 0.000, 0.150) | (0.180, 0.000, 0.150) | ✓ |  |
 | 2 | move_to | x=0.220, y=-0.080, z=0.180 | (0.180, 0.000, 0.150) | (0.220, -0.080, 0.180) | ✓ |  |
 | 3 | move_to | x=0.220, y=-0.080, z=0.070 | (0.220, -0.080, 0.180) | (0.220, -0.080, 0.070) | ✓ |  |

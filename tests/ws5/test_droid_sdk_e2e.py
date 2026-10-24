@@ -155,7 +155,7 @@ def test_droid_drafts_then_repairs_rim_slip_on_fake_env(tmp_path, fake_sdk):
     session = fake_sdk.opened[0]
     assert len(session.prompts) == 2 and "lost blue cup" in session.prompts[1][0]
     assert str(session.kwargs["runtime"].executable) == "/opt/bin/droid"
-    assert session.kwargs["config"].autonomy == sdk.Autonomy.LOW
+    assert session.kwargs["config"].autonomy == sdk.Autonomy.HIGH
 
     ev = lambda t: [e["data"] for e in bus.events if e["type"] == t]  # noqa: E731
     results = ev("droid.result")

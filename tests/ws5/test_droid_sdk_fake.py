@@ -97,8 +97,9 @@ def test_session_is_configured_with_tight_controls(tmp_path, droid):
     s = droid.sessions[0]
     assert s.model == "fast-model" and s.reasoning_effort is fake.ReasoningEffort.HIGH
     assert str(s.runtime.executable) == "/opt/bin/droid"
-    assert s.config.autonomy is fake.Autonomy.LOW and s.config.disabled_tools == ["Execute", "Script", "AskUser"]
-    assert s.config.restrict_tools is None
+    assert s.config.autonomy is fake.Autonomy.HIGH and s.config.disabled_tools == ["Execute", "AskUser"]
+    assert s.config.restrict_tools[:4] == ["ToolSearch", "Script", "WaitForScript", "TodoWrite"]
+    assert all(t.startswith("skillsmith___") for t in s.config.restrict_tools[4:])
     append = s.config.system_prompt["append"]
     assert append.startswith(author_mod.SYSTEM_APPEND) and "# API.md" in append and "# AGENTS.md" in append
     (server,) = s.config.mcp_servers
@@ -119,7 +120,7 @@ def test_every_step_is_an_event(tmp_path, droid):
         author.close()
 
     started = events(bus, "droid.started")[0]
-    assert started["via"] == "droid-sdk" and started["autonomy"] == "low" and started["round"] == 1
+    assert started["via"] == "droid-sdk" and started["autonomy"] == "high" and started["round"] == 1
     assert events(bus, "droid.tools")[0]["tools"] == ["Read", "Edit"]
     assert events(bus, "droid.message")[0]["text"].startswith("Plan:")
     calls = events(bus, "droid.tool_call")

@@ -63,11 +63,15 @@ droid:                              # see docs/NORTH_STAR.md
   reasoning: null
   timeout_s: 240
   # SDK controls
-  autonomy: low                     # droid_sdk.Autonomy
-  disabled_tools: [Execute, Script, AskUser]   # no shell; no Script (droid-sdk 0.5 can't parse its
-                                              # permission requests); no mid-run questions. Droid reads
-                                              # and writes ONLY through our read_file/write_skill tools.
-  restrict_tools: []                # optional built-in allowlist; WS5.1 sets it from the droid.tools event
+  # Control = an explicit ALLOWLIST. Droid's only capabilities are these harness tools plus our
+  # `skillsmith` functions (added automatically in code): no file, shell, web, automation or
+  # sub-agent tools. Autonomy HIGH only means "don't pause for approval", which is safe because
+  # nothing reachable is dangerous: `make droid-sandbox-check` proves escapes are blocked.
+  # (In this Droid CLI, custom tools are callable only from a Script, and droid-sdk 0.5.0 cannot
+  # parse Script permission requests, so at LOW/MEDIUM every tool call was cancelled.)
+  autonomy: high
+  restrict_tools: [ToolSearch, Script, WaitForScript, TodoWrite]
+  disabled_tools: [Execute, AskUser]   # belt and braces: never shell, never mid-run questions
   sim_tool_budget: 3                # simulate_skill calls Droid may make per round
   attach_snapshot: true             # send the failure camera frame as an image
   attach_frames: true               # attach the evidence's key frames as images (WS5.3)

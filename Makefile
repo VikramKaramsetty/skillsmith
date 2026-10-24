@@ -2,7 +2,7 @@ PY ?= 3.12
 UV := uv run --python $(PY) --extra dev --extra dashboard
 UV_HEAVY := uv run --python $(PY) --extra dev --extra dashboard --extra sim --extra kin --extra vision --extra droid
 
-.PHONY: setup check check-heavy bench test lint fmt demo-fake validate-library status sync-gx10
+.PHONY: droid-sandbox-check setup check check-heavy bench test lint fmt demo-fake validate-library status sync-gx10
 
 setup:
 	uv sync --python $(PY) --extra dev --extra dashboard
@@ -39,3 +39,7 @@ status:
 # Push code to the GX10 (code only; never runs anything there).
 sync-gx10:
 	rsync -az --delete --exclude .venv --exclude runs --exclude .git ./ asus@100.103.96.17:~/skillsmith/
+
+# Live proof that Droid's tool sandbox holds (needs FACTORY_API_KEY + credits).
+droid-sandbox-check:
+	uv run --python $(PY) --extra dev --extra dashboard --extra droid python tools/droid_sandbox_check.py

@@ -5,9 +5,12 @@ stage-emergency fallback.
 
 - **Trigger:** RepairLoop calls draft()/repair() when the robot's attempt fails the camera
   check, a gate rejects Droid's code, a human rejects with a note, or a task is new.
-- **Control:** autonomy LOW, shell execution disabled, a permission handler (droid_tools.decide)
-  that allows only edits to skill.py in the workspace and calls to our `skillsmith` tools.
-  After Droid returns we re-run static, sim and safety ourselves.
+- **Control:** an explicit tool allowlist (`restrict_tools`): Droid can use only ToolSearch,
+  Script, WaitForScript, TodoWrite and our `skillsmith` functions; no file, shell, web, automation
+  or sub-agent tools. It reads and writes only through `read_file` / `write_skill` (workspace
+  only), and its fix also arrives as `skill_source`, which OUR code writes. The permission handler
+  (droid_tools.decide) stays as a backstop. After Droid returns we re-run static, sim and safety
+  ourselves. `tools/droid_sandbox_check.py` proves escapes are blocked.
 - **Visibility:** every assistant message, tool call, tool result, permission decision and the
   structured result is emitted as an event for the dashboard and runs/<id>/events.jsonl.
 - **Memory:** one SDK session per run stays open across repair rounds (kept on a private
@@ -43,12 +46,17 @@ from skillsmith.repair.workspace import lessons_path, prepare_workspace, workspa
 from skillsmith.types import Scene, TaskSpec
 
 SYSTEM_APPEND = (
-    "You write and repair robot skills for the Skillsmith arm. Use ONLY the skillsmith tools: "
+    "You write and repair robot skills for the Skillsmith arm. Your skillsmith tools are deferred: "
+    "load them once with ToolSearch (query 'select:skillsmith___read_file,skillsmith___write_skill,"
+    "skillsmith___simulate_skill,skillsmith___validate_skill'), then call them from a Script as "
+    "tools.skillsmith.read_file({name: 'skill.py'}), tools.skillsmith.write_skill({source: ...}), "
+    "tools.skillsmith.simulate_skill({}). Use ONLY the skillsmith tools: "
     "read_file (AGENTS.md, API.md, LESSONS.md, failure.md, skill.py, library/<name>.py), "
     "write_skill (save the COMPLETE new skill.py; the static checker runs at once; it is the only "
     "way to change the skill), validate_skill, simulate_skill, and get_frame / get_object_track / "
     "compare_with_success when the evidence is not enough. Do not use any other tool and do not ask "
-    "questions. Make the smallest change that fixes the failure and reply with the requested JSON. "
+    "questions. Make the smallest change that fixes the failure, save it with write_skill, run "
+    "simulate_skill on it, and reply with the requested JSON. "
     "Put the COMPLETE new skill.py in `skill_source`: that is how your fix is applied (the "
     "orchestrator saves it and re-runs every check). The rules and the skill API follow."
 )
@@ -209,9 +217,14 @@ class DroidSDKAuthor:
             autonomy=Autonomy[str(self.d.autonomy).upper()],
             mcp_servers=[server],
             disabled_tools=list(self.d.disabled_tools or []) or None,
-            restrict_tools=list(self.d.restrict_tools or []) or None,
+            restrict_tools=self.allowlist(tools),
             system_prompt={"type": "preset", "preset": "droid", "append": _system_append()},
         )
+
+    def allowlist(self, tools: RepairTools) -> list:
+        """Harness tools from config + every skillsmith function, as the CLI names them."""
+        ours = [f"{MCP_SERVER_NAME}___{name}" for name, _, _ in tools.functions()]
+        return list(self.d.get("restrict_tools") or []) + ours
 
     def build_interactions(self, ws: Path, tools: RepairTools):
         from droid_sdk import InteractionHandlers, ToolConfirmationOutcome

@@ -6,7 +6,7 @@ story we tell the Factory judges ("controlled permissions").
 
 | # | Layer | Where | Stops |
 |---|---|---|---|
-| 1 | **Droid permissions** (Droid SDK): autonomy LOW, `Execute` disabled, permission handler allows only `skill.py` edits + our `skillsmith` tools (refusals logged and explained to Droid), workspace outside the repo, only `skill.py` read back | `repair/droid_sdk.py`, `repair/droid_tools.py` | Droid running commands, touching our code, editing the checks |
+| 1 | **Droid tool allowlist** (Droid SDK `restrict_tools`): only ToolSearch, Script, WaitForScript, TodoWrite + our `skillsmith` functions; `read_file`/`write_skill` are workspace-only; the fix is written by our code; permission handler as backstop. Verified live by `make droid-sandbox-check` (shell, fs, fetch, path traversal all blocked) | `repair/droid_sdk.py`, `repair/droid_tools.py`, `tools/droid_sandbox_check.py` | Droid running commands, reading or writing outside its workspace, reaching the network, touching our code or checks |
 | 2 | **Static check**: AST allow-list (only `robot.*`/`scene.*`/`skills.call`; no imports/while/try/dunder/eval), ≤ 200 lines, bounded loops | `skills/validator.py` | escaping the API, infinite loops, swallowed errors |
 | 3 | **Restricted runtime**: `exec` with a tiny builtins table; only `Robot`/`Scene`/`SkillCaller` objects passed in | `skills/runtime.py` | anything the AST check missed (defence in depth, not a sandbox) |
 | 4 | **Cartesian guard** before every motion: workspace box, min tip height, reach ring, TCP speed cap, call budget, IK reachability | `safety.py`, `primitives.py` | out-of-workspace or too-fast targets; nothing moves on a violation |

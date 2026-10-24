@@ -72,8 +72,9 @@ class Robot:
 
     def note(self, text: str) -> None:
         """Show a short message on the dashboard."""
-        self._record("note", {"text": str(text)[:200]},
-                     lambda _i: self._bus.emit("note", text=str(text)[:200]))
+        def do(_i):
+            self._bus.emit("note", text=str(text)[:200])  # returns None: no event dict in the trace
+        self._record("note", {"text": str(text)[:200]}, do)
 
     def align_over(self, obj: str, hover: float = 0.08) -> float:
         """Hover `hover` m above an object's top, using its LATEST position, then fine-align

@@ -47,3 +47,13 @@ def test_unsafe_target_never_moves():
     r = run_skill(src, e, {}, cfg, NullBus(), skill="t")
     assert not r.ok and "OUT_OF_BOX" in r.error
     assert e.arm.joints() == before
+
+
+def test_released_object_lands_on_support_not_on_itself():
+    """Regression: _drop used to count the dropped object as its own support (+8 cm float)."""
+    _, v2 = demo_sources()
+    e = env()
+    r = run_skill(v2, e, {"top": "blue cup", "bottom": "red cup"}, cfg, NullBus(), skill="stack",
+                  library={"pick_place": PICK_PLACE}, success=STACK)
+    blue, red = r.scene_after.find("blue cup"), r.scene_after.find("red cup")
+    assert r.ok and abs(blue.z - red.top) < 1e-6
