@@ -9,8 +9,11 @@ import random
 import pytest
 
 from skillsmith.calibration import (
+    APPLIED_EVENT,
+    MAX_OFFSET,
     OffsetKinematics,
     apply_offsets,
+    check_offset,
     fit_offset,
     load_offsets,
     offset_spread,
@@ -80,12 +83,42 @@ def test_fit_rejects_bad_input():
         fit_offset([(0, 0)], [(0, 0), (1, 1)])
 
 
-def test_offset_kinematics_shifts_ik_and_leaves_fk():
+def test_offset_kinematics_shifts_ik_and_corrects_fk():
     w = FakeWorld.demo(cfg)
     k = OffsetKinematics(w, 0.01, -0.02)
     q = k.ik((0.2, 0.0, 0.05), w.joints())
     assert q[:3] == pytest.approx([0.19, 0.02, 0.05])
-    assert k.fk(q) == w.fk(q)
+    assert k.fk(q) == pytest.approx((0.2, 0.0, 0.05))  # fk(ik(p)) == p
+    x, y, z = w.fk(q)
+    assert k.fk(q) == pytest.approx((x + 0.01, y - 0.02, z))
+
+
+def test_corrected_fk_reports_the_true_tip():
+    """Over a miscalibrated model, the wrapped fk matches where the tip really is."""
+    w = FakeWorld.demo(cfg)
+    k = OffsetKinematics(Miscalibrated(w, *OFFSET), *OFFSET)
+    q = k.ik((0.22, 0.05, 0.08), w.joints())
+    assert k.fk(q) == pytest.approx(w.fk(q))
+    assert k.fk(q) == pytest.approx((0.22, 0.05, 0.08))
+
+
+@pytest.mark.parametrize("dx, dy", [(0.031, 0.0), (0.0, -0.05), (0.025, 0.025), (float("nan"), 0.0),
+                                    (float("inf"), 0.0)])
+def test_offsets_are_bounded(tmp_path, dx, dy):
+    w = FakeWorld.demo(cfg)
+    with pytest.raises(ValueError):
+        check_offset(dx, dy)
+    with pytest.raises(ValueError):
+        OffsetKinematics(w, dx, dy)
+    path = tmp_path / "offsets.json"
+    with pytest.raises(ValueError):
+        save_offsets(dx, dy, path)
+    assert not path.exists()
+
+
+def test_offset_on_the_bound_is_allowed():
+    assert check_offset(MAX_OFFSET, 0.0) == (MAX_OFFSET, 0.0)
+    assert check_offset(0.0, 0.0) == (0.0, 0.0)
 
 
 def test_fit_from_fake_places_then_correct():
@@ -113,3 +146,31 @@ def test_offsets_file_round_trip(tmp_path):
     path.write_text("{not json")
     with pytest.raises(ValueError):
         load_offsets(path)
+
+
+def test_apply_offsets_emits_calibration_applied(tmp_path):
+    path = tmp_path / "offsets.json"
+    w = FakeWorld.demo(cfg)
+    bus = NullBus()
+    assert apply_offsets(w, path, bus=bus) is w
+    assert bus.events == []  # nothing to apply, nothing to say
+
+    save_offsets(0.004, -0.002, path)
+    k = apply_offsets(w, path, bus=bus)
+    assert isinstance(k, OffsetKinematics)
+    (event,) = bus.events
+    assert event["type"] == APPLIED_EVENT
+    assert event["data"] == {"text": "calibration applied: dx +0.4 cm, dy -0.2 cm (from " + str(path) + ")",
+                             "dx": 0.004, "dy": -0.002, "path": str(path)}
+
+
+@pytest.mark.parametrize("text", ["{not json", '{"dx": 0.2, "dy": 0.0}', '{"dx": 0.01}'])
+def test_apply_offsets_reports_a_bad_file_then_raises(tmp_path, text):
+    path = tmp_path / "offsets.json"
+    path.write_text(text)
+    bus = NullBus()
+    with pytest.raises(ValueError):
+        apply_offsets(FakeWorld.demo(cfg), path, bus=bus)
+    (event,) = bus.events
+    assert event["type"] == "error" and event["data"]["where"] == "calibration"
+    assert str(path) in event["data"]["message"]
