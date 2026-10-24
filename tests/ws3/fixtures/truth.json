@@ -276,6 +276,57 @@
      ]
     }
    ]
+  },
+  {
+   "file": "stacked_far_before.jpg",
+   "t": 1730000004.0,
+   "objects": [
+    {
+     "id": "red_cup_0",
+     "label": "red cup",
+     "color": "red",
+     "kind": "cup",
+     "x": 0.29,
+     "y": -0.09,
+     "z": 0.0,
+     "height": 0.08,
+     "width": 0.065,
+     "top_uv": [
+      414.29,
+      155.29
+     ]
+    },
+    {
+     "id": "blue_cup_0",
+     "label": "blue cup",
+     "color": "blue",
+     "kind": "cup",
+     "x": 0.13,
+     "y": 0.13,
+     "z": 0.0,
+     "height": 0.08,
+     "width": 0.065,
+     "top_uv": [
+      194.33,
+      314.35
+     ]
+    },
+    {
+     "id": "green_block_0",
+     "label": "green block",
+     "color": "green",
+     "kind": "block",
+     "x": 0.15,
+     "y": 0.06,
+     "z": 0.0,
+     "height": 0.03,
+     "width": 0.03,
+     "top_uv": [
+      267.34,
+      292.66
+     ]
+    }
+   ]
   }
  ]
 }
