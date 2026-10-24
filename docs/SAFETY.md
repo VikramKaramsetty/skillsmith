@@ -13,6 +13,8 @@ story we tell the Factory judges ("controlled permissions").
 | 5 | **Simulation gate**: the exact code runs in MuJoCo on a copy of the real scene; any unintended contact or failed verify goes back to Droid | `hal/sim.py`, `repair/loop.py` | collisions, knocked-over objects, wrong logic |
 | 6 | **Human approval** on the dashboard (code diff, sim video, safety checklist) | dashboard / `CliApprover` | anything that looks wrong to a person |
 | 7 | **robotd**: joint limits from calibration, per-command delta clamp (`max_step_deg`), Goal=Present before torque-on, `/stop` | `robotd/` (WS1) | IK bugs, bad calibration, runaway commands |
+| 8 | **Live bump stop**: the world model flags a not-held object moving more than 1 cm; the Robot raises `WorldChanged` before the next motion | `perception/world.py` (WS3), `primitives.py` | pushing on after knocking something over |
+| 9 | **Failure routing**: environment-bucket failures (camera moved, out of reach, perception uncertain, hardware) go to a human, never to Droid as code | `analysis/` (WS4), `repair/loop.py` | Droid "fixing" code for a setup problem |
 
 ## Rules that do not bend
 

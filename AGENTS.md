@@ -8,8 +8,10 @@ Never merge the two.
 ## What we are building (one paragraph)
 
 Skillsmith is a robot arm (SO-ARM101) that writes its own skills. A small set of
-hand-tested primitives (`move_to`, `grasp`, `release`, `look`, `home`) is exposed to
-Python "skills". When a task fails, Factory Droid edits the skill; the skill is
+hand-tested primitives (`move_to`, `grasp`, `release`, `look`, `home`, `align_over`) is exposed
+to Python "skills". A live world model watches the table; when a task fails, plain rules
+classify the failure (class, phase, numbers, bucket); for skill failures, Factory Droid (via the
+Droid Python SDK) gets that evidence plus annotated frames and edits the skill; the skill is
 statically checked, run in MuJoCo, safety-checked, approved by a human, then run on the
 real arm, and the camera confirms. Working skills are saved and reused.
 Read `docs/ARCHITECTURE.md` for the full picture.

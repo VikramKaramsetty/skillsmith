@@ -4,7 +4,7 @@ import sys
 
 
 def main() -> int:
-    print("robotd not built yet (WS1.1): see docs/workstreams/WS1_robotd_real.md", file=sys.stderr)
+    print("robotd not built yet (WS1.1): see docs/workstreams/WS1_hardware.md", file=sys.stderr)
     return 1
 
 

@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import builtins
+import dataclasses
 import math
 import time
 import traceback
@@ -95,6 +96,21 @@ def run_skill(source: str, env, params: dict, cfg, bus: EventBus, *, skill: str,
                            error=error, verify=verify, safety=safety, scene_before=scene_before,
                            scene_after=scene_after, duration_s=round(duration, 3),
                            video_path=getattr(env.arm, "last_video_path", None))
+    _analyse(result, cfg, bus)
     bus.emit("attempt.finished", env=env.name, skill=skill, version=version, ok=ok,
              error=error, duration_s=result.duration_s, reason=result.reason())
     return result
+
+
+def _analyse(result: AttemptResult, cfg, bus: EventBus) -> None:
+    """Phase checks + failure classification (WS4.4/WS4.5). A no-op until analysis is built."""
+    from skillsmith.analysis import analyse_attempt
+
+    try:
+        result.phases, result.classification = analyse_attempt(result, cfg)
+    except NotImplementedError:
+        return
+    for phase in result.phases:
+        bus.emit("phase.check", **dataclasses.asdict(phase))
+    if result.classification is not None:
+        bus.emit("attempt.classified", **dataclasses.asdict(result.classification))

@@ -29,6 +29,11 @@ class CollisionError(SkillError):
     """Sim or fake world detected unintended contact."""
 
 
+class WorldChanged(SkillError):
+    """An object moved when nothing should have moved it (bumped, knocked over).
+    Raised by the Robot before the next motion when the world model reports it."""
+
+
 @dataclass(frozen=True)
 class SceneObject:
     id: str
@@ -41,6 +46,7 @@ class SceneObject:
     height: float
     width: float
     confidence: float = 1.0
+    visible: bool = True  # False = hidden (e.g. behind the arm); position is the last one seen
 
     @property
     def top(self) -> float:
@@ -150,11 +156,16 @@ class AttemptResult:
     scene_after: Optional[Scene]
     duration_s: float
     video_path: Optional[str] = None
+    phases: list = field(default_factory=list)  # list[PhaseCheck], from analysis.analyse_attempt
+    classification: Optional[Classification] = None
+    keyframes: dict = field(default_factory=dict)  # phase -> annotated image path
 
     def reason(self) -> str:
-        """One line on why the attempt failed (or 'ok')."""
+        """One line on why the attempt failed (or 'ok'). The classification leads when present."""
         if self.ok:
             return "ok"
+        if self.classification is not None:
+            return f"{self.classification.cls}: {self.classification.summary}"
         if self.error:
             return self.error
         if not self.safety.ok:
@@ -162,3 +173,50 @@ class AttemptResult:
         if self.verify and not self.verify.ok:
             return f"task not achieved: {self.verify.detail}"
         return "unknown failure"
+
+
+# ---- failure analysis (docs/ARCHITECTURE.md "Failure analysis") -------------------------
+PHASES = ("approach", "grasp", "lift", "carry", "place", "release", "retreat")
+
+BUCKET_SKILL = "skill"              # Droid fixes it in code
+BUCKET_ENVIRONMENT = "environment"  # a human / calibration fixes it; Droid is NOT called
+BUCKET_UNKNOWN = "unknown"          # Droid gets all evidence, flagged low confidence
+
+FAILURE_CLASSES = {
+    # skill bugs
+    "KNOCKED_ON_APPROACH": BUCKET_SKILL, "GRASP_MISS": BUCKET_SKILL, "SLIP_IN_CARRY": BUCKET_SKILL,
+    "COLLISION": BUCKET_SKILL, "NO_PICK": BUCKET_SKILL, "PLACE_OFF_TARGET": BUCKET_SKILL,
+    "PLACE_WRONG_HEIGHT": BUCKET_SKILL, "DROPPED_FROM_HEIGHT": BUCKET_SKILL, "UNSAFE_TARGET": BUCKET_SKILL,
+    "SKILL_ERROR": BUCKET_SKILL, "STATIC_REJECTED": BUCKET_SKILL, "HUMAN_REJECTED": BUCKET_SKILL,
+    "TIMEOUT": BUCKET_SKILL,
+    # not a code problem
+    "OBJECT_NOT_FOUND": BUCKET_ENVIRONMENT, "OBJECT_OUT_OF_REACH": BUCKET_ENVIRONMENT,
+    "CAMERA_MOVED": BUCKET_ENVIRONMENT, "PERCEPTION_UNCERTAIN": BUCKET_ENVIRONMENT,
+    "CALIBRATION_DRIFT": BUCKET_ENVIRONMENT, "HARDWARE_FAULT": BUCKET_ENVIRONMENT,
+    "AMBIGUOUS_TASK": BUCKET_ENVIRONMENT, "BUMPED_BY_SOMETHING_ELSE": BUCKET_ENVIRONMENT,
+    # honest fallback
+    "UNKNOWN": BUCKET_UNKNOWN,
+}
+
+
+@dataclass
+class PhaseCheck:
+    phase: str             # one of PHASES
+    ok: bool
+    detail: str            # "holding blue cup at z=0.18" / "lost blue cup during 16 cm move"
+    start_index: int       # first PrimitiveCall index of the phase
+    end_index: int
+    frame_path: Optional[str] = None  # annotated key frame for this phase
+
+
+@dataclass
+class Classification:
+    cls: str                       # a key of FAILURE_CLASSES
+    bucket: str                    # BUCKET_*
+    phase: Optional[str]           # first failing phase
+    call_index: Optional[int]      # first failing PrimitiveCall
+    summary: str                   # one line with numbers; leads Droid's evidence and the dashboard banner
+    hint: str = ""                 # where to look ("grip height", "place z")
+    confidence: float = 1.0        # < 0.6 → treat as UNKNOWN-ish; never route a guess as certain
+    escalate: bool = False         # same class after a parameter-only change: change the approach
+    evidence: dict = field(default_factory=dict)  # the numbers behind the label

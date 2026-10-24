@@ -1,33 +1,35 @@
 # North Star: the single source of truth
 
 > If any other document, brief, issue or comment disagrees with this one, **this one wins**.
-> It changes only on a `lead/*` branch. Every agent reads it before `AGENTS.md`.
+> It changes only on a `lead/*` branch. Every agent reads it first.
 
 ## Objective
 
 **A real SO-101 robot arm that gets better at physical tasks by itself.** When a task fails,
-Factory Droid, running inside the product through the **Droid Python SDK**, diagnoses the
-failure from camera and trace evidence and rewrites the skill. It proves the fix in simulation
-and safety checks, a human approves once, the real arm succeeds, and the improved skill and the
-lesson behind it are kept for every future task.
+the system works out *what kind* of failure it was and *where* it happened. Factory Droid,
+running inside the product through the **Droid Python SDK**, then gets the evidence: the failure
+class, phase-by-phase checks, annotated camera frames and the numbers. It rewrites the skill
+and proves the fix in simulation and safety checks. A human approves once, the real arm
+succeeds, and the improved skill plus its lesson are kept for every future task.
 
-The product is the **improvement loop**: try → camera verifies → Droid repairs → prove →
-approve → succeed → remember. Everything in this repo exists to make that loop run live,
-safely and visibly.
+The product is the **improvement loop**:
 
-## The decision rule
+```
+try → watch (live world model) → classify the failure → Droid repairs with evidence
+    → prove (static, sim, safety) → human approves → succeed → remember (skill + lesson)
+```
 
-Every task, PR and feature must serve at least one of these. Name it in the hand-off note
-("Serves: 2"). If it serves none, it goes on the cut list.
+## Decision rule
 
-1. **Loop:** makes Droid's repair loop on the real arm work, or work more reliably.
-2. **Improvement:** makes the system better over time (better skills, fewer rounds, lessons reused).
+Every task and PR must serve at least one of these, named in its hand-off ("Serves: 1, 3").
+If it serves none, it goes on the cut list.
+
+1. **Loop:** makes the repair loop on the real arm work, or work more reliably.
+2. **Improvement:** makes the system better over time (fewer rounds, reusable skills and lessons).
 3. **Control & visibility:** tightens what Droid can touch, or shows more of what Droid did.
-4. **Safety:** required for running the real arm safely.
+4. **Safety:** required to run the real arm safely.
 
-## The award we are built for: Best Use of the Factory Droid SDK
-
-The criteria, verbatim:
+## The award: Best Use of the Factory Droid SDK
 
 > **Eligibility:** The project must use the Droid SDK (TypeScript or Python) in a meaningful
 > way. Droid should do real work in the running product, not just help you write code. The repo
@@ -38,129 +40,75 @@ The criteria, verbatim:
 > **What scores poorly:** A chatbot wrapper with Droid added on. Demos that only work in slides.
 > Projects where we can't tell what the agent did.
 
-How each one is met (keep this table true; it is our judging checklist):
-
-| Criterion | How Skillsmith meets it | What a judge sees | Code |
+| Criterion | How we meet it | What a judge sees | Code |
 |---|---|---|---|
-| **Uses the Droid SDK, real work in the running product** | `DroidSDKAuthor` opens a `droid_sdk.Session` at runtime for every failed or new task. Without Droid the arm cannot learn a new task. | Droid writing code live while the arm waits | `repair/droid_sdk.py` |
-| **README explains where and how** | "Where Droid runs" section in `README.md` | the repo | `README.md` |
-| **Trigger you designed** | The robot's own failure: the camera's success check fails after a real attempt. Also: a gate rejects Droid's code, a human rejects with a note, a never-seen task arrives, grasps drift (calibration). | The FAIL banner, then Droid starting on its own | `repair/loop.py` |
-| **Thoughtful control, safety built in** | Autonomy LOW · shell execution disabled · permission handler: edits allowed **only** to `skill.py` in Droid's workspace, tool calls **only** to our `skillsmith` tools, everything else refused with a reason · workspace outside the repo · we re-run static/sim/safety ourselves · the real arm is never a Droid tool · human approval · robotd joint clamps | Every permission decision listed live (allowed/refused + why) | `repair/droid_tools.py` (`decide`), `docs/SAFETY.md` |
-| **Visible: plans, steps, diffs, results** | Droid's messages (plan), each tool call and result (steps), every permission decision, the `skill.py` diff, its structured result (diagnosis, change, confidence, lesson), gate results, sim video, real outcome | Dashboard timeline + Droid panel; `runs/<id>/events.jsonl` | `events.py`, dashboard (WS6) |
-| *Avoid: chatbot wrapper* | No chat box. Droid is started by the robot failing, not by someone typing to it. | | |
-| *Avoid: works only in slides* | Live on the real arm. The recorded fallback is labelled as a recording. | | |
-| *Avoid: can't tell what the agent did* | Every Droid action is an event; skill versions + lessons are kept in git. | | |
+| **Droid SDK doing real work in the product** | `DroidSDKAuthor` opens a `droid_sdk.Session` whenever a skill fails or a task is new. Without Droid the arm cannot learn a new task. | Droid writing code live while the arm waits | `repair/droid_sdk.py` |
+| **README explains where and how** | "Where and how Droid is used" section | the repo | `README.md` |
+| **Designed trigger** | The robot's own failure: the classifier labels a *skill* failure after a real attempt. Environment failures (camera bumped, object out of reach) go to a human, not Droid. Also: a gate rejects Droid's code, a human rejects with a note, a new task. | FAIL banner with the failure class, then Droid starting on its own | `repair/loop.py`, `analysis/` |
+| **Thoughtful control, safety built in** | Autonomy LOW · shell disabled · a permission handler allows only `skill.py` edits and our `skillsmith` tools, refusing everything else with a reason · workspace outside the repo · we re-run static/sim/safety ourselves · the real arm is never a Droid tool · human approval · robotd joint clamps · live bump stop | Every permission decision, allowed or refused, with why | `repair/droid_tools.py`, `docs/SAFETY.md` |
+| **Visible: plans, steps, diffs, results** | Failure class + phase, Droid's messages, each tool call (including its own sim runs), permission decisions, the diff, its structured diagnosis, gate results, real outcome | Dashboard big screen + detail drawer; `runs/<id>/events.jsonl` | `events.py`, `dashboard/` |
+| *Avoid: chatbot wrapper* | No chat box; the robot's failure starts Droid. | | |
+| *Avoid: works only in slides* | Live on the real arm; a recorded fallback is labelled as one. | | |
+| *Avoid: can't tell what the agent did* | Every Droid action is an event; skill versions and lessons are kept in git. | | |
 
-## How Droid gets feedback and improves the skill
+## What we are building, in one screen
 
-```
- real attempt ──▶ camera check FAILS ──▶ evidence package ──▶ Droid (SDK session)
-                                                               │  reads evidence
-                                                               │  edits skill.py
-                                                               │  calls validate_skill / simulate_skill
-                                                               │  returns structured result
-                                                               ▼
- real success ◀── human approves ◀── safety ◀── sim ◀── static   (WE re-run every gate)
-      │                                  any gate fails → new evidence, same session
-      ▼
- save skill vN+1 · append lesson · count success
-```
+- **Skills** are short Python programs over safe primitives (`move_to`, `grasp`, `release`,
+  `look`, `home`, `align_over`). Droid writes and repairs skills, never motor commands.
+- **Perception** is a **live world model**: a calibrated overhead camera, YOLO-World (HSV
+  backup), ray-cast 3D positions, stable object ids, and a held object that follows the gripper.
+  A bumped object stops the skill (`WorldChanged`). The wrist camera checks grasps and does the
+  final alignment.
+- **Failure analysis** is plain rules, not AI. It splits each attempt into phases (approach,
+  grasp, lift, carry, place, release, retreat) and labels the failure class with numbers,
+  sorting it into three buckets: **skill** (Droid fixes it), **environment** (a human or
+  calibration fixes it), **unknown** (Droid gets everything, flagged). A wrong label is worse
+  than "unknown", so low-confidence perception never produces a skill label.
+- **Droid's evidence (v2)** leads with the failure class, then the phase table, annotated key
+  frames (boxes, target crosshair, gripper position, error arrow in cm), cropped before/after
+  images, expected-vs-actual frames, the trace, earlier rounds and lessons. Droid can pull more
+  through tools and can test its fix in simulation before handing back.
+- **Geometry decides pass/fail; vision only explains.** An optional frontier vision API gives a
+  second opinion on cropped images; it never overrides geometry.
+- **Small errors never reach Droid:** tolerance, closed-loop alignment (`align_over`) and
+  calibration handle them. Droid is for strategy and logic errors.
 
-**1. The evidence package** (one per round, in `failure.md` plus attachments):
-- the task, its parameters and the exact success check (e.g. `on_top(blue cup, red cup)`)
-- one line on why it failed, plus the camera check's numbers ("blue cup is 9.4 cm from red cup, limit 3.0 cm")
-- the safety report
-- scene before and after: every object's x, y, z, top and width
-- the full trace: every primitive call with its arguments, gripper tip position before and
-  after, success, and any error with the exact skill line that raised it
-- images attached to Droid's call (no extra latency): a **cropped before/after pair** of the
-  task's objects plus **3–4 key frames** from the attempt (pickup, carry, place), so Droid can
-  see where it went wrong (WS5.10)
-- earlier rounds in this run ("do not repeat these") and any human reviewer note
-- `LESSONS.md`: everything Droid has learned on earlier tasks
-- the working library skills it can call or copy
+Details: `docs/ARCHITECTURE.md` (how), `docs/INTERFACES.md` (contracts), `docs/PLAN.md`
+(gates, schedule, time budget), `docs/DECISIONS.md` (why, sources, hard truths).
 
-**2. Droid's tools**, our code in our sandbox; Droid cannot run shell commands:
+## Speed is a hard requirement
 
-| Tool | What it does |
-|---|---|
-| `validate_skill` | runs the static safety checker on the current `skill.py` |
-| `simulate_skill` | runs `skill.py` in simulation on a copy of the real table; returns success, trace and safety (budget of a few runs per round) |
-| `get_scene` | the current object table |
-| `list_library` / `read_library_skill` | saved skills to reuse via `skills.call(...)` |
-
-So Droid can fix, test in sim, and fix again **before** handing back: "Droid fixes its own code until it works".
-
-**3. What Droid must return:** the edited `skill.py` and a structured result
-`{diagnosis, change, sim_checked, confidence, lesson}`, enforced by a JSON schema via the SDK.
-
-**4. What we do with it:** diff it, then re-run static → sim → safety ourselves (Droid's own sim
-run is never trusted). A human approves, the real arm attempts, the camera verifies. If anything
-fails, a new evidence package goes into **the same session**, so Droid remembers what it tried.
-
-**5. On success:** the skill is saved as a new version (old versions kept), Droid's lesson is
-appended to `skills/lessons.md`, and the skill's success count goes up.
-
-## Demo speed is a hard requirement
-
-Judges watch the repair happen, so it must be fast and it must read as content, not dead air.
-
-- **Target: one repair round, under 60 s**, on the chosen demo task. About 2 minutes end to
-  end for fail → fix → success.
-- **Stage profile** (WS5.9, a separate profile; dev defaults stay as they are): `max_rounds: 2`,
-  `sim_tool_budget: 1`, ~90 s timeout per round, a fast model with low reasoning effort, and
-  the SDK session opened (warmed up) **before** the demo starts.
-- **Prompt rule:** the smallest edit that fixes the stated failure, never a rewrite.
-- **Pick demo tasks whose natural failure is quick to fix** (rim grip → slip → grip at
-  mid-height). Rehearse until Droid reliably fixes it in one round.
-- The WS5 benchmark reports **seconds-to-fix and one-round fix rate**, not just fix rate.
-- The dashboard streams Droid's diagnosis, tool calls and diff while it works (WS6.7).
-
-## The camera check: detect, decide, explain
-
-| Layer | What | Role |
-|---|---|---|
-| **Detect** | YOLO-World / YOLO-E open-vocabulary detector on the GX10 (fast); HSV colour blobs as the backup | finds objects and positions (WS3.7, promoted from stretch) |
-| **Decide** | geometric predicates (`on_top`, `inside`, ...) on the detected positions | **the pass/fail authority**: precise and numeric |
-| **Explain** | **Droid** does the failure reasoning from the trace, the numbers and the images. Optionally a **frontier vision API** gives a second opinion on **cropped** before/after images (pass/fail + one sentence, a few seconds per call; measure it) | advisory only (WS3.8). It never overrides geometry; if it disagrees with a geometric pass, that counts as a fail and its sentence goes into Droid's evidence. No local VLM: Droid is already a frontier model call that sees the images, and Droid already needs the internet, so the API adds no new failure point. |
-
-Why geometry decides: research reports VLM success judges near 0.77 balanced accuracy, under
-0.60 on contact-heavy tasks, with cropping helping (FailBench, arXiv 2609.03611), and VLMs
-calling missed grasps successes (Guardian, arXiv 2512.01946). These figures come from a
-teammate's research summary; check the papers before quoting them to judges.
-
-**Step-level checks:** after every `grasp()`, a wrist-camera check asks "is the gripper
-holding the object?" (WS3.9 + WS4.6). Failures are caught mid-skill with a specific reason
-("grasp at z=0.072 closed on air") instead of only at the end.
-
-## Constant improvement, at four time scales
-
-| Scale | Mechanism | Metric we report |
-|---|---|---|
-| Within one repair | Droid iterates with `simulate_skill` | sim runs per repair |
-| Within one task | repair rounds in one SDK session with full history | rounds to fix |
-| Across tasks | versioned skill library reused via `skills.call` + `lessons.md` in every prompt | first-try success on new tasks, reuse count, lessons used |
-| Across hardware drift | calibration trigger when grasps keep landing off (WS5.6/WS7) | grasp error over time |
-
-The dashboard's improvement panel (WS6.7) shows these numbers.
+- **One repair round in under 60 s** on the demo task; about **1.5–2 minutes** for
+  fail → fix → success (budget in `docs/PLAN.md`).
+- Stage profile: `max_rounds 2`, `sim_tool_budget 1`, ~90 s per round, a fast model, and the
+  session warmed up before the demo.
+- Droid makes the smallest edit that fixes the stated failure, never a rewrite.
+- The benchmark reports **one-round fix rate and seconds-to-fix per failure class**.
 
 ## Scope
 
-- **Must (the demo):** G3 and G5 with "stack the blue cup on the red cup": a real failure, one
-  live Droid repair through the SDK **in one round, under 60 s**, the dashboard showing Droid's
-  steps and permission decisions, approval, real success, skill saved. Geometric camera check
-  with HSV detection as the floor.
-- **Should:** YOLO-World/YOLO-E as the main detector; the post-grasp wrist check; a second task
-  that reuses the saved skill ("build a tower"); benchmark numbers for fix rate, one-round fix
-  rate and seconds-to-fix (WS5.3); a lesson from task 1 visibly used in task 2.
-- **Stretch:** the frontier-API vision second opinion, self-calibration, pyramid.
+- **Must (the demo):**
+  - G3: the real arm reliably does a scripted pick-and-place, and the signals are validated
+    (detection under 1 cm, gripper holding/empty separable, slip visible).
+  - G5: "stack the blue cup on the red cup" with the block-tuned `stack` skill slipping on a
+    cup, the classifier labelling it `SLIP_IN_CARRY`, one live Droid repair through the SDK in
+    under 60 s, approval, real success, skill and lesson saved.
+  - Dashboard big screen; live world model with bump stop; HSV detection as the floor.
+- **Should:** YOLO-World as the main detector, wrist post-grasp check, `align_over` with wrist
+  correction (if G3 shows over ~1 cm error), expected-vs-actual frames, Droid evidence tools, a
+  second task reusing the saved skill ("build a tower"), benchmark numbers.
+- **Stretch:** frontier-API vision second opinion, Droid-written monitors, self-calibration,
+  pyramid.
 - **Not this project:** VLA/pi05 policies driving the arm, Droid controlling motors, a chat UI,
-  training models, millimetre-precision tasks.
+  training models, millimetre precision, deformable or transparent objects.
 
 ## Rules that never bend
 
 - Droid never moves the arm directly and never runs shell commands in the product.
 - Every line Droid writes passes static → sim → safety → **human approval** before the real arm runs it.
-- The demo uses real Droid through the SDK. `ScriptedAuthor` is for tests only. The `droid exec`
-  CLI author is a fallback for a stage emergency, and we say so if we use it.
+- Environment-bucket failures are never sent to Droid as code problems.
+- Geometry decides success; no vision model overrides it.
+- Skills never hard-code offsets to cover position errors; that is calibration.
+- The demo uses real Droid through the SDK. `ScriptedAuthor` is for tests; the CLI author is a
+  stage-emergency fallback we would announce.
 - If a document conflicts with this one, fix that document.

@@ -1,5 +1,5 @@
 # Skillsmith configuration. Owned by the lead. Numbers marked MEASURE are placeholders
-# until the first hardware session (see docs/BUILD_PLAN.md, gate G3).
+# until the first hardware session (see docs/PLAN.md, gate G3 and its signal checklist).
 
 robot:
   follower_port: /dev/serial/by-id/usb-1a86_USB_Single_Serial_5AE6057566-if00
@@ -18,7 +18,12 @@ cameras:
   wrist: /dev/v4l/by-id/usb-Sonix_Technology_Co.__Ltd._USB2.0_CAM1_USB2.0_CAM1-video-index0
   wrist_size: [640, 480]
   front: http://100.67.242.86:8001/stream    # MacBook stand-in; replace with a fixed overhead webcam
-  homography: config/homography.json          # written by `skillsmith calibrate-camera` (WS3)
+  calibration: config/camera.json             # intrinsics + pose, written by tools/calibrate_camera.py (WS3.2)
+
+world:                              # live world model (WS3.5)
+  rate_hz: 12
+  bump_threshold: 0.01              # m; a not-held object moving more than this = WorldChanged
+  min_confidence: 0.5               # below this a detection is 'uncertain' (confidence gate)
 
 workspace:                          # tip must stay inside this box (robot frame, metres). MEASURE
   x: [0.08, 0.34]
