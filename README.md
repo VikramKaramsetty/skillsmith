@@ -64,7 +64,7 @@ judging criteria live in [`docs/NORTH_STAR.md`](docs/NORTH_STAR.md).
 | | |
 |---|---|
 | **Trigger** | The robot's own failure: after a real attempt the camera check fails (also: a gate rejects Droid's code, a human rejects with a note, a new task arrives). `RepairLoop` then calls Droid. No chat box. |
-| **What Droid gets** | An evidence package: the task and success check, why it failed (with numbers), scene before/after, the full motion trace with the failing line, the camera snapshot (as an image), earlier rounds, lessons from past tasks, and the saved skill library. |
+| **What Droid gets** | An evidence package: the task and success check, why it failed (with numbers), scene before/after, the full motion trace with the failing line, cropped before/after images plus key frames from the attempt, earlier rounds, lessons from past tasks, and the saved skill library. |
 | **What Droid can do** | Edit one file (`skill.py`) in a workspace outside the repo, and call our tools: `validate_skill`, `simulate_skill` (sim only), `get_scene`, `list_library`, `read_library_skill`. |
 | **What Droid can't do** | Run shell commands (disabled), edit any other file (refused by our permission handler, with the reason sent back), or touch the real arm (never a tool). |
 | **What Droid returns** | The edited skill plus a structured result: diagnosis, change, sim_checked, confidence, lesson. |

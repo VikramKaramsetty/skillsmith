@@ -15,18 +15,20 @@ to about 1 cm on the table, fast (< 200 ms), from a fixed front/overhead camera.
 - [ ] WS3.5 CameraPerception class implementing observe() and snapshot()
 - [ ] WS3.6 Measure position accuracy on the real table at marked points (hardware)
 - [ ] WS3.7 YOLO-World / YOLO-E open-vocabulary detector on the GX10 as the main detector, HSV as backup
-- [ ] WS3.8 Advisory VLM verifier on the GX10: cropped before/after images, never overrides geometry, disagreement fails into Droid's evidence
+- [ ] WS3.8 Frontier-API vision success check (advisory): cropped before/after images in, pass/fail plus one sentence out, never overrides geometry
 - [ ] WS3.9 Post-grasp wrist-camera holding check that returns a specific reason (with WS4.6)
 
 ## Design notes
 - **Three layers (docs/NORTH_STAR.md "The camera check"):** *detect* with YOLO-World / YOLO-E
   (fast open-vocabulary, the main detector; Grounding DINO / OWLv2 are much slower) with HSV
   as the backup; *decide* with the geometric predicates in `verify.py` (the only pass/fail
-  authority); *explain* with a local Qwen-VL-class VLM on cropped before/after images,
-  advisory only. A VLM "fail" against a geometric "pass" is a fail, and its text goes into
-  Droid's evidence package.
-- Crop to the objects named in the success predicate before asking the VLM; full frames make
-  VLM judges noticeably worse.
+  authority); *explain*: Droid reasons about the failure itself. WS3.8 adds an optional
+  second opinion from a **frontier vision API** (not a local VLM) on cropped before/after
+  images, which returns pass/fail plus one sentence. A "fail" from it against a geometric
+  "pass" counts as a fail, and its sentence goes into Droid's evidence package. Measure the
+  latency (expect a few seconds); read the API key from an env var and never commit it.
+- Crop to the objects named in the success predicate before asking any vision model; full
+  frames make vision judges noticeably worse. WS5.10 reuses the same crops for Droid's prompt.
 - The post-grasp check (WS3.9) uses the wrist camera: object pixels between the fingers,
   plus the gripper position from robotd. It returns `(holding: bool, reason: str)`.
 - Objects sit on the table plane, so a homography (4+ ArUco markers at known robot-frame
