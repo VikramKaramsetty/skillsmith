@@ -10,6 +10,7 @@ Contract:
     (approach = moves before the first grasp; grasp; lift = first upward move while holding;
     carry = horizontal moves while holding; place = descent while holding; release; retreat),
     each with ok/detail (e.g. "lost blue cup during 16 cm sideways move").
+    Built by `analysis.phases.segment_phases(attempt, cfg)` (WS4.4).
   * `classification`: None when attempt.ok, else a Classification with a key of
     types.FAILURE_CLASSES, its bucket, the first failing phase and call, a one-line summary
     WITH NUMBERS, a hint, and a confidence.
