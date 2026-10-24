@@ -40,7 +40,23 @@ def test_without_mock_it_opens_the_follower_port_named_in_the_config(monkeypatch
     assert main([], serve=serve) == 0
     assert opened == [(robot["follower_port"], robot["calibration_id"])]
     [(app, _, _)] = serve.calls
-    assert TestClient(app).get("/frame/front").status_code == 404  # no mock frames on the real arm
+    assert TestClient(app).get("/frame/front").status_code == 503  # a real (here: fake, silent) camera, never mock frames
+
+
+def test_real_cameras_come_from_the_config(monkeypatch, never_open_real_cameras):
+    cams = yaml.safe_load(DEFAULT_CONFIG.read_text())["cameras"]
+    monkeypatch.setattr(feetech, "connect_follower", lambda port, cid: ClosingBus())
+    assert main([], serve=Recorder()) == 0
+    assert sorted(never_open_real_cameras.opened, key=str) == sorted(
+        [(cams["front"], None), (cams["wrist"], tuple(cams["wrist_size"]))], key=str)
+
+
+def test_cameras_only_never_opens_the_arm(monkeypatch, never_open_real_cameras):
+    opened = []
+    monkeypatch.setattr(feetech, "connect_follower", lambda port, cid: opened.append(port) or ClosingBus())
+    assert main(["--cameras-only"], serve=Recorder()) == 0
+    assert opened == []
+    assert len(never_open_real_cameras.opened) == 2
 
 
 def test_when_the_arm_cannot_be_opened_it_exits_1_with_the_reason(monkeypatch, capsys):

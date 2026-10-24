@@ -7,6 +7,7 @@ object (position stalls short of the goal, load rises).
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from typing import List, Optional, Sequence, Tuple
 
@@ -73,5 +74,5 @@ class MockCamera:
         self.name = name
         self._jpeg = FRAME_JPEG.read_bytes()
 
-    def jpeg(self) -> bytes:
-        return self._jpeg
+    def latest(self) -> Tuple[bytes, float]:
+        return self._jpeg, time.time()

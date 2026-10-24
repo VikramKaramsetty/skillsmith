@@ -5,7 +5,9 @@ reads config/robot.yaml itself. It binds 127.0.0.1 by default; any other host ne
 in $ROBOTD_TOKEN, which clients send as the X-Robotd-Token header (the Mac fallback link).
 Without --mock it opens the follower (config robot.follower_port / robot.calibration_id) through
 LeRobot, holding its current pose; on Ctrl-C it disconnects and the arm goes limp (support it).
-Agents only ever run it with --mock. Real cameras arrive in WS1.4.
+Cameras come from config `cameras:` (a V4L path or an MJPEG URL each; robotd/cameras.py).
+`--cameras-only` runs the real cameras with a mock arm, for a camera check without the serial port.
+Agents only ever run it with --mock.
 """
 
 import argparse
@@ -16,7 +18,7 @@ import sys
 from pathlib import Path
 from typing import Callable, Optional, Sequence
 
-from robotd import feetech
+from robotd import cameras, feetech
 from robotd.controller import ArmController, Bus
 from robotd.mock import MockBus, MockCamera
 from robotd.server import create_app
@@ -32,6 +34,8 @@ Serve = Callable[[object, str, int], None]
 def parse_args(argv: Optional[Sequence[str]]) -> argparse.Namespace:
     p = argparse.ArgumentParser(prog="python -m robotd", description="Owns the arm's serial port and cameras.")
     p.add_argument("--mock", action="store_true", help="fake arm and cameras (no hardware)")
+    p.add_argument("--cameras-only", action="store_true",
+                   help="real cameras, mock arm: check the cameras without opening the serial port")
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--port", type=int, default=8100)
     p.add_argument("--config", default=str(DEFAULT_CONFIG))
@@ -60,6 +64,15 @@ def open_bus(mock: bool, cfg: dict) -> Bus:
     return feetech.connect_follower(robot["follower_port"], robot["calibration_id"])
 
 
+def open_cameras(mock: bool, cfg: dict) -> dict:
+    if mock:
+        return {name: MockCamera(name) for name in CAMERAS}
+    spec = cfg["cameras"]
+    sizes = {name: tuple(spec[f"{name}_size"]) if spec.get(f"{name}_size") else None for name in CAMERAS}
+    return {name: cameras.CaptureCamera(name, lambda s=spec[name], z=sizes[name]: cameras.OpenCVCapture(s, z))
+            for name in CAMERAS if spec.get(name)}
+
+
 def is_loopback(host: str) -> bool:
     if host == "localhost":
         return True
@@ -85,15 +98,17 @@ def main(argv: Optional[Sequence[str]] = None, serve: Optional[Serve] = None) ->
     logging.basicConfig(level=logging.INFO, format="robotd %(levelname)s %(message)s")
     cfg = load_config(args.config)
     try:
-        bus = open_bus(args.mock, cfg)
+        bus = open_bus(args.mock or args.cameras_only, cfg)
     except Exception as e:  # LeRobot raises its own types; the operator needs the reason, not a traceback
         print(f"robotd: cannot open the arm: {type(e).__name__}: {e}", file=sys.stderr)
         return 1
-    cameras = {name: MockCamera(name) for name in CAMERAS} if args.mock else {}
-    app = create_app(build_controller(cfg, bus), cameras, token=token)
+    cams = open_cameras(args.mock, cfg)
+    app = create_app(build_controller(cfg, bus), cams, token=token)
     try:
         (serve or _uvicorn)(app, args.host, args.port)
     finally:
+        for cam in cams.values():
+            getattr(cam, "close", lambda: None)()
         bus.close()
     return 0
 
