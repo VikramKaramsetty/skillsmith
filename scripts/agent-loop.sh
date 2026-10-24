@@ -57,6 +57,13 @@ claim() {  # succeeds only for the machine whose claim comment came first (withi
   gh issue edit "$num" --add-assignee @me --remove-label ready --add-label in-progress >/dev/null
 }
 
+main_red() {  # main's last finished CI run failed: every task would fail on that, not on its own work
+  local c
+  c=$(gh run list --branch main --workflow ci --event push --status completed --limit 1 \
+        --json conclusion --jq '.[0].conclusion' 2>/dev/null) || return 1
+  [[ "$c" == "failure" ]]
+}
+
 release() {
   gh issue edit "$1" --remove-assignee @me --remove-label in-progress --add-label ready >/dev/null
 }
@@ -88,6 +95,7 @@ while true; do
   if [[ -f .agent-stop ]]; then log ".agent-stop found; stopping"; exit 0; fi
 
   [[ -n "$DYNAMIC" ]] && set -- $(workstreams)
+  if main_red; then log "main CI is red; not claiming until it is fixed"; sleep "${POLL:-120}"; continue; fi
   NUM=""
   for ws in $(rotate "$@"); do
     busy "$ws" && continue
@@ -123,6 +131,13 @@ while true; do
     gh issue comment "$NUM" --body "agent-loop on $HOST: the run failed after $(( SECONDS - started )) s (exit $rc), before the agent did any work. Released back to \`ready\`; this machine's loop stopped. Log: ../skillsmith-logs/" >/dev/null || true
     log "run failed in $(( SECONDS - started ))s (exit $rc): machine problem; released #$NUM and stopping. Check the log, then restart."
     exit 1
+  fi
+  if [[ $rc -ne 0 && $rc -ne 3 ]] && main_red; then
+    # main broke while this ran: the task isn't at fault. Hand it back; its worktree keeps the work.
+    release "$NUM" || true
+    gh issue comment "$NUM" --body "agent-loop on $HOST: main's CI went red during this run (exit $rc), so it couldn't ship. Released back to \`ready\`; the next run reuses the worktree." >/dev/null || true
+    log "main is red; released #$NUM instead of blocking it"
+    continue
   fi
   if [[ $rc -eq 0 ]]; then
     gh issue edit "$NUM" --remove-label in-progress >/dev/null || true
