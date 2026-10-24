@@ -8,6 +8,10 @@
      and lessons, over the recorded runs (GET /improvement) plus the live run folded here.
      WS6.7: replay mode for the fallback: pick a recorded run, pause/resume, change speed mid-run
      (the stream reopens at the next event with ?from=), restart, and an event counter.
+     WS6.9: improvement rows say where the skill ran (env) and who wrote the code (author), so a
+     fake or scripted run never reads as a real-arm Droid fix; an environment approval says
+     "Fixed, retry" (Droid is not involved); any event carrying "replay": true makes the page a
+     recording (no Approve, no Run), not only the ?replay= URL.
      Renders ONLY from the SSE stream (docs/INTERFACES.md §7). Open /?replay=<run_id>&speed=2
      to replay a recorded run. The reducer in <script id="story-reducer"> is pure (no DOM) so
      tests/ws6 can run it under node. -->
@@ -192,7 +196,7 @@ function initialState() {
     droid: null,              // {round, via, diagnosis, change, confidence, message}
     diff: null,               // {old_version, new_version, lines: [{kind, text}], more}
     gates: Object.fromEntries(GATES.map((g) => [g, { state: "pending", detail: "" }])),
-    approval: null,           // {state: pending|approved|rejected, kind: approval|reset, title, note}
+    approval: null,           // {state: pending|approved|rejected, kind: approval|reset|environment, title, note}
     saved: null, lesson: null, finished: null,
     drawer: initialDrawer(),
     world: initialWorld(),
@@ -201,7 +205,7 @@ function initialState() {
 
 // The improvement panel (WS6.6). Same rules as dashboard/improvement.py `run_summary`:
 // the server summarises recorded runs, this folds the live one. State: null or
-// {run: run summary (same shape as GET /improvement), failed_at}. Kept beside the story state,
+// {run: run summary (same shape as GET /improvement), failed_at, in_gate}. Kept beside the story state,
 // not in it: seconds-to-fix is timing, and the story must not depend on timing (QA.3).
 const FAIL_EVENTS = {
   "attempt.finished": (d) => !d.ok,
@@ -209,17 +213,21 @@ const FAIL_EVENTS = {
   "approval.decided": (d) => d.approved === false,
 };
 
+// Who wrote code this run (WS6.9): the Droid SDK, the Droid CLI fallback (no `via`), or "scripted".
+const droidAuthor = (d) => d.via === "droid-sdk" ? "droid-sdk" : "droid-cli";
+
 function reduceImprove(im, e) {
   const d = e.data || {};
   if (e.type === "run.started") {
     const task = d.task || {};
-    return { failed_at: null, run: { run_id: e.run_id ?? null, t: e.t ?? null, task: task.text ?? null,
+    return { failed_at: null, in_gate: false, run: { run_id: e.run_id ?? null, t: e.t ?? null, task: task.text ?? null,
       skill: task.skill ?? null, source: null, ok: null, rounds: 0, failure: null, seconds_to_fix: null,
-      droid_s: 0.0, saved: null, reused: false, lessons: [] } };
+      droid_s: 0.0, saved: null, reused: false, lessons: [], env: null, author: null } };
   }
   if (!im) return im;
   const failed_at = im.failed_at == null && FAIL_EVENTS[e.type] && FAIL_EVENTS[e.type](d) ? e.t ?? null : im.failed_at;
   const r = { ...im.run };
+  let in_gate = im.in_gate;  // between a passed static gate and the sim gate: attempts are check runs
   switch (e.type) {
     case "plan.selected":
       Object.assign(r, { skill: d.skill || r.skill, source: d.source ?? null, reused: d.source === "library" });
@@ -229,6 +237,18 @@ function reduceImprove(im, e) {
       break;
     case "attempt.classified":
       if (r.failure == null) r.failure = d.cls ?? null;
+      break;
+    case "attempt.started":
+      if (!in_gate) r.env = d.env ?? null;
+      break;
+    case "gate.result":
+      in_gate = d.gate === "static" && !!d.ok;
+      break;
+    case "droid.started":
+      r.author = droidAuthor(d);
+      break;
+    case "skill.diff":
+      if (r.author == null) r.author = "scripted";  // code changed with no Droid session
       break;
     case "droid.result":
       r.droid_s += Number(d.duration) || 0;
@@ -247,7 +267,17 @@ function reduceImprove(im, e) {
     default:
       if (failed_at === im.failed_at) return im;
   }
-  return { failed_at, run: r };
+  return { failed_at, in_gate, run: r };
+}
+
+// The env/author tag of an improvement row, e.g. "real · droid-sdk" or "fake · scripted".
+function runTag(r) {
+  return [r.env, r.author].filter(Boolean).join(" · ") || "–";
+}
+
+// A recording (WS6.9): any event carrying "replay": true, until the next run starts live.
+function reduceRecorded(recorded, e) {
+  return e.type === "run.started" ? !!e.replay : recorded || !!e.replay;
 }
 
 // Recorded runs from GET /improvement plus the live run. Only runs that started before the
@@ -501,15 +531,23 @@ function reduceEvent(s, e) {
     }
     case "approval.requested": {
       const sum = d.summary || {};
+      if (sum.kind === "environment") {  // a human fixes the table or camera; the same code retries
+        return { ...s, approval: { state: "pending", kind: "environment", title: sum.title || "", note: "" },
+                 banner: { kind: "wait", text: `FIX THE TABLE OR CAMERA · ${sum.class || "environment"}`,
+                           sub: firstLine(sum.hint || sum.summary) || "not a code problem; Droid is not called" } };
+      }
       return { ...s, approval: { state: "pending", kind: "approval", title: sum.title || "", note: "" },
                banner: { kind: "wait", text: "WAITING FOR APPROVAL", sub: sum.title || "" } };
     }
     case "reset.requested":
       return { ...s, approval: { state: "pending", kind: "reset", title: "Reset the table, then press Done", note: "" },
                banner: { kind: "wait", text: "RESET THE TABLE", sub: firstLine(d.message) } };
-    case "approval.decided":
-      return { ...s, approval: { ...(s.approval || {}), state: d.approved ? "approved" : "rejected", note: d.note || "" },
-               banner: d.approved ? s.banner : { kind: "fail", text: "REJECTED", sub: firstLine(d.note) } };
+    case "approval.decided": {
+      const env = !!(s.approval && s.approval.kind === "environment");
+      const banner = !d.approved ? { kind: "fail", text: env ? "STOPPED · not fixed" : "REJECTED", sub: firstLine(d.note) }
+        : env ? { kind: "run", text: "FIXED · RETRYING", sub: "the same code runs again" } : s.banner;
+      return { ...s, approval: { ...(s.approval || {}), state: d.approved ? "approved" : "rejected", note: d.note || "" }, banner };
+    }
     case "skill.saved":
       return { ...s, saved: { skill: d.skill, version: d.version } };
     case "run.finished": {
@@ -541,6 +579,16 @@ function speedLabel(speed) {
   return speed > 0 ? `${speed}×` : "max";
 }
 
+// What the approval buttons say for each kind of request (WS6.9).
+function approvalLabels(kind) {
+  if (kind === "reset") return { approve: "Done", reject: null, note: "", approved: "done" };
+  if (kind === "environment") {
+    return { approve: "Fixed, retry", reject: "Stop", note: "what is wrong? (for the log; Droid is not called)",
+             approved: "fixed, retrying" };
+  }
+  return { approve: "Approve", reject: "Reject", note: "why not? (Droid reads this)", approved: "approved" };
+}
+
 function replayUrl(runId, speed, from) {
   const q = new URLSearchParams({ replay: runId, speed: String(speed) });
   if (from > 0) q.set("from", String(from));
@@ -548,15 +596,20 @@ function replayUrl(runId, speed, from) {
 }
 
 if (typeof module !== "undefined") module.exports = { initialState, reduce, shortDiff, keyframes, tableMap, worldLine,
-                                                         reduceImprove, panelRuns, improvementTotals,
-                                                         SPEEDS, parseSpeed, speedLabel, replayUrl };
+                                                         reduceImprove, panelRuns, improvementTotals, runTag,
+                                                         reduceRecorded, approvalLabels, SPEEDS, parseSpeed, speedLabel, replayUrl };
 </script>
 
 <script>
 const params = new URLSearchParams(location.search);
 const replay = params.get("replay");
 const $ = (id) => document.getElementById(id);
-if (replay) { $("mode").textContent = `RECORDED RUN ${replay}`; $("mode").className = "replay"; }
+let recorded = !!replay;  // the ?replay= URL, or any event flagged "replay": true (reduceRecorded)
+
+function renderMode(s) {
+  $("mode").textContent = recorded ? `RECORDED RUN ${replay || s.run_id || ""}`.trim() : "LIVE";
+  $("mode").className = recorded ? "replay" : "";
+}
 
 function el(tag, cls, text) {
   const n = document.createElement(tag);
@@ -566,6 +619,7 @@ function el(tag, cls, text) {
 }
 
 function render(s) {
+  renderMode(s);
   $("task").textContent = s.task || "waiting for a task…";
   $("task").className = s.task ? "" : "empty";
 
@@ -598,16 +652,20 @@ function render(s) {
   }));
 
   const a = s.approval;
-  const waiting = !!(a && a.state === "pending") && !replay;
+  const labels = approvalLabels(a && a.kind);
+  const waiting = !!(a && a.state === "pending") && !recorded;
   $("approve").disabled = !waiting;
-  $("approve").textContent = a && a.kind === "reset" ? "Done" : "Approve";
-  $("reject-box").classList.toggle("hidden", !waiting || a.kind === "reset");
+  $("approve").textContent = labels.approve;
+  $("reject").textContent = labels.reject || "Reject";
+  $("note").placeholder = labels.note;
+  $("reject-box").classList.toggle("hidden", !waiting || !labels.reject);
   const running = !!s.run_id && !s.finished;
-  $("task-run").disabled = !!replay || running;
-  $("task-input").disabled = !!replay;
+  $("task-run").disabled = recorded || running;
+  $("task-input").disabled = recorded;
+  const decided = a && a.state === "approved" ? labels.approved : a && a.state;
   $("approval-text").textContent = !a ? ""
-    : a.state === "pending" ? (replay ? `${a.title} (recorded run)` : a.title)
-    : `${a.state}${a.note ? ": " + a.note : ""}`;
+    : a.state === "pending" ? (recorded ? `${a.title} (recorded run)` : a.title)
+    : `${decided}${a.note ? ": " + a.note : ""}`;
 
   renderDrawer(s.drawer);
   renderWorld(s.world);
@@ -650,13 +708,13 @@ function renderImprove(im) {
     stat(String(t.lessons.length), "lessons kept"));
 
   const head = el("tr");
-  ["run", "task", "failure", "rounds", "fix", "result"].forEach((h) => head.append(el("th", null, h)));
+  ["run", "task", "env · author", "failure", "rounds", "fix", "result"].forEach((h) => head.append(el("th", null, h)));
   const rows = runs.slice(-IMPROVE_ROWS).map((r, i, shown) => {
     const row = el("tr", r === current ? "current" : null);
     const result = r.ok == null ? el("td", null, "running")
       : el("td", r.ok ? "ok" : "bad", r.ok ? (r.saved != null ? `PASS · v${r.saved} saved` : r.reused ? "PASS · reused" : "PASS") : "FAIL");
     row.append(el("td", null, String(runs.length - shown.length + i + 1)), el("td", null, firstLine(r.task, 40)),
-               el("td", null, r.failure || "–"), el("td", null, String(r.rounds)), el("td", null, secs(r.seconds_to_fix)), result);
+               el("td", null, runTag(r)), el("td", null, r.failure || "–"), el("td", null, String(r.rounds)), el("td", null, secs(r.seconds_to_fix)), result);
     return row;
   });
   $("improve-runs").replaceChildren(...(rows.length ? [head, ...rows] : []));
@@ -694,15 +752,15 @@ function showCamera(src, label) {
   img.onerror = () => {
     img.classList.add("hidden");
     $("cam-wrap").classList.add("solo");
-    if (replay) { $("cam-msg").textContent = "recorded scene image unavailable"; return; }
+    if (recorded) { $("cam-msg").textContent = "recorded scene image unavailable"; return; }
     $("cam-msg").textContent = `camera ${cam} offline (robotd not reachable) · retrying`;
     camRetry = setTimeout(() => { camSrc = null; showCamera(src, label); }, CAM_RETRY_MS);
   };
-  img.src = replay ? src : `${src}?t=${Date.now()}`;  // cache-buster so a retry really reconnects
+  img.src = recorded ? src : `${src}?t=${Date.now()}`;  // cache-buster so a retry really reconnects
 }
 
 function renderCams() {
-  $("cams").replaceChildren(...(replay ? [] : CAMS.map((c) => {
+  $("cams").replaceChildren(...(recorded ? [] : CAMS.map((c) => {
     const b = el("button", c === cam ? "on" : null, c);
     b.type = "button";
     b.onclick = () => { cam = c; renderCams(); render(state); };
@@ -711,7 +769,7 @@ function renderCams() {
 }
 
 function renderWorld(w) {
-  if (replay) {
+  if (recorded) {
     showCamera(w.image_path ? frameUrl(w.image_path) : null, "Recorded scene");
     if (!w.image_path) $("cam-msg").textContent = "recorded run: no live camera, world state from the events";
   } else {
@@ -879,6 +937,8 @@ function logEvent(e) {
 function resetStory() {
   state = initialState();
   improve = null;
+  recorded = !!replay;
+  renderCams();
   $("log").replaceChildren();
   render(state);
 }
@@ -886,10 +946,13 @@ function resetStory() {
 function onEvent(m) {
   const e = JSON.parse(m.data);
   logEvent(e);
+  const wasRecorded = recorded;
+  recorded = !!replay || reduceRecorded(recorded, e);
+  if (recorded !== wasRecorded) renderCams();
   state = reduce(state, e);
   improve = reduceImprove(improve, e);
   render(state);
-  if (e.type === "run.finished" && !replay) loadPastRuns();  // the finished run is now on disk
+  if (e.type === "run.finished" && !recorded) loadPastRuns();  // the finished run is now on disk
 }
 
 function connectLive() {
