@@ -4,28 +4,42 @@ Numbers we can show judges. Every row was run with **real Factory Droid** throug
 SDK path (`DroidSDKAuthor`, droid-sdk 0.5.0, Droid CLI 0.249.0) on 2026-10-24. Re-run and update
 after any change to Droid's prompt, tools or evidence.
 
-## 1. Seeded-bug benchmark (WS5.6)
+## 1. Seeded-bug benchmark (WS5.6, re-run after WS5.13)
 
-`python -m skillsmith.repair.benchmark --author droid --evidence v2 --max-rounds 2`
-(raw results: `results/benchmark-droid-v2-2026-10-24.json`)
+`python -m skillsmith.repair.benchmark --author droid --evidence v1 v2 --max-rounds 2`
+(raw results: `results/benchmark-droid-v1v2-2026-10-24.json`)
 
-| Failure class | Cases | Fixed | Fixed in one round | Median seconds to fix |
-|---|---|---|---|---|
-| `SLIP_IN_CARRY` | 1 | 100% | 100% | 20.4 |
-| `GRASP_MISS` | 1 | 100% | 100% | 24.4 |
-| `NO_PICK` | 1 | 100% | 100% | 18.8 |
-| `COLLISION` | 2 | 100% | 100% | 15.9 |
-| `PLACE_OFF_TARGET` | 1 | 100% | 100% | 17.0 |
-| `UNSAFE_TARGET` | 1 | 100% | 100% | 16.9 |
-| `SKILL_ERROR` | 1 | 100% | 100% | 17.2 |
-| **All** | **8** | **100%** | **100%** | **17.1** |
+| Failure class | Cases | Fixed (v1) | Fixed (v2) | One round (v1) | One round (v2) | Median s (v1) | Median s (v2) |
+|---|---|---|---|---|---|---|---|
+| `SLIP_IN_CARRY` | 1 | 100% | 100% | 100% | 100% | 19.0 | 19.4 |
+| `GRASP_MISS` | 1 | 100% | 100% | 100% | 100% | 15.3 | 16.5 |
+| `NO_PICK` | 1 | 100% | 100% | 100% | 100% | 15.0 | 18.1 |
+| `COLLISION` | 2 | 100% | 100% | 100% | 100% | 13.9 | 16.2 |
+| `PLACE_OFF_TARGET` | 1 | 100% | 100% | 100% | 100% | 16.2 | 19.4 |
+| `UNSAFE_TARGET` | 1 | 100% | 100% | 100% | 100% | 14.9 | 15.7 |
+| `SKILL_ERROR` | 1 | 100% | 100% | 100% | 100% | 16.3 | 14.8 |
+| **All** | **8** | **100%** | **100%** | **100%** | **100%** | **15.2** | **16.4** |
 
 Cases: rim grip, grip above top, never grasps, low travel, place ignores height, place on the wrong
-axis, travel above the workspace, label typo.
+axis, travel above the workspace, label typo. v1 = the trace and scene tables only; v2 = the full
+evidence package (failure class, phase table, expected vs actual, key frames, evidence tools).
+
+**What this shows:** real Droid fixes every seeded bug in one round, in about 15 s, through the
+product's SDK path, without being told where the bug is.
+
+**What it does not show:** that evidence v2 helps. On these 8 cases both modes fix everything in one
+round, and v2 is about 1 s slower (a longer prompt). The cases are too easy to separate them; we
+don't claim v2 raises the fix rate. Its value for the demo is visibility: the failure class, phase
+and frames are what the dashboard and judges read.
+
+**History:** an earlier run (8/8, median 17.1 s, v2 only) gave each case a hint naming the bugged
+template slot ("grip height", "travel height"). WS5.13 (#157) replaced those with generic per-class
+hints; the numbers above are from the honest run.
 
 **Caveats (say them if asked):** the fake world, not MuJoCo or the real arm; 1–2 cases per class;
-class labels are the seeded ones (the rule-based classifier, WS4.5, wasn't merged yet); evidence v2
-only (no v1 comparison run yet).
+class labels are seeded (the rule-based classifier, WS4.5, isn't merged yet), so v2 gets the true
+class plus a generic hint. Re-run once WS4.5 lands (classifier labels, no caveat line) and with
+harder cases (bugs that need the frames or the object track to diagnose).
 
 ## 2. The demo failure, end to end
 

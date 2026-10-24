@@ -24,7 +24,7 @@ criteria and the decision rule. It wins over every other doc.
 | A workstream agent | `AGENTS.md`, `docs/ARCHITECTURE.md`, `docs/INTERFACES.md`, your `docs/workstreams/*.md` |
 | The lead | `docs/WORKFLOW.md` (shared queue, CI, contract changes) |
 | Touching hardware | `docs/RUNBOOK_GX10.md`, `docs/SAFETY.md` |
-| Wanting proof it works | `docs/RESULTS.md` (measured with real Droid: benchmark, demo repair, sandbox check) |
+| Wanting proof it works | `docs/RESULTS.md` (measured with real Droid: 8/8 seeded bugs fixed in one round, median 15 s, with no hint where the bug is; demo repair; sandbox check) |
 | Asking "why X?" | `docs/DECISIONS.md` (decisions, hard truths, sources) |
 
 ## Quick start (no hardware)
@@ -75,9 +75,9 @@ judging criteria live in [`docs/NORTH_STAR.md`](docs/NORTH_STAR.md).
 |---|---|
 | **Trigger** | The robot's own failure: after a real attempt the camera check fails (also: a gate rejects Droid's code, a human rejects with a note, a new task arrives). `RepairLoop` then calls Droid. No chat box. |
 | **What Droid gets** | An evidence package: the task and success check, why it failed (with numbers), scene before/after, the full motion trace with the failing line, cropped before/after images plus key frames from the attempt, earlier rounds, lessons from past tasks, and the saved skill library. |
-| **What Droid can do** | Edit one file (`skill.py`) in a workspace outside the repo, and call our tools: `validate_skill`, `simulate_skill` (sim only), `get_scene`, `list_library`, `read_library_skill`. |
+| **What Droid can do** | Change one file (`skill.py`, in a workspace outside the repo) only through our `write_skill` tool, and call our other tools: `read_file` (its workspace only), `validate_skill`, `simulate_skill` (sim only), `get_scene`, `list_library`, `read_library_skill`, and the evidence tools `get_frame`, `get_object_track`, `compare_with_success`. |
 | **What Droid can't do** | Anything outside an explicit allowlist: no shell, no file access outside its workspace, no network, no automations or sub-agents, never the real arm. `make droid-sandbox-check` proves it live. |
-| **What Droid returns** | The edited skill plus a structured result: diagnosis, change, sim_checked, confidence, lesson. |
+| **What Droid returns** | The new skill (`skill_source`) plus a structured result: diagnosis, change, change_type (parameter or strategy), sim_checked, confidence, lesson. |
 | **What happens next** | We re-run static → sim → safety ourselves, a human approves, the real arm retries, the camera verifies. Success saves a new skill version and Droid's lesson (`skills/lessons.md`). |
 | **What it needs** | The Droid Python SDK (`droid-sdk`, `--extra droid`), the `droid` CLI it drives, and `FACTORY_API_KEY` from https://app.factory.ai/settings/api-keys (an account with credits). Setup: `SETUP.md`. |
 | **How you can see it** | Every Droid message, tool call, tool result, permission decision, diff and result is an event in `runs/<id>/events.jsonl` and on the dashboard. |
