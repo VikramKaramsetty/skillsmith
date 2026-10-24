@@ -34,8 +34,8 @@ def runs(tmp_path):
     """(passing check run, failed rim-slip attempt), with phases, classification and frame files."""
     cfg = load_config()
     expected, attempt = _run(cfg, rim_slip=False), _run(cfg, rim_slip=True)
-    frames = tmp_path / "frames_src"
-    frames.mkdir()
+    frames = tmp_path / "runs" / "frames_src"  # under runs_dir (tmp_cfg), as WS5.11 requires
+    frames.mkdir(parents=True)
     for name in ("sim_carry.jpg", "real_carry.jpg", "real_grasp.jpg"):
         (frames / name).write_bytes(name.encode())
     expected.phases = _phases(ok_carry=True)
@@ -44,11 +44,22 @@ def runs(tmp_path):
     attempt.classification = Classification("SLIP_IN_CARRY", "skill", "carry", 6,
                                              "lost blue cup during a 16 cm sideways move", confidence=0.9)
     attempt.keyframes = {"carry": str(frames / "real_carry.jpg"), "grasp": str(frames / "real_grasp.jpg"),
-                         "crop_after": str(tmp_path / "never_saved.jpg")}
+                         "crop_after": str(tmp_path / "runs" / "never_saved.jpg")}
     return expected, attempt
 
 
 # ---- get_frame ---------------------------------------------------------------------------------
+def test_get_frame_never_copies_a_frame_outside_runs_dir(runs, tmp_path):
+    _, attempt = runs
+    outside = tmp_path / "secret.jpg"
+    outside.write_bytes(b"secret")
+    attempt.keyframes["carry"] = str(outside)
+    ws = tmp_path / "ws"
+    out = et.get_frame(attempt, "carry", ws, 1, roots=[(tmp_path / "runs").resolve()])
+    assert "not copied: outside runs_dir" in out and str(outside) not in out
+    assert not (ws / "frames").exists()
+
+
 def test_get_frame_copies_the_frame_and_shows_the_phase(runs, tmp_path):
     _, attempt = runs
     ws = tmp_path / "ws"

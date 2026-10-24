@@ -90,6 +90,20 @@ def test_lessons_append_once(tmp_path):
     assert path.read_text().count("mid-height") == 1
 
 
+def test_lessons_are_stripped_of_links_html_and_code(tmp_path):
+    path = tmp_path / "lessons.md"
+    lesson = ("Grip [low](http://x.io) ![f](/etc/passwd) <img src=/etc/hosts> see https://evil.example\n"
+              "```python\nopen('/etc/passwd')\n``` [![a](/b)](/c) at mid-height.")
+    assert append_lesson(path, "stack <b>cups</b>", lesson)
+    line = path.read_text().splitlines()[-1]
+    assert line.endswith("(stack cups): Grip low f see a at mid-height.")
+    assert not any(bad in line for bad in ("](", "<", "http", "/etc", "```", "open("))
+    assert append_lesson(path, "stack", "x" * 1000)
+    assert len(path.read_text().splitlines()[-1].split(": ", 1)[1]) == 300
+    assert not append_lesson(path, "stack", "```\n![x](/etc/passwd)\n```")  # nothing left after cleaning
+    assert "/etc" not in path.read_text()
+
+
 # ---- against the real droid_sdk classes (installed in the heavy CI job) ----------------------
 class FakeRequest:
     def __init__(self, actions, options):

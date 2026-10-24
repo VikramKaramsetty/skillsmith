@@ -18,9 +18,10 @@ from __future__ import annotations
 import math
 import shutil
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import List, Optional, Sequence, Tuple
 
 from skillsmith.repair.report import CROP_KEYS, _fmt_xyz, _ordered_frames, _scene_delta, _trace_table
+from skillsmith.repair.workspace import under_roots
 from skillsmith.types import AttemptResult, PhaseCheck, PrimitiveCall, Scene, Vec3
 
 NO_ATTEMPT = ("No failed attempt this round (the skill was rejected by the static checks or by a "
@@ -62,8 +63,11 @@ def _available(attempt: AttemptResult) -> str:
     return ", ".join(names) if names else "none (no phase checks or key frames for this attempt)"
 
 
-def _localise(path: str, ws: Path, tag: str) -> str:
-    """Copy a frame into the workspace's frames/ (for humans); say so if it is missing."""
+def _localise(path: str, ws: Path, tag: str, roots: Optional[Sequence[Path]] = None) -> str:
+    """Copy a frame into the workspace's frames/ (for humans); say so if it is missing. With `roots`
+    (runs_dir, WS5.11), a path outside them is never copied."""
+    if roots is not None and not under_roots(path, roots):
+        return f"`{Path(path).name}` _(not copied: outside runs_dir)_"
     src = Path(path)
     if not src.is_file():
         return f"`{path}` _(missing: the file was not saved)_"
@@ -175,7 +179,8 @@ def _frame_summary(attempt: AttemptResult, phase: str) -> str:
 
 
 # ---- get_frame ------------------------------------------------------------------------------
-def get_frame(attempt: Optional[AttemptResult], phase: str, ws: Path, rnd: int) -> str:
+def get_frame(attempt: Optional[AttemptResult], phase: str, ws: Path, rnd: int,
+              roots: Optional[Sequence[Path]] = None) -> str:
     if attempt is None:
         return NO_ATTEMPT
     phase = _phase(attempt, phase)
@@ -186,7 +191,7 @@ def get_frame(attempt: Optional[AttemptResult], phase: str, ws: Path, rnd: int) 
     if check is not None:
         lines.append(f"**Check:** {_check_line(check)}")
     if path:
-        lines.append(f"**Annotated frame:** {_localise(path, ws, f'round{rnd}_{attempt.env}_{phase}')}")
+        lines.append(f"**Annotated frame:** {_localise(path, ws, f'round{rnd}_{attempt.env}_{phase}', roots)}")
     else:
         lines.append("_no frame captured for this phase_")
     lines += describe_frame(attempt, phase, check)
@@ -275,7 +280,8 @@ def get_object_track(attempt: Optional[AttemptResult], name: str) -> str:
 
 # ---- compare_with_success ---------------------------------------------------------------------
 def compare_with_success(attempt: Optional[AttemptResult], reference: Optional[AttemptResult],
-                         reference_kind: str, phase: str, ws: Path, rnd: int) -> str:
+                         reference_kind: str, phase: str, ws: Path, rnd: int,
+                         roots: Optional[Sequence[Path]] = None) -> str:
     if attempt is None:
         return NO_ATTEMPT
     if reference is None:
@@ -310,7 +316,7 @@ def compare_with_success(attempt: Optional[AttemptResult], reference: Optional[A
     if any(path for _, _, path in frames):
         lines.append("\n## Frames")
         for who, run, path in frames:
-            shown = _localise(path, ws, f"round{rnd}_{who}_{run.env}_{phase}") if path else "_none_"
+            shown = _localise(path, ws, f"round{rnd}_{who}_{run.env}_{phase}", roots) if path else "_none_"
             lines.append(f"- {who} ({run.env}): {shown}; shows {_frame_summary(run, phase)}")
     if reference.scene_after is not None and attempt.scene_after is not None:
         lines.append("\n## Where objects ended\n"

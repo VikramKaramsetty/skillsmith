@@ -8,8 +8,10 @@ failure class, then:
     the success check wanted, plus the passing sim check's phases/frames when one ran)
     → trace with the failing call marked → scene tables → earlier rounds → lessons
 
-Images are markdown links (`![caption](path)`); `evidence_images()` pulls them back out so the
-author can attach them to Droid's call and copy them into the workspace.
+Images are markdown links (`![caption](path)`). The images the author attaches to Droid's call
+and copies into the workspace come from `attempt_images()`, i.e. from the AttemptResult's own
+`keyframes` / `PhaseCheck.frame_path`, never from parsing report text (WS5.11): lesson text is
+written by Droid and must not be able to point us at a host file.
 """
 
 from __future__ import annotations
@@ -23,7 +25,15 @@ from skillsmith.types import PHASES, AttemptResult, Scene, TaskSpec
 
 CROP_KEYS = ("crop_before", "crop_after")  # keyframes keys for WS3.8's cropped before/after pair
 MAX_LESSONS = 12
-_IMAGE_RE = re.compile(r"!\[[^\]]*\]\(([^)\s]+)\)")
+MAX_LESSON_CHARS = 300
+IMAGE_LINK_RE = re.compile(r"!\[[^\]]*\]\(([^)\s]+)\)")  # ![caption](path); group 1 = path
+
+_FENCE_RE = re.compile(r"(```|~~~).*?(\1|\Z)", re.S)
+_HTML_RE = re.compile(r"<\s*/?\s*[a-zA-Z!?][^<>]*>")  # tags, comments, autolinks
+_MD_IMAGE_RE = re.compile(r"!\[([^\]]*)\]\s*(\([^)]*\)?|\[[^\]]*\])?")
+_MD_LINK_RE = re.compile(r"\[([^\]]*)\]\s*(\([^)]*\)?|\[[^\]]*\])")
+_REF_DEF_RE = re.compile(r"^\s*\[[^\]]+\]:\s*\S+.*$", re.M)
+_URL_RE = re.compile(r"\b(?:[a-z][a-z0-9+.-]*://|www\.|mailto:|data:)\S*", re.I)
 
 
 def _fmt_xyz(p) -> str:
@@ -225,8 +235,27 @@ def _scene_delta(exp: Scene, act: Scene, exp_env: str, act_env: str) -> str:
     return "\n".join(rows) if len(rows) > 2 else "End positions match within 0.5 cm."
 
 
+def clean_lesson(text: str, max_chars: int = MAX_LESSON_CHARS) -> str:
+    """One plain-text line: no markdown links or images, HTML, URLs or code fences, capped in length.
+    Lessons come from Droid's own output and reach every later prompt, so they must not carry
+    links the evidence pipeline could follow (WS5.11)."""
+    text = _FENCE_RE.sub(" ", text or "")
+    text = _REF_DEF_RE.sub(" ", text)
+    previous = None
+    while text != previous:  # nested links/images: [![a](b)](c)
+        previous = text
+        text = _HTML_RE.sub(" ", text)
+        text = _MD_IMAGE_RE.sub(lambda m: f" {m.group(1)} ", text)
+        text = _MD_LINK_RE.sub(lambda m: f" {m.group(1)} ", text)
+    text = _URL_RE.sub(" ", text)
+    text = " ".join(text.replace("`", "").split())
+    if len(text) > max_chars:
+        text = text[:max_chars - 1].rstrip() + "…"
+    return text
+
+
 def _lessons(lessons: Optional[str]) -> str:
-    items = [ln for ln in (lessons or "").splitlines() if ln.startswith("- ")]
+    items = [f"- {clean_lesson(ln[2:], 2 * MAX_LESSON_CHARS)}" for ln in (lessons or "").splitlines() if ln.startswith("- ")]
     if not items:
         return ""
     shown = items[-MAX_LESSONS:]
@@ -285,9 +314,22 @@ def attempt_report_v1(task: TaskSpec, attempt: AttemptResult, history: List[str]
     return "\n".join(parts)
 
 
-def evidence_images(report_md: str) -> List[str]:
-    """Image paths linked from a report, in order, without duplicates."""
-    return list(dict.fromkeys(_IMAGE_RE.findall(report_md or "")))
+def attempt_images(attempt: Optional[AttemptResult], expected: Optional[AttemptResult] = None) -> List[str]:
+    """The image paths the evidence for `attempt` links to, in report order, without duplicates.
+    Built only from the AttemptResults (key frames, phase-check frames, crops), never from report
+    text, so nothing a lesson or a reviewer note says can add a file."""
+    if attempt is None:
+        return []
+    paths = [path for _, path in _ordered_frames(attempt)]
+    paths += [attempt.keyframes[k] for k in CROP_KEYS if attempt.keyframes.get(k)]
+    if expected is not None:
+        for name, e_path in expected.keyframes.items():
+            if name in CROP_KEYS or not e_path:
+                continue
+            paths.append(e_path)
+            if attempt.keyframes.get(name):
+                paths.append(attempt.keyframes[name])
+    return list(dict.fromkeys(p for p in paths if p))
 
 
 def static_report(task: TaskSpec, issues) -> str:
