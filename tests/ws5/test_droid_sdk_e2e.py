@@ -95,7 +95,7 @@ class FakeStream:
             text="done", messages=(), usage=sdk.Usage(10, 20, 0, 0, 0, factory_credits=0.5),
             duration=timedelta(seconds=12.5), turn_count=3, session_id="sess-1",
             structured_output={"diagnosis": "rim grip slipped", "change": "grip lower",
-                               "sim_checked": True, "confidence": 0.8, "lesson": LESSON})
+                               "change_type": "parameter", "sim_checked": True, "confidence": 0.8, "lesson": LESSON})
 
 
 class FakeSession:
