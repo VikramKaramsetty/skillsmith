@@ -154,7 +154,8 @@ def test_rejection_and_failed_run(tmp_path):
     pairs = DEMO + [("approval.decided", {"approved": False, "note": "too fast"}),
                     ("run.finished", {"ok": False, "rounds": 2})]
     s = fold(_events(pairs), tmp_path)
-    assert s["approval"] == {"state": "rejected", "title": "run stack v2 on real", "note": "too fast"}
+    assert s["approval"] == {"state": "rejected", "kind": "approval", "title": "run stack v2 on real",
+                             "note": "too fast"}
     assert s["banner"]["text"] == "FAILED · after 2 round(s)"
 
 
@@ -184,3 +185,29 @@ def test_real_demo_fake_log_ends_in_pass(tmp_path):
 def test_new_run_resets_story(tmp_path):
     s = fold(_events(DEMO + FINISH + DEMO[:1]), tmp_path)
     assert s["diff"] is None and s["saved"] is None and s["banner"]["text"] == "STARTING"
+
+
+def test_story_keeps_the_run_id_for_approve(tmp_path):
+    assert fold(_events(DEMO), tmp_path)["run_id"] == "r1"
+
+
+def test_reset_request_waits_then_clears_when_the_loop_moves_on(tmp_path):
+    reset = ("reset.requested", {"message": "Reset the objects to their start positions"})
+    s = fold(_events(DEMO[:5] + [reset]), tmp_path)
+    assert s["approval"]["state"] == "pending" and s["approval"]["kind"] == "reset"
+    assert s["banner"]["text"] == "RESET THE TABLE"
+    s = fold(_events(DEMO[:5] + [reset, ("scene.observed", {}), DEMO[5]]), tmp_path)
+    assert s["approval"]["state"] == "approved"
+    assert s["banner"]["text"] == "DROID REPAIRING · round 1"
+
+
+def test_crashed_run_counts_as_finished(tmp_path):
+    crash = ("error", {"where": "dashboard.task", "message": "RuntimeError: robotd unreachable"})
+    s = fold(_events(DEMO[:3] + [crash]), tmp_path)
+    assert s["finished"] == {"ok": False, "rounds": 0}
+
+
+def test_page_has_task_input_and_reject():
+    html = INDEX_HTML.read_text()
+    for id_ in ["task-form", "task-input", "reject", "note"]:
+        assert f'id="{id_}"' in html
