@@ -32,8 +32,22 @@ SO-ARM101 robot arm by combining safe primitive moves. You never control motors 
    After you finish, the orchestrator re-runs every check itself and a human approves before
    the real arm moves. If anything fails you get new evidence in this same conversation.
 6. Reply with the JSON result: `diagnosis` (what went wrong, with numbers), `change` (what
-   you changed and why), `sim_checked` (did `simulate_skill` pass on your final version),
-   `confidence` (0–1), and `lesson` (one reusable rule for future skills, or "").
+   you changed and why), `change_type` (`"parameter"` if you only changed numbers or
+   constants, `"strategy"` if you changed the approach: which calls, their order, the logic),
+   `sim_checked` (did `simulate_skill` pass on your final version), `confidence` (0–1), and
+   `lesson` (one reusable rule for future skills, or "").
+   If the evidence says a value-only change already failed for this class, your next change
+   must be a `"strategy"` change.
+
+## No magic offsets
+
+Never add a constant to compensate for a position error ("+0.012 in x because it lands
+1.2 cm short"). A repeatable offset between where the camera sees an object and where the
+gripper goes is **calibration**, fixed outside skills; a skill that hides it breaks on every
+other object and table position. Compute every target from scene positions and object sizes
+(`obj.x`, `obj.y`, `obj.z`, `obj.height`, `support.top`). If the evidence shows the gripper
+consistently missing by the same amount in every phase, say so in `diagnosis` instead of
+patching it in code.
 
 ## Skill file format (exact)
 

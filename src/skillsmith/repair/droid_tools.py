@@ -26,16 +26,23 @@ from skillsmith.types import AttemptResult, Scene, TaskSpec
 
 MCP_SERVER_NAME = "skillsmith"
 
+# Droid's own label for its edit; feeds analysis.should_escalate (same class after a
+# "parameter" change -> the next evidence says "change the approach").
+CHANGE_TYPES = ("parameter", "strategy")
+
 REPAIR_RESULT_SCHEMA = {
     "type": "object",
     "properties": {
         "diagnosis": {"type": "string", "description": "What went wrong, citing numbers from the trace or scene."},
         "change": {"type": "string", "description": "What you changed in skill.py and why it fixes the diagnosis."},
+        "change_type": {"type": "string", "enum": list(CHANGE_TYPES),
+                        "description": "'parameter' if you only changed numbers or constants, "
+                                       "'strategy' if you changed the approach (order, calls, logic)."},
         "sim_checked": {"type": "boolean", "description": "True if simulate_skill passed on your final skill.py."},
         "confidence": {"type": "number", "minimum": 0, "maximum": 1},
         "lesson": {"type": "string", "description": "One reusable rule for future skills, or an empty string."},
     },
-    "required": ["diagnosis", "change", "sim_checked", "confidence", "lesson"],
+    "required": ["diagnosis", "change", "change_type", "sim_checked", "confidence", "lesson"],
     "additionalProperties": False,
 }
 

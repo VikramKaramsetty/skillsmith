@@ -223,8 +223,8 @@ class FakeDroid:
 
 def output(lesson: str = "", **overrides) -> types.MappingProxyType:
     """A structured result shaped like REPAIR_RESULT_SCHEMA, read-only like the real SDK's."""
-    out = {"diagnosis": "rim grip slipped", "change": "grip lower", "sim_checked": True,
-           "confidence": 0.8, "lesson": lesson}
+    out = {"diagnosis": "rim grip slipped", "change": "grip lower", "change_type": "parameter",
+           "sim_checked": True, "confidence": 0.8, "lesson": lesson}
     out.update(overrides)
     return types.MappingProxyType(out)
 
