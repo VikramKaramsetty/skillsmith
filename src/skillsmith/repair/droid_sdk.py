@@ -38,7 +38,7 @@ from skillsmith.repair.droid_tools import (
     decide,
 )
 from skillsmith.repair.protocols import AuthorContext
-from skillsmith.repair.report import draft_brief
+from skillsmith.repair.report import draft_brief, evidence_images
 from skillsmith.repair.workspace import lessons_path, prepare_workspace, workspace_dir
 from skillsmith.types import Scene, TaskSpec
 
@@ -123,7 +123,7 @@ class DroidSDKAuthor:
 
         session = await self._session(ctx.run_id, ws, tools)
         kwargs = {"output": JsonSchema(REPAIR_RESULT_SCHEMA), "timeout": self.d.timeout_s}
-        images = self._images(ctx.snapshot_path)
+        images = self._images(ctx.snapshot_path, report_md)
         if images:
             kwargs["images"] = images
         async with session.stream(PROMPT_HEADER + report_md, **kwargs) as stream:
@@ -236,16 +236,27 @@ class DroidSDKAuthor:
         elif kind == "ErrorEvent":
             self.bus.emit("error", where="droid", message=getattr(event, "message", repr(event)))
 
-    def _images(self, snapshot_path: Optional[str]):
-        if not (self.d.get("attach_snapshot", True) and snapshot_path and Path(snapshot_path).exists()):
+    def _images(self, snapshot_path: Optional[str], report_md: str = ""):
+        """The failure snapshot plus the evidence's key frames, riding along in the same call."""
+        paths = []
+        if self.d.get("attach_snapshot", True) and snapshot_path:
+            paths.append(snapshot_path)
+        if self.d.get("attach_frames", True):
+            paths += evidence_images(report_md)
+        paths = [p for p in dict.fromkeys(paths) if Path(p).is_file()][:int(self.d.get("max_images", 6))]
+        if not paths:
             return None
         from droid_sdk import Base64ImageSource, Image
 
-        data = base64.b64encode(Path(snapshot_path).read_bytes()).decode()
-        return [Image(Base64ImageSource(data=data, media_type="image/jpeg"))]
+        return [Image(Base64ImageSource(data=base64.b64encode(Path(p).read_bytes()).decode(),
+                                        media_type=_media_type(p))) for p in paths]
 
     def workspace(self, run_id: str) -> Path:
         return workspace_dir(self.cfg, run_id)
+
+
+def _media_type(path: str) -> str:
+    return "image/png" if path.lower().endswith(".png") else "image/jpeg"
 
 
 def _succeeded(result) -> bool:
