@@ -13,17 +13,21 @@ from typing import List, Optional, Sequence, Tuple
 FRAME_JPEG = Path(__file__).with_name("mock_frame.jpg")
 FREE_LOAD = 30.0  # raw gripper servo load moving freely (Feetech units, ~0.1 % of max torque)
 GRIP_LOAD = 450.0  # raw gripper servo load squeezing an object
+# roughly an SO101's calibrated ranges (deg; wrist_roll turns fully; gripper 0..100)
+MOCK_LIMITS = ((-110.0, 110.0), (-100.0, 100.0), (-100.0, 100.0), (-100.0, 100.0), (-180.0, 180.0), (0.0, 100.0))
 
 
 class MockBus:
     """Six servos that reach their goal at once while torque is on. Implements controller.Bus."""
 
     def __init__(self, joints: Sequence[float] = (0, 0, 0, 0, 0), gripper: float = 100.0,
-                 object_at: Optional[float] = None, torque: bool = True):
+                 object_at: Optional[float] = None, torque: bool = True,
+                 limits: Sequence[Tuple[float, float]] = MOCK_LIMITS):
         self.present: List[float] = [float(j) for j in joints] + [float(gripper)]
         self.goal: List[float] = list(self.present)
         self.torque = torque
         self.object_at = object_at  # gripper position where the jaws meet an object; None = nothing there
+        self.limits = [(float(lo), float(hi)) for lo, hi in limits]
         self.log: List[Tuple[str, object]] = []  # ("goal", [6 values]) and ("torque", bool), in order
 
     def read_present(self) -> List[float]:
@@ -46,6 +50,9 @@ class MockBus:
 
     def torque_enabled(self) -> bool:
         return self.torque
+
+    def joint_limits(self) -> List[Tuple[float, float]]:
+        return list(self.limits)
 
     def close(self) -> None:
         pass

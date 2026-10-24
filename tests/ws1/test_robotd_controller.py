@@ -122,12 +122,66 @@ def test_second_motion_while_moving_is_refused(bus):
     assert bus.present[:5] == pytest.approx([50, 0, 0, 0, 0])
 
 
-def test_move_that_does_not_settle_reports_each_joint_off_target():
-    ctl = ArmController(StuckElbowBus(), max_speed_dps=1000, settle_timeout_s=0.1)
+def test_move_that_does_not_settle_reports_each_joint_off_target_and_stops_pushing():
+    bus = StuckElbowBus()
+    ctl = ArmController(bus, max_speed_dps=1000, settle_timeout_s=0.1)
     with pytest.raises(RobotdError) as e:
-        ctl.move_joints([10, 0, 20, 0, 0, OPEN], speed_dps=1000)
+        ctl.move_joints([0, 0, 5, 0, 0, OPEN], speed_dps=1000)  # one step: too small for the watchdog
     assert e.value.status == 409
-    assert e.value.details["errors"] == pytest.approx({"elbow_flex": 20.0})
+    assert e.value.details["errors"] == pytest.approx({"elbow_flex": 5.0})
+    assert bus.goal[2] == 0.0  # goal pulled back to where the elbow is, so the servo stops straining
+
+
+LIMITS = [(-100.0, 100.0)] * 5 + [(0.0, 100.0)]
+
+
+def test_target_outside_the_joint_limits_is_rejected_without_moving():
+    bus = MockBus(limits=LIMITS)
+    ctl = ArmController(bus, limit_margin_deg=2.0)
+    with pytest.raises(RobotdError) as e:
+        ctl.move_joints([99, 0, -120, 0, 0, OPEN], speed_dps=30)
+    assert e.value.status == 400
+    assert e.value.details["outside"] == {"shoulder_pan": {"target": 99.0, "min": -98.0, "max": 98.0},
+                                          "elbow_flex": {"target": -120.0, "min": -98.0, "max": 98.0}}
+    assert goals(bus) == []
+
+
+def test_target_inside_the_margin_moves():
+    bus = MockBus(limits=LIMITS)
+    ArmController(bus, max_speed_dps=1000, limit_margin_deg=2.0).move_joints([98, 0, -98, 0, 0, OPEN], 1000)
+    assert bus.present[:5] == pytest.approx([98, 0, -98, 0, 0])
+
+
+def test_watchdog_stops_a_joint_that_stops_following_its_goal():
+    bus = StuckElbowBus()
+    ctl = ArmController(bus, max_step_deg=10, max_speed_dps=1000)
+    with pytest.raises(RobotdError) as e:
+        ctl.move_joints([0, 0, 40, 0, 0, OPEN], speed_dps=1000)
+    assert e.value.status == 409
+    assert e.value.details["lag"] == pytest.approx({"elbow_flex": 20.0})
+    assert goals(bus, joint=2) == pytest.approx([10, 20, 0])  # two steps, then held where it is
+
+
+class DropsSecondWriteBus(MockBus):
+    """A bus whose second goal write fails, like a USB hiccup mid-move."""
+
+    writes = 0
+
+    def write_goal(self, goal):
+        self.writes += 1
+        if self.writes == 2:
+            raise ConnectionError("Failed to sync write 'Goal_Position'")
+        super().write_goal(goal)
+
+
+def test_bus_error_mid_move_answers_503_and_holds():
+    bus = DropsSecondWriteBus()
+    ctl = ArmController(bus, max_step_deg=10, max_speed_dps=1000)
+    with pytest.raises(RobotdError) as e:
+        ctl.move_joints([30, 0, 0, 0, 0, OPEN], speed_dps=1000)
+    assert e.value.status == 503
+    assert "ConnectionError" in e.value.message
+    assert bus.goal[:5] == bus.present[:5] == pytest.approx([10, 0, 0, 0, 0])
 
 
 def test_gripper_closing_on_an_object_reports_holding():

@@ -1,6 +1,7 @@
 """WS1.2: robotd's Feetech backend over a fake LeRobot SO101 follower (no LeRobot, no serial port)."""
 
 import sys
+from types import SimpleNamespace
 
 import pytest
 
@@ -59,12 +60,22 @@ class FakeMotorsBus:
                 self.present[name] = self.goal[name]
 
 
+def cal(range_min, range_max):
+    """The fields of LeRobot's MotorCalibration that matter here (raw STS3215 ticks, 0..4095)."""
+    return SimpleNamespace(range_min=range_min, range_max=range_max)
+
+
+CALIBRATION = {"shoulder_pan": cal(1000, 3000), "shoulder_lift": cal(800, 3200), "elbow_flex": cal(900, 3100),
+               "wrist_flex": cal(850, 3150), "wrist_roll": cal(0, 4095), "gripper": cal(1390, 2900)}
+
+
 class FakeFollower:
     """Stands in for LeRobot's SO101Follower: `configure` frees the motors, sets them up, re-energises."""
 
     def __init__(self, bus=None, calibrated=True):
         self.bus = bus or FakeMotorsBus()
         self.is_calibrated = calibrated
+        self.calibration = CALIBRATION
 
     def configure(self):
         self.bus.disable_torque()
@@ -109,6 +120,14 @@ def test_without_lerobot_the_error_names_the_python_to_use(monkeypatch):
     monkeypatch.setitem(sys.modules, "lerobot", None)
     with pytest.raises(ImportError, match=r"~/robot/\.venv"):
         connect_follower("/dev/ttyFAKE", "follower")
+
+
+def test_joint_limits_are_the_calibrated_ranges_in_degrees():
+    # degrees = (ticks - mid) * 360 / 4095, so a range of 2000 ticks is +-1000 * 360 / 4095 = +-87.91 deg
+    limits = FeetechBus(FakeFollower()).joint_limits()
+    assert limits == [pytest.approx((-87.912, 87.912), abs=1e-3), pytest.approx((-105.495, 105.495), abs=1e-3),
+                      pytest.approx((-96.703, 96.703), abs=1e-3), pytest.approx((-101.099, 101.099), abs=1e-3),
+                      pytest.approx((-180.0, 180.0), abs=1e-3), (0.0, 100.0)]
 
 
 def test_present_positions_come_back_in_joint_order():

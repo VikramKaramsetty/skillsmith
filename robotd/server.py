@@ -4,7 +4,8 @@
 so this module imports with core deps only. Endpoints are plain `def`, so FastAPI runs each one in
 its threadpool: `/stop` and `/state` answer while a blocking `/move_joints` is still running.
 Errors answer `{"ok": false, "error": "...", ...details}` with 400 (bad request), 401 (token),
-404 (unknown camera) or 409 (motion refused, stopped or not settled).
+404 (unknown camera), 409 (motion refused, stopped, not settled or halted by the watchdog) or
+503 (the arm bus failed mid-motion).
 With a token set, every request must carry it in the `X-Robotd-Token` header.
 No `from __future__ import annotations` here: FastAPI must resolve the locally defined body models.
 """
