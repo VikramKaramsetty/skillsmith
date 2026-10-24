@@ -8,6 +8,7 @@ from ws3_fakes import FIXTURES
 from skillsmith.perception.frames import FixtureFrames
 from skillsmith.perception.geometry import (
     CalibrationError,
+    CalibrationMissing,
     CameraModel,
     calibrate,
     calibrate_intrinsics,
@@ -144,3 +145,8 @@ def test_operator_tool_calibrates_then_checks(tmp_path, capsys):
     model.save(out)
     assert tool.main(["--check", *common]) == 1
     assert "FAIL" in capsys.readouterr().out
+
+
+def test_a_missing_calibration_says_how_to_make_one(tmp_path):
+    with pytest.raises(CalibrationMissing, match="tools/calibrate_camera.py"):
+        CameraModel.load(tmp_path / "camera.json")

@@ -43,6 +43,11 @@ class CalibrationError(RuntimeError):
     """Calibration could not be done, with what is missing."""
 
 
+class CalibrationMissing(CalibrationError, NotImplementedError):
+    """No config/camera.json on this machine: the calibration step has not been done here yet.
+    Also a NotImplementedError so callers that skip backends not built yet (QA conformance) skip it."""
+
+
 @dataclass
 class CameraModel:
     K: List[List[float]]
@@ -57,6 +62,9 @@ class CameraModel:
 
     @classmethod
     def load(cls, path: Union[str, Path]) -> CameraModel:
+        if not Path(path).is_file():
+            raise CalibrationMissing(f"no camera calibration at {path}: run tools/calibrate_camera.py "
+                                     "(docs/RUNBOOK_GX10.md step 4)")
         data = json.loads(Path(path).read_text())
         known = {k: data[k] for k in cls.__dataclass_fields__ if k in data}
         return cls(**known)
