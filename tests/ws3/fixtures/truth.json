@@ -1,0 +1,281 @@
+{
+ "camera": {
+  "K": [
+   [
+    700.0,
+    0.0,
+    322.5
+   ],
+   [
+    0.0,
+    700.0,
+    238.0
+   ],
+   [
+    0.0,
+    0.0,
+    1.0
+   ]
+  ],
+  "dist": [
+   0.0,
+   0.0,
+   0.0,
+   0.0,
+   0.0
+  ],
+  "R": [
+   [
+    -0.0,
+    -0.999261175,
+    0.038433122
+   ],
+   [
+    -0.998689598,
+    -0.001966892,
+    -0.051139201
+   ],
+   [
+    0.051177012,
+    -0.038382759,
+    -0.997951741
+   ]
+  ],
+  "t": [
+   0.0,
+   0.209724816,
+   0.770853749
+  ],
+  "size": [
+   640,
+   480
+  ],
+  "convention": "X_cam = R @ X_robot + t (OpenCV solvePnP)"
+ },
+ "markers": {
+  "0": [
+   0.06,
+   -0.21
+  ],
+  "1": [
+   0.36,
+   -0.21
+  ],
+  "2": [
+   0.36,
+   0.21
+  ],
+  "3": [
+   0.06,
+   0.21
+  ]
+ },
+ "marker_size": 0.04,
+ "marker_dict": "DICT_4X4_50",
+ "frames": [
+  {
+   "file": "apart.jpg",
+   "t": 1730000000.0,
+   "objects": [
+    {
+     "id": "blue_cup_0",
+     "label": "blue cup",
+     "color": "blue",
+     "kind": "cup",
+     "x": 0.22,
+     "y": -0.08,
+     "z": 0.0,
+     "height": 0.08,
+     "width": 0.065,
+     "top_uv": [
+      404.89,
+      224.18
+     ]
+    },
+    {
+     "id": "red_cup_0",
+     "label": "red cup",
+     "color": "red",
+     "kind": "cup",
+     "x": 0.22,
+     "y": 0.08,
+     "z": 0.0,
+     "height": 0.08,
+     "width": 0.065,
+     "top_uv": [
+      245.55,
+      223.75
+     ]
+    },
+    {
+     "id": "green_block_0",
+     "label": "green block",
+     "color": "green",
+     "kind": "block",
+     "x": 0.15,
+     "y": 0.0,
+     "z": 0.0,
+     "height": 0.03,
+     "width": 0.03,
+     "top_uv": [
+      323.58,
+      292.6
+     ]
+    }
+   ]
+  },
+  {
+   "file": "stacked.jpg",
+   "t": 1730000001.0,
+   "objects": [
+    {
+     "id": "red_cup_0",
+     "label": "red cup",
+     "color": "red",
+     "kind": "cup",
+     "x": 0.22,
+     "y": 0.08,
+     "z": 0.0,
+     "height": 0.08,
+     "width": 0.065,
+     "top_uv": [
+      245.55,
+      223.75
+     ]
+    },
+    {
+     "id": "blue_cup_0",
+     "label": "blue cup",
+     "color": "blue",
+     "kind": "cup",
+     "x": 0.22,
+     "y": 0.08,
+     "z": 0.08,
+     "height": 0.08,
+     "width": 0.065,
+     "top_uv": [
+      239.1,
+      217.29
+     ]
+    },
+    {
+     "id": "green_block_0",
+     "label": "green block",
+     "color": "green",
+     "kind": "block",
+     "x": 0.15,
+     "y": 0.0,
+     "z": 0.0,
+     "height": 0.03,
+     "width": 0.03,
+     "top_uv": [
+      323.58,
+      292.6
+     ]
+    }
+   ]
+  },
+  {
+   "file": "edges.jpg",
+   "t": 1730000002.0,
+   "objects": [
+    {
+     "id": "red_cup_0",
+     "label": "red cup",
+     "color": "red",
+     "kind": "cup",
+     "x": 0.29,
+     "y": -0.12,
+     "z": 0.0,
+     "height": 0.08,
+     "width": 0.065,
+     "top_uv": [
+      443.67,
+      155.48
+     ]
+    },
+    {
+     "id": "blue_cup_0",
+     "label": "blue cup",
+     "color": "blue",
+     "kind": "cup",
+     "x": 0.13,
+     "y": 0.13,
+     "z": 0.0,
+     "height": 0.08,
+     "width": 0.065,
+     "top_uv": [
+      194.33,
+      314.35
+     ]
+    },
+    {
+     "id": "green_block_0",
+     "label": "green block",
+     "color": "green",
+     "kind": "block",
+     "x": 0.27,
+     "y": 0.06,
+     "z": 0.0,
+     "height": 0.03,
+     "width": 0.03,
+     "top_uv": [
+      267.79,
+      180.72
+     ]
+    }
+   ]
+  },
+  {
+   "file": "stacked_far.jpg",
+   "t": 1730000003.0,
+   "objects": [
+    {
+     "id": "red_cup_0",
+     "label": "red cup",
+     "color": "red",
+     "kind": "cup",
+     "x": 0.29,
+     "y": -0.09,
+     "z": 0.0,
+     "height": 0.08,
+     "width": 0.065,
+     "top_uv": [
+      414.29,
+      155.29
+     ]
+    },
+    {
+     "id": "blue_cup_0",
+     "label": "blue cup",
+     "color": "blue",
+     "kind": "cup",
+     "x": 0.29,
+     "y": -0.09,
+     "z": 0.08,
+     "height": 0.08,
+     "width": 0.065,
+     "top_uv": [
+      429.35,
+      140.25
+     ]
+    },
+    {
+     "id": "green_block_0",
+     "label": "green block",
+     "color": "green",
+     "kind": "block",
+     "x": 0.15,
+     "y": 0.06,
+     "z": 0.0,
+     "height": 0.03,
+     "width": 0.03,
+     "top_uv": [
+      267.34,
+      292.66
+     ]
+    }
+   ]
+  }
+ ]
+}
