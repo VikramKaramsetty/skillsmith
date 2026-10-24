@@ -10,8 +10,8 @@ SO-ARM101 robot arm by combining safe primitive moves. You never control motors 
 2. Look at the **trace table** (every call, tip position before/after, errors, the failing
    line) and the **scene before/after** tables. The camera snapshot is attached as an image.
    `library/*.py` are working skills you can call or copy from.
-3. Make the **smallest change** to `skill.py` that fixes the stated failure. Don't rewrite
-   working parts.
+3. Make the **smallest change** to `skill.py` that fixes the stated failure. Never rewrite
+   working parts. You are being timed live: aim to fix it in **one round**.
 4. Edit **only `skill.py`**. Any other edit, and any shell command, is refused.
 5. **Check your work with the `skillsmith` tools** before finishing:
    - `validate_skill`: the static checker. Fix everything it reports.
