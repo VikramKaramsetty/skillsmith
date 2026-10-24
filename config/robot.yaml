@@ -38,6 +38,8 @@ safety:
   default_tcp_speed: 0.08
   max_joint_speed_dps: 60
   max_step_deg: 10                  # robotd per-command clamp (5-10 works; 2 stalled the elbow)
+  joint_limit_margin_deg: 2         # robotd refuses goals this close to a calibrated joint limit
+  max_lag_deg: 10                   # robotd watchdog: a joint this far behind its goal halts the move
   max_calls: 80                     # primitive calls per attempt (includes nested skills)
   max_skill_depth: 3
   approach_step: 0.02               # vertical moves split into steps this size
@@ -68,7 +70,14 @@ droid:                              # see docs/NORTH_STAR.md
   restrict_tools: []                # optional built-in allowlist; WS5.1 sets it from the droid.tools event
   sim_tool_budget: 3                # simulate_skill calls Droid may make per round
   attach_snapshot: true             # send the failure camera frame as an image
+  attach_frames: true               # attach the evidence's key frames as images (WS5.3)
+  max_images: 6                     # cap on images attached per round
   # CLI fallback only
   bin: droid
   auto: low
   remove_tools: [Execute]
+
+dashboard:                          # `skillsmith serve` (WS6)
+  env: fake                         # target env for tasks started from the page: fake | sim | real
+  author: droid                     # droid (the product) | scripted (tests only)
+  approval_timeout_s: 600           # no click in time = REJECT, never approve

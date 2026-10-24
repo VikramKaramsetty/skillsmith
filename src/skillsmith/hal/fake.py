@@ -170,9 +170,10 @@ class FakeWorld:
 
     def _drop(self) -> None:
         h = self._held
+        others = self._others()  # before clearing _held, or h counts as its own support
         self._held = None
         support = 0.0
-        for o in self._others():
+        for o in others:
             if o.contains_xy(h.x, h.y):
                 support = max(support, o.top)
         h.z = support

@@ -48,7 +48,9 @@ def load_config(path: str) -> dict:
 def build_controller(cfg: dict, bus: Bus) -> ArmController:
     safety = cfg["safety"]
     return ArmController(bus, max_step_deg=float(safety["max_step_deg"]),
-                         max_speed_dps=float(safety["max_joint_speed_dps"]))
+                         max_speed_dps=float(safety["max_joint_speed_dps"]),
+                         limit_margin_deg=float(safety.get("joint_limit_margin_deg", 2.0)),
+                         max_lag_deg=float(safety.get("max_lag_deg", safety["max_step_deg"])))
 
 
 def open_bus(mock: bool, cfg: dict) -> Bus:

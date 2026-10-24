@@ -45,7 +45,8 @@ SPEC: dict[str, set[str]] = {
     "scene.observed": {"scene", "image_path"},
     "plan.selected": {"skill", "source", "version"},
     "attempt.started": {"env", "skill", "version"},
-    "attempt.finished": {"env", "skill", "version", "ok", "error", "duration_s"},
+    "attempt.finished": {"env", "skill", "version", "ok", "error", "duration_s", "reason",
+                         "scene_before", "scene_after", "safety", "perception"},
     "primitive.call": _fields(PrimitiveCall),
     "note": {"text"},
     "verify.result": {"ok", "detail"},
@@ -56,7 +57,7 @@ SPEC: dict[str, set[str]] = {
     "droid.tool_call": {"round", "name", "input"},
     "droid.tool_result": {"round", "tool", "is_error", "content"},
     "droid.permission": {"round", "action", "target", "allowed", "reason"},
-    "droid.check": {"round", "tool", "ok", "run", "reason"},
+    "droid.check": {"round", "tool", "ok"},  # per-tool extras (run, reason, lines) are optional
     "droid.result": {"round", "subtype", "result", "error", "session_id", "duration", "credits"},
     "droid.lesson": {"round", "lesson"},
     "droid.event": set(),  # CLI fallback: the raw stream-json event, no fixed keys
@@ -64,6 +65,7 @@ SPEC: dict[str, set[str]] = {
     "skill.diff": {"old_version", "new_version", "diff"},
     "gate.result": {"gate", "ok", "detail"},
     "sim.video": {"path"},
+    "reset.requested": {"message"},
     "approval.requested": {"summary"},
     "approval.decided": {"approved", "note"},
     "skill.saved": {"skill", "version"},
@@ -77,25 +79,22 @@ SPEC: dict[str, set[str]] = {
 # Keys of nested values that §7 spells out.
 NESTED: dict[tuple[str, str], set[str]] = {
     ("run.started", "task"): _fields(TaskSpec),
-    ("droid.result", "result"): {"diagnosis", "change", "sim_checked", "confidence", "lesson"},
+    ("droid.result", "result"): {"diagnosis", "change", "change_type", "sim_checked", "confidence", "lesson"},
+    # skill_source is in §7 too, but the fake-SDK turn edits skill.py directly and returns none
 }
 
 # Allowed values where §7 lists them.
 ENUMS: dict[tuple[str, str], set] = {
     ("plan.selected", "source"): {"library", "draft"},
     ("gate.result", "gate"): {"static", "sim", "safety"},
-    ("droid.check", "tool"): {"validate_skill", "simulate_skill"},
+    ("droid.check", "tool"): {"validate_skill", "simulate_skill", "write_skill", "skill_source", "read_file"},
 }
 
 # Mismatches found by this suite, keyed by the violation string `_violations` produces.
 KNOWN_GAPS: dict[str, str] = {
-    "droid.check: missing data keys ['reason', 'run']":
-        "ws5: RepairTools.validate_skill emits droid.check without `run`/`reason` "
-        "(src/skillsmith/repair/droid_tools.py); emit run=None, reason=<first issue or 'ok'>, or the lead "
-        "marks them sim-only in §7",
-    "reset.requested: type not in INTERFACES §7":
-        "ws5/lead: RepairLoop._reset_scene emits reset.requested (src/skillsmith/repair/loop.py), "
-        "which §7 does not list; the lead adds `reset.requested | message` to §7",
+    "attempt.finished: missing data keys ['perception', 'safety', 'scene_after', 'scene_before']":
+        "ws4: runtime.run_skill emits attempt.finished without scene_before/scene_after/safety/perception "
+        "(added to §7 from PR #150's contract change request)",
 }
 
 

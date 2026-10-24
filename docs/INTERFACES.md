@@ -156,18 +156,30 @@ Rules:
 - Backends do **not** enforce the Cartesian envelope (that is `safety.py`), but the
   real backend and `robotd` **do** enforce joint limits and per-step deltas.
 - `sim` and `fake` raise `CollisionError` on unintended contact.
+- `move_joints` ignores the gripper value in `target`; only `set_gripper` moves the jaws.
+- `ik` returns `None` for a target outside the reachable workspace (it never raises for that).
+
+Frames (WS3, `skillsmith/perception/frames.py`) are the WorldModel's input:
+`FrameSource.read() -> Frame` (JPEG/BGR plus capture time `t`, unix seconds) and `close()`.
+`RobotdFrames` is the production source (only robotd opens cameras).
 
 `robotd` HTTP API (WS1, on GX10 `127.0.0.1:8100`, JSON bodies):
 
 | Method | Path | Body / result |
 |---|---|---|
 | GET | `/state` | `{"joints":[6], "holding":bool, "gripper_pos":float, "gripper_load":float, "torque":bool, "t":float}` |
-| POST | `/move_joints` | `{"target":[6], "speed_dps":float}` → `{"ok":true}` (blocking) |
+| POST | `/move_joints` | `{"target":[6], "speed_dps":float}` → `{"ok":true}` (blocking; the gripper value is ignored) |
 | POST | `/gripper` | `{"pct":float}` → `{"ok":true, "holding":bool}` |
 | POST | `/stop` | hold current position |
-| POST | `/torque` | `{"on":bool}` (Goal=Present before enabling) |
-| GET | `/frame/{cam}` | JPEG; `cam` ∈ `wrist`, `front` |
-| GET | `/stream/{cam}` | MJPEG for the dashboard |
+| POST | `/torque` | `{"on":bool}` → `{"ok":true, "torque":bool}` (Goal=Present before enabling) |
+| GET | `/frame/{cam}` | JPEG with header `X-Frame-Time: <capture unix seconds>`; `cam` ∈ `wrist`, `front` |
+| GET | `/stream/{cam}` | MJPEG for the dashboard; each part carries `X-Frame-Time` |
+
+Errors: `{"ok": false, "error": str, ...}` with 400 (bad request, or `"outside": {...}` for a
+target past a joint limit), 401 (token), 404 (unknown camera), 409 (refused: stopped, not
+settled, or `"lag": {...}` when the watchdog halted a stalled move), 503 (bus error). When
+`$ROBOTD_TOKEN` is set, every request must send it in the `X-Robotd-Token` header. The client
+(`RobotdArm`, WS1.5) turns every non-2xx answer into an exception **and** an `error` event.
 
 ---
 
@@ -224,6 +236,13 @@ setattr delattr globals locals vars input breakpoint type object super`; `robot.
 other than as `robot.attr` or as a call argument (no aliasing); `range()` with a literal
 bound > 50; files over 200 lines; a missing `def run(robot, scene, skills, ...)`.
 
+Also (WS4.1, PR #143): names limited to the runtime's builtins, `math`, `SkillError` and names
+the skill binds; no frame/generator introspection attributes, `.format` or `.mro`; handles
+(`robot`/`scene`/`skills`) passed only to same-named parameters of local functions; no
+attribute assignment and no mutation of robot/scene data; constant-folded `range` bounds; no
+recursion; constant exponents with |e| ≤ 10, no `<<`, sequence repetition ≤ 1000; top-level
+assignments constant only; no decorators. `validate()`'s signature is unchanged.
+
 No `try` is deliberate: errors must reach the failure report, not get swallowed.
 
 ---
@@ -279,7 +298,13 @@ class AuthorContext:
     scene: Scene | None
     snapshot_path: str | None
     library: dict[str, str]             # name → source, read-only
+    attempt: AttemptResult | None = None    # the failed run (target attempt or failing sim gate)
+    expected: AttemptResult | None = None   # a passing run of the same skill (sim gate), if any
+    # both None after a static or reviewer rejection; Droid's evidence tools read them (WS5.4)
 ```
+
+A `SkillAuthor` may expose `last_result: dict | None`, the structured result of its last
+round (`DroidSDKAuthor` does); the loop reads `change_type` from it for escalation.
 
 Implementations: `DroidSDKAuthor` (the product: Droid Python SDK, `repair/droid_sdk.py`),
 `DroidAuthor` (`droid exec` CLI, stage-emergency fallback), `ScriptedAuthor` (tests/demo-fake);
@@ -302,7 +327,7 @@ One JSON object per line in `runs/<run_id>/events.jsonl`, also pushed to subscri
 | `run.started` | `task` (TaskSpec dict) |
 | `scene.observed` | `scene` (dict), `image_path` |
 | `plan.selected` | `skill`, `source` ("library" \| "draft"), `version` |
-| `attempt.started` / `attempt.finished` | `env`, `skill`, `version` / `+ ok, error, duration_s` |
+| `attempt.started` / `attempt.finished` | `env`, `skill`, `version` / `+ ok, error, duration_s, reason, scene_before, scene_after` (Scene dicts or null), `safety` (SafetyReport dict or null), `perception` (`[ok, reason]` from `perception_ok()`, or null) |
 | `primitive.call` | `PrimitiveCall` dict |
 | `note` | `text` (from `robot.note`) |
 | `verify.result` | `ok`, `detail` |
@@ -312,20 +337,21 @@ One JSON object per line in `runs/<run_id>/events.jsonl`, also pushed to subscri
 | `droid.message` | `round`, `text` (Droid's plan/reasoning shown to the user) |
 | `droid.tool_call` / `droid.tool_result` | `round`, `name`, `input` / `round`, `tool`, `is_error`, `content` |
 | `droid.permission` | `round`, `action`, `target`, `allowed`, `reason` |
-| `droid.check` | `round`, `tool` (validate_skill \| simulate_skill), `ok`, `run`, `reason` |
-| `droid.result` | `round`, `subtype`, `result` {diagnosis, change, sim_checked, confidence, lesson}, `error` (RunFailure message or null), `session_id`, `duration` (seconds, float), `credits` |
+| `droid.check` | `round`, `tool`, `ok`, plus per tool: `validate_skill` (no more); `simulate_skill` `run`, `reason`; `write_skill` `lines`; `skill_source` `lines` (the loop wrote Droid's returned skill); `read_file` `reason` (only on a refusal) |
+| `droid.result` | `round`, `subtype`, `result` {diagnosis, change, change_type ("parameter" \| "strategy"), sim_checked, confidence, lesson, skill_source}, `error` (RunFailure message or null), `session_id`, `duration` (seconds, float), `credits` |
 | `droid.lesson` | `round`, `lesson` (appended to skills/lessons.md) |
 | `droid.event` / `droid.finished` | CLI fallback only: raw stream-json event / `round`, `session_id`, `exit_code` |
 | `skill.diff` | `old_version`, `new_version`, `diff` (unified) |
 | `gate.result` | `gate` ("static" \| "sim" \| "safety"), `ok`, `detail` |
 | `sim.video` | `path` |
-| `approval.requested` / `approval.decided` | `summary` / `approved`, `note` |
+| `reset.requested` | `message` (a human resets the table; followed by an approval request with `kind: "reset"`) |
+| `approval.requested` / `approval.decided` | `summary` / `approved`, `note`. `summary.kind`: absent (approve code for the real arm), `"reset"`, or `"environment"` (+ `class`, `phase`, `summary`, `hint`, `skill`, `version`, `env`: a human fixes the table/camera, then approves a retry of the same code) |
 | `skill.saved` | `skill`, `version` |
 | `run.finished` | `ok`, `rounds` |
 | `phase.check` | `PhaseCheck` dict |
 | `attempt.classified` | `Classification` dict |
 | `world.bumped` | `message` (raised as WorldChanged) |
-| `error` | `where`, `message` |
+| `error` | `where`, `message` (`where: "repair.environment"` when the loop stops on an environment failure) |
 
 The dashboard must render from this stream alone, so a recorded `events.jsonl` can be
 replayed as the demo fallback.

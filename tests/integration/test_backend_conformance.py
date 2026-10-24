@@ -489,13 +489,7 @@ def test_a_held_object_follows_the_gripper(scene_env):
     assert abs(lifted.z - (b.z + LIFT_M)) <= HELD_TOL_M, f"held block at z={lifted.z}, not lifted {LIFT_M} m"
 
 
-FAKE_DROP_BUG = ("BUG (lead, hal/fake.py): FakeWorld._drop clears _held before _others(), so a released "
-                 "object counts itself as its support and lands on its own top, one height in the air")
-
-
-def test_a_released_object_drops_onto_the_table(scene_env, request):
-    if scene_env.name == "fake":
-        request.applymarker(pytest.mark.xfail(strict=True, reason=FAKE_DROP_BUG))
+def test_a_released_object_drops_onto_the_table(scene_env):
     b = _lift_block(scene_env)
     scene_env.arm.set_gripper(100)
     dropped = scene_env.perception.observe().require(b.id)
