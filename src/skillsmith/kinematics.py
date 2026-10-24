@@ -12,6 +12,18 @@ Contract (docs/INTERFACES.md §2, `Kinematics` protocol):
 - This one class is used by hal/real.py and hal/sim.py, so the sim gate validates the real IK.
 - Verify joint signs/offsets against the real arm in WS2.7 before trusting it on hardware.
 
+The tip is the GRASP POINT, not the URDF frame itself (WS2.4):
+- `gripper_frame_link` in so101_new_calib.urdf sits on the fixed jaw's tip. Skills (and the fake
+  world) put the tip on an object's centre to grasp it, which would drive the fixed jaw into the
+  object. So the frame is moved TIP_OFFSET along gripper_link +x (fixed jaw -> moving jaw) in a temp
+  copy of the URDF, and fk/ik use that point. Pointing down, the move is horizontal, so heights
+  (and safety.min_tip_z) mean the same as before.
+- 0.035 m is measured in MuJoCo on the demo table: the fixed jaw clears a 6.5 cm cup by ~2.5 mm
+  (3.0 cm hits it), and a 3 cm block is pushed ~2 cm toward the fixed jaw as the moving jaw closes.
+  At 4 cm and more, the closing jaw presses the cup ~3 mm into the table and a stack lands > 5 mm
+  deep. Objects wider than ~6.5 cm need a larger offset; WS2.7 checks this on the real arm.
+- `tip_offset=0` gives the raw URDF frame.
+
 How `ik` solves (WS2.2):
 - Position comes first, "pointing down" second. With the SO101 URDF limits (wrist_flex ±95°) the
   tip can only point straight down below about z = 0.08 m: the wrist and gripper are ~0.16 m long,
@@ -26,6 +38,7 @@ How `ik` solves (WS2.2):
 
 from __future__ import annotations
 
+import functools
 import math
 from pathlib import Path
 from typing import List, Optional, Sequence
@@ -33,6 +46,7 @@ from typing import List, Optional, Sequence
 from skillsmith.types import Vec3
 
 ARM_JOINTS = ("shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll")
+TIP_OFFSET = 0.035     # m; grasp point = fixed jaw tip + this toward the moving jaw (see module doc)
 MAX_POS_ERR = 0.005    # m; contract: None above this
 LIMIT_EPS_DEG = 0.05   # numerical slack on joint limits
 VERTICAL_DEG = 0.5     # tilt below this counts as "pointing straight down"
@@ -47,13 +61,16 @@ RESTART_POSTURES = ((-40.0, 40.0, 90.0), (0.0, 0.0, 90.0), (20.0, -20.0, 90.0), 
 class PlacoKinematics:
     def __init__(self, urdf_path: str, ee_frame: str = "gripper_frame_link",
                  joint_names: Optional[Sequence[str]] = None, max_tilt_deg: Optional[float] = None,
-                 iterations: int = 100):
+                 iterations: int = 100, tip_offset: float = TIP_OFFSET):
         import numpy as np
         import placo
 
         if not Path(urdf_path).is_file():  # NotImplementedError = "WS2 not ready" for the conformance suite
             raise NotImplementedError(f"SO101 URDF not vendored at {urdf_path}: "
                                       "run python assets/so101/fetch_so101.py (WS2.1)")
+        self.tip_offset = tip_offset
+        if tip_offset:
+            urdf_path = _shifted_urdf(Path(urdf_path), ee_frame, tip_offset)
         self._np = np
         self.ee_frame = ee_frame
         self.joint_names = list(joint_names or ARM_JOINTS)
@@ -182,6 +199,28 @@ class PlacoKinematics:
     def _within_limits(self, joints: Sequence[float]) -> bool:
         return all(self._limits[n][0] - LIMIT_EPS_DEG <= v <= self._limits[n][1] + LIMIT_EPS_DEG
                    for n, v in zip(self.joint_names, joints))
+
+
+@functools.cache  # one temp file per (urdf, frame, offset) per process
+def _shifted_urdf(urdf: Path, ee_frame: str, dx: float) -> str:
+    """A temp copy of the URDF whose `ee_frame` joint origin is moved dx along its parent's x axis
+    (fixed jaw -> moving jaw), with mesh paths made absolute so the copy loads from anywhere."""
+    import re
+    import tempfile
+
+    text = urdf.read_text()
+    joint = re.compile(r'(<joint name="[^"]+" type="fixed">\s*<origin xyz=")(\S+)( [^"]*"[^>]*/>\s*'
+                       r'<parent link="[^"]+"/>\s*<child link="' + re.escape(ee_frame) + '"/>)')
+    match = joint.search(text)
+    if match is None:
+        raise ValueError(f"{urdf}: no fixed joint with child link {ee_frame!r} to apply tip_offset to")
+    x = float(match.group(2)) + dx
+    text = text[:match.start()] + match.group(1) + repr(x) + match.group(3) + text[match.end():]
+    text = re.sub(r'filename="(?!/|package://)([^"]+)"', lambda m: f'filename="{urdf.parent.resolve() / m.group(1)}"', text)
+    out = tempfile.NamedTemporaryFile("w", suffix=".urdf", prefix="so101_tip_", delete=False)
+    with out:
+        out.write(text)
+    return out.name
 
 
 def make_kinematics(cfg) -> PlacoKinematics:

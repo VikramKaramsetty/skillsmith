@@ -20,7 +20,11 @@ from skillsmith.kinematics import MAX_POS_ERR, PlacoKinematics, make_kinematics 
 HOME_SEED = [0.0, 0.0, 0.0, 90.0, 0.0, 37.0]
 ROUND_TRIP_TOL = 0.002  # m (WS2 acceptance)
 # Workspace grid the demo uses (robot frame, metres): table level up to carry height.
-GRID = list(product((0.12, 0.16, 0.20, 0.24), (-0.12, -0.06, 0.0, 0.06, 0.12), (0.0, 0.02, 0.05, 0.10, 0.15)))
+# The tip is the grasp point, 3.5 cm past the fixed jaw (kinematics.TIP_OFFSET), so close to the base
+# the arm cannot also be high: r <= 0.12 m at z >= 0.10 m is out of reach (test_near_base_high_is_out_of_reach).
+NEAR_HIGH = [(0.12, 0.0, 0.10), (0.12, 0.0, 0.15)]
+GRID = [p for p in product((0.12, 0.16, 0.20, 0.24), (-0.12, -0.06, 0.0, 0.06, 0.12), (0.0, 0.02, 0.05, 0.10, 0.15))
+        if p not in NEAR_HIGH]
 
 
 @pytest.fixture(scope="module")
@@ -119,6 +123,26 @@ def test_fk_origin_is_under_the_pan_axis(kin):
 
 def test_fk_ignores_gripper_value(kin):
     assert kin.fk([10.0, 5.0, 5.0, 60.0, 0.0, 0.0]) == kin.fk([10.0, 5.0, 5.0, 60.0, 0.0, 100.0])
+
+
+def test_near_base_high_is_out_of_reach(kin):
+    """The price of a grasp-point tip; the raw fixed-jaw frame (tip_offset=0) reaches these."""
+    raw = PlacoKinematics(str(CFG.path(CFG.robot.urdf)), CFG.robot.ee_frame, CFG.robot.joint_names[:5], tip_offset=0.0)
+    for target in NEAR_HIGH:
+        assert kin.ik(target, HOME_SEED) is None, target
+        assert raw.ik(target, HOME_SEED) is not None, target
+
+
+def test_tip_offset_moves_the_tip_along_the_jaws(kin):
+    """Same joints, pointing down at pan 0: the grasp point is TIP_OFFSET further out, at the same height."""
+    from skillsmith.kinematics import TIP_OFFSET
+
+    raw = PlacoKinematics(str(CFG.path(CFG.robot.urdf)), CFG.robot.ee_frame, CFG.robot.joint_names[:5], tip_offset=0.0)
+    q = raw.ik((0.18, 0.0, 0.03), HOME_SEED)
+    assert raw.last_tilt_deg < 1.0
+    (x0, y0, z0), (x1, y1, z1) = raw.fk(q), kin.fk(q)
+    assert math.hypot(x1 - x0, y1 - y0) == pytest.approx(TIP_OFFSET, abs=5e-4)
+    assert x1 - x0 > 0.03 and abs(z1 - z0) < 5e-4  # outward (the jaws open along +x here), not up or down
 
 
 def test_residual_threshold_matches_contract():
