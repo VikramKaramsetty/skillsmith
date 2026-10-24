@@ -11,6 +11,10 @@ Contract:
   (WS1.4), else the receipt time. Sends `X-Robotd-Token` from $ROBOTD_TOKEN when set.
 - `MjpegFrames(url)`: a background reader on a multipart MJPEG stream (robotd /stream/{cam}, or the
   MacBook stand-in camera) that keeps only the latest frame and reconnects when the stream drops.
+  `read()` raises `StaleFrameError` (a `FrameError`) naming the last stream error once the newest frame
+  is older than `max_age_s` (default 1.0; None turns the check off), so a dead camera never looks like a
+  frozen table. A frame's age uses its `X-Frame-Time` (robotd's capture time) when present, else the
+  receipt time. Given a `bus`, each failing episode also emits one `error` event (where "perception.frames").
 - `OpenCVFrames(device)`: a local camera or image sequence via cv2.VideoCapture. On the GX10 only robotd
   may use it (it owns /dev/video*); elsewhere it is for a laptop webcam or recorded files.
 - `FixtureFrames(manifest)`: recorded frames listed in a JSON manifest {"frames": [{"file", "t"}, ...]},
@@ -32,7 +36,7 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Protocol, Tuple, Union
+from typing import Any, Dict, List, Optional, Protocol, Tuple, Union
 
 SOI, EOI = b"\xff\xd8", b"\xff\xd9"  # JPEG start / end of image markers
 TOKEN_HEADER = "X-Robotd-Token"  # same header robotd checks (robotd/server.py)
@@ -46,6 +50,15 @@ _OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 class FrameError(RuntimeError):
     """No usable frame, with the reason."""
+
+
+class StaleFrameError(FrameError):
+    """The newest frame is too old: the stream died or stalled. `age_s` and `max_age_s` in seconds."""
+
+    def __init__(self, message: str, age_s: float, max_age_s: float):
+        super().__init__(message)
+        self.age_s = age_s
+        self.max_age_s = max_age_s
 
 
 @dataclass(frozen=True)
@@ -147,29 +160,50 @@ def _headers(block: bytes) -> Dict[str, str]:
 
 
 class MjpegFrames:
-    """Reads an MJPEG stream in a daemon thread; `read()` returns the latest frame."""
+    """Reads an MJPEG stream in a daemon thread; `read()` returns the latest frame while it is fresh."""
 
-    def __init__(self, url: str, token: Optional[str] = None, timeout_s: float = 2.0, reconnect_s: float = 1.0):
+    def __init__(self, url: str, token: Optional[str] = None, timeout_s: float = 2.0, reconnect_s: float = 1.0,
+                 max_age_s: Optional[float] = 1.0, bus: Any = None):
         self.url = url
         self.token = token
         self.timeout_s = timeout_s
         self.reconnect_s = reconnect_s
+        self.max_age_s = max_age_s
+        self.bus = bus
         self.frames_received = 0
         self._latest: Optional[Frame] = None
         self._response = None
         self._error = "no frame yet"
+        self._failing = False  # an error event was emitted for the current failing episode
         self._ready = threading.Condition()
         self._closed = threading.Event()
         self._thread = threading.Thread(target=self._run, name=f"mjpeg {url}", daemon=True)
         self._thread.start()
 
     def read(self) -> Frame:
+        try:
+            frame = self._fresh()
+        except FrameError as e:
+            if not self._failing:
+                self._failing = True
+                _emit(self.bus, str(e))
+            raise
+        self._failing = False
+        return frame
+
+    def _fresh(self) -> Frame:
         with self._ready:
             if self._latest is None:
                 self._ready.wait_for(lambda: self._latest is not None, timeout=self.timeout_s)
-            if self._latest is None:
-                raise FrameError(f"no frame from {self.url} within {self.timeout_s}s: {self._error}")
-            return self._latest
+            frame, error = self._latest, self._error
+        if frame is None:
+            raise FrameError(f"no frame from {self.url} within {self.timeout_s}s: {error}")
+        age = time.time() - frame.t
+        if self.max_age_s is not None and age > self.max_age_s:
+            why = f"last stream error: {error}" if self._response is None else "stream open but silent"
+            raise StaleFrameError(f"stale frame from {self.url}: newest is {age:.2f}s old "
+                                  f"(max {self.max_age_s}s); {why}", age, self.max_age_s)
+        return frame
 
     def close(self) -> None:
         self._closed.set()
@@ -212,6 +246,13 @@ class MjpegFrames:
             self._latest = frame
             self.frames_received += 1
             self._ready.notify_all()
+
+
+def _emit(bus: Any, message: str) -> None:
+    if bus is not None:
+        bus.emit("error", where="perception.frames", message=message)
+    else:
+        print(f"[perception.frames] {message}")
 
 
 class OpenCVFrames:

@@ -7,6 +7,7 @@ import time
 import pytest
 from ws3_fakes import FIXTURES, jpeg
 
+from skillsmith.events import NullBus
 from skillsmith.perception.frames import (
     FixtureFrames,
     Frame,
@@ -14,6 +15,7 @@ from skillsmith.perception.frames import (
     MjpegFrames,
     MjpegParser,
     RobotdFrames,
+    StaleFrameError,
     make_frame_source,
     record,
 )
@@ -100,11 +102,12 @@ def test_parser_falls_back_to_jpeg_markers_without_content_length():
 
 
 def test_mjpeg_reader_keeps_the_latest_frame(robotd):
+    robotd.stream_t0 = t0 = time.time()
     source = MjpegFrames(f"{robotd.url}/stream/front")
     try:
         assert wait_for(lambda: source.frames_received >= 3)
         frame = source.read()
-        assert (frame.jpeg, frame.t) == (jpeg("s3"), 1002.0)
+        assert (frame.jpeg, frame.t) == (jpeg("s3"), t0 + 2)
     finally:
         source.close()
 
@@ -136,6 +139,97 @@ def test_mjpeg_read_without_any_frame_times_out_with_the_reason(robotd):
             source.read()
     finally:
         source.close()
+
+
+def raises_stale(source, caught=None):
+    try:
+        source.read()
+    except StaleFrameError as e:
+        if caught is not None:
+            caught.append(e)
+        return True
+    return False
+
+
+def test_a_killed_stream_makes_read_raise_within_max_age_with_the_reason(robotd):
+    robotd.stream_hold_s = 0.0
+    bus = NullBus()
+    source = MjpegFrames(f"{robotd.url}/stream/front", reconnect_s=0.05, max_age_s=0.4, bus=bus)
+    try:
+        assert wait_for(lambda: source.frames_received >= 3)
+        robotd.stream_refusal = (503, "camera 'front' has delivered no frame for 2.0 s: unplugged")
+        assert source.read().jpeg == jpeg("s3")  # still fresh: the last part was just sent
+        first = []
+        assert wait_for(lambda: raises_stale(source, first), timeout=2.0)
+        assert first[0].age_s < 0.4 + 0.2  # it starts raising as soon as max_age_s passes (plus polling slack)
+        with pytest.raises(StaleFrameError, match="unplugged") as info:
+            source.read()
+        assert isinstance(info.value, FrameError) and info.value.age_s > info.value.max_age_s == 0.4
+    finally:
+        source.close()
+    errors = [e["data"] for e in bus.events if e["type"] == "error"]
+    assert len(errors) == 1  # one event per failing episode, not one per read
+    assert errors[0]["where"] == "perception.frames" and "stale frame" in errors[0]["message"]
+
+
+def test_staleness_uses_robotds_capture_time(robotd):
+    robotd.stream_t0 = time.time() - 30  # robotd says these frames were captured 30 s ago
+    source = MjpegFrames(f"{robotd.url}/stream/front", max_age_s=1.0)
+    try:
+        assert wait_for(lambda: source.frames_received >= 3)
+        with pytest.raises(StaleFrameError, match=r"2\d\.\d\ds old"):
+            source.read()
+    finally:
+        source.close()
+
+
+def test_without_capture_times_staleness_uses_the_receipt_time(robotd):
+    robotd.stream_t0 = "omit"
+    robotd.stream_hold_s = 0.0
+    source = MjpegFrames(f"{robotd.url}/stream/front", reconnect_s=5.0, max_age_s=0.3)
+    try:
+        assert wait_for(lambda: source.frames_received >= 3)
+        before = time.time()
+        assert before - 0.3 <= source.read().t <= before
+        assert wait_for(lambda: raises_stale(source), timeout=1.0)
+    finally:
+        source.close()
+
+
+def test_fresh_frames_after_a_stale_spell_read_again_and_a_new_spell_emits_again(robotd):
+    robotd.stream_hold_s = 0.0
+    bus = NullBus()
+    source = MjpegFrames(f"{robotd.url}/stream/front", reconnect_s=1.0, max_age_s=0.3, bus=bus)
+    try:
+        for _ in range(2):  # stream ends, frames age out, the reconnect brings fresh ones
+            assert wait_for(lambda: raises_stale(source), timeout=2.0)
+            assert wait_for(lambda: not raises_stale(source), timeout=2.0)
+    finally:
+        source.close()
+    assert [e["type"] for e in bus.events].count("error") == 2
+
+
+def test_max_age_none_keeps_the_old_frame(robotd):
+    robotd.stream_t0 = 1000.0
+    source = MjpegFrames(f"{robotd.url}/stream/front", max_age_s=None)
+    try:
+        assert wait_for(lambda: source.frames_received >= 3)
+        assert source.read().t == 1002.0
+    finally:
+        source.close()
+
+
+def test_a_read_that_gets_no_frame_emits_an_event(robotd):
+    robotd.token = "s3cret"
+    bus = NullBus()
+    source = MjpegFrames(f"{robotd.url}/stream/front", timeout_s=0.3, bus=bus)
+    try:
+        for _ in range(2):
+            with pytest.raises(FrameError, match="401"):
+                source.read()
+    finally:
+        source.close()
+    assert [e["data"]["where"] for e in bus.events if e["type"] == "error"] == ["perception.frames"]
 
 
 # ---- fixtures and recording --------------------------------------------------------------
