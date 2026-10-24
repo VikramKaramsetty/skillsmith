@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 TASK = "stack the blue cup on the red cup"
 SUMMARY = {"title": "run stack v1 on fake", "skill": "stack", "version": 1}
+JSON = {"Content-Type": "application/json"}
 
 
 def _request_in_thread(approver, run_id="r1", summary=SUMMARY):
@@ -33,7 +34,9 @@ def _types(app) -> list[str]:
 def test_request_blocks_until_decided_from_another_thread():
     approver = DashboardApprover(timeout_s=5)
     t, out = _request_in_thread(approver)
-    assert approver.pending() == {"run_id": "r1", "kind": "approval", "title": "run stack v1 on fake"}
+    pending = approver.pending()
+    assert {k: pending[k] for k in ("run_id", "kind", "title")} == {
+        "run_id": "r1", "kind": "approval", "title": "run stack v1 on fake"}
     assert t.is_alive()
     assert approver.decide(False, "grip lower", run_id="r1")
     t.join(2)
@@ -65,8 +68,10 @@ def test_approving_over_http_unblocks_a_waiting_approver(tmp_path):
     client = TestClient(app)
     assert client.get("/approval").json() is None
     t, out = _request_in_thread(app.state.approver)
-    assert client.get("/approval").json()["title"] == "run stack v1 on fake"
-    assert client.post("/approve", json={"approved": True, "run_id": "r1"}).json() == {"ok": True}
+    pending = client.get("/approval").json()
+    assert pending["title"] == "run stack v1 on fake"
+    body = {"approved": True, "run_id": "r1", "nonce": pending["nonce"]}
+    assert client.post("/approve", json=body).json() == {"ok": True}
     t.join(2)
     assert out["answer"] == (True, "")
 
@@ -74,7 +79,8 @@ def test_approving_over_http_unblocks_a_waiting_approver(tmp_path):
 def test_reject_over_http_carries_the_note(tmp_path):
     app = create_app(tmp_path)
     t, out = _request_in_thread(app.state.approver)
-    r = TestClient(app).post("/approve", json={"approved": False, "note": "too close to the edge"})
+    nonce = app.state.approver.pending()["nonce"]
+    r = TestClient(app).post("/approve", json={"approved": False, "note": "too close to the edge", "nonce": nonce})
     assert r.status_code == 200
     t.join(2)
     assert out["answer"] == (False, "too close to the edge")
@@ -83,11 +89,12 @@ def test_reject_over_http_carries_the_note(tmp_path):
 def test_bad_or_unmatched_approve_is_refused(tmp_path):
     app = create_app(tmp_path)
     client = TestClient(app)
-    assert client.post("/approve", json={"approved": True}).status_code == 409  # nothing waits
+    assert client.post("/approve", json={"approved": True, "nonce": "x"}).status_code == 409  # nothing waits
     t, out = _request_in_thread(app.state.approver)
-    assert client.post("/approve", json={"approved": "yes"}).status_code == 400
-    assert client.post("/approve", content=b"not json").status_code == 400
-    assert client.post("/approve", json={"approved": True, "run_id": "stale"}).status_code == 409
+    nonce = app.state.approver.pending()["nonce"]
+    assert client.post("/approve", json={"approved": "yes", "nonce": nonce}).status_code == 400
+    assert client.post("/approve", content=b"not json", headers=JSON).status_code == 400
+    assert client.post("/approve", json={"approved": True, "run_id": "stale", "nonce": nonce}).status_code == 409
     assert app.state.approver.pending() is not None  # still waiting for the right answer
     app.state.approver.decide(False, "cleanup")
     t.join(2)
@@ -175,7 +182,8 @@ def test_repair_loop_waits_for_the_dashboard_then_passes(tmp_path):
     pending = approver.wait_pending(10)
     assert pending["run_id"] == run_id
     assert _types(app)[-1] == "approval.requested"  # the loop is parked on the human gate
-    assert client.post("/approve", json={"approved": True, "run_id": run_id}).status_code == 200
+    body = {"approved": True, "run_id": run_id, "nonce": pending["nonce"]}
+    assert client.post("/approve", json=body).status_code == 200
     app.state.runner.join(10)
     done = app.state.hub.history()[-1]
     assert done["type"] == "run.finished" and done["data"]["ok"] is True

@@ -6,7 +6,7 @@ Contract:
 - `GET /events`: SSE stream of events (docs/INTERFACES.md §7) from the live EventBus.
   `GET /events?replay=<run_id>&speed=2` replays runs/<run_id>/events.jsonl (demo fallback).
 - `POST /task {"text": "..."}`: parse the task and start a RepairLoop in a worker thread.
-- `POST /approve {"approved": bool, "note": str}`: resolves the pending DashboardApprover request.
+- `POST /approve {"approved": bool, "note": str, "nonce": str}`: resolves the pending DashboardApprover request.
 - The UI renders ONLY from events. If it needs more data, request a new event field from the lead.
 
 WS6.1 builds the event feed: the live hub, replay and the run list. WS6.3 adds `/task` (one run
@@ -23,6 +23,10 @@ WS6.7 adds speed control to replay: `GET /events?replay=<run_id>&speed=4&from=<n
 n-th recorded event, so the page pauses (closes the stream), resumes or changes speed (reopens at
 the next event) without the story starting over. Events and `replay.end` keep their shape (the page
 counts what it got: the next index is from + events received), so replay stays the live stream.
+WS6.8 locks down the two POSTs that can move the arm: `/approve` needs the per-request `nonce`
+from `GET /approval` (never in an event); `/approve` and `/task` refuse a foreign Origin or a
+cross-site Sec-Fetch-Site (403 + an `error` event) and anything but JSON (415). The server binds
+127.0.0.1 (`dashboard.host` widens it) and refuses Host headers outside the allow-list (DNS rebinding).
 FastAPI is imported lazily so this module imports with core deps only.
 Replayed events carry `"replay": true` so the UI can label the fallback as a recording.
 No `from __future__ import annotations` here: FastAPI must resolve the locally imported `Request`.
@@ -36,6 +40,7 @@ import time
 from collections import deque
 from pathlib import Path
 from typing import AsyncIterator, Callable, Iterator, Optional
+from urllib.parse import urlsplit
 
 from skillsmith.dashboard.approver import DashboardApprover
 from skillsmith.events import EventBus, new_run_id
@@ -43,6 +48,7 @@ from skillsmith.tasks import parse_task
 from skillsmith.types import TaskSpec
 
 PORT = 8080
+HOST = "127.0.0.1"  # loopback only; `dashboard.host` in the config opts in to a wider bind
 MAX_REPLAY_GAP_S = 3.0  # long idle gaps in a recording are shortened to this (before speed)
 HEARTBEAT_S = 15.0
 HISTORY = 2000  # live events kept so a page opened mid-run still sees the whole story
@@ -266,6 +272,45 @@ async def live_stream(hub: EventHub, request) -> AsyncIterator[str]:
         hub.unsubscribe(queue)
 
 
+def _hostname(netloc: str) -> str:
+    """'127.0.0.1:8080' -> '127.0.0.1', '[::1]:8080' -> '::1' (lower case)."""
+    try:
+        return (urlsplit(f"//{netloc}").hostname or "").lower()
+    except ValueError:  # malformed Host header
+        return ""
+
+
+def host_refusal(headers, allowed_hosts: Optional[frozenset]) -> Optional[str]:
+    """Why the Host header is refused (DNS rebinding), or None. No allow-list means no check."""
+    if allowed_hosts is None:
+        return None
+    host = _hostname(headers.get("host", ""))
+    return None if host in allowed_hosts else f"host {host or '(none)'!r} is not allowed"
+
+
+def origin_refusal(headers) -> Optional[str]:
+    """Why a state-changing request looks cross-site, or None. A browser always sends Origin
+    (or Sec-Fetch-Site) on a cross-site POST; scripts and curl send neither and are allowed."""
+    site = headers.get("sec-fetch-site")
+    if site in ("cross-site", "same-site"):
+        return f"cross-site request (Sec-Fetch-Site: {site})"
+    origin = headers.get("origin")
+    if origin is None:
+        return None
+    parts = urlsplit(origin)
+    if parts.scheme not in ("http", "https") or parts.netloc.lower() != headers.get("host", "").lower():
+        return f"origin {origin!r} is not this dashboard"
+    return None
+
+
+def allowed_hosts_for(bind_host: str, extra: tuple[str, ...] = ()) -> Optional[frozenset]:
+    """Host names the dashboard answers to. None (no Host check) when bound to every interface
+    without an explicit list: the operator chose to expose it."""
+    if bind_host in ("0.0.0.0", "::") and not extra:
+        return None
+    return frozenset({"127.0.0.1", "localhost", "::1", bind_host.lower(), *(h.lower() for h in extra)})
+
+
 async def _json_body(request) -> dict:
     try:
         body = await request.json()
@@ -276,13 +321,37 @@ async def _json_body(request) -> dict:
 
 def create_app(runs_dir: Path, hub: Optional[EventHub] = None,
                approver: Optional[DashboardApprover] = None, run_fn: Optional[RunFn] = None,
-               camera_url: Optional[str] = None):
+               camera_url: Optional[str] = None, allowed_hosts: Optional[frozenset] = None):
     """`run_fn` is None when the server only replays (then `POST /task` answers 503).
-    `camera_url` is robotd's base URL; None means no live camera (`/camera/*` answers 503)."""
+    `camera_url` is robotd's base URL; None means no live camera (`/camera/*` answers 503).
+    `allowed_hosts` (see `allowed_hosts_for`) refuses other Host headers with 403; None skips it."""
     from fastapi import FastAPI, HTTPException, Query, Request
-    from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
+    from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 
     app = FastAPI(title="Skillsmith dashboard")
+
+    def refuse(reason: str, where: str) -> None:
+        app.state.hub.publish(_error_event("dashboard", f"refused: {reason}", where=where))
+        raise HTTPException(403, reason)
+
+    @app.middleware("http")
+    async def check_host(request: Request, call_next):
+        reason = host_refusal(request.headers, allowed_hosts)
+        if reason is not None:
+            app.state.hub.publish(_error_event("dashboard", f"refused: {reason}", where="dashboard.host"))
+            return JSONResponse({"detail": reason}, status_code=403)
+        return await call_next(request)
+
+    async def guarded_body(request: Request, where: str) -> dict:
+        """The JSON body of a state-changing POST from this dashboard's own page (or a script)."""
+        reason = origin_refusal(request.headers)
+        if reason is not None:
+            refuse(reason, where)
+        content_type = request.headers.get("content-type", "").split(";")[0].strip().lower()
+        if content_type != "application/json":  # a cross-site form can't send this without a preflight
+            raise HTTPException(415, "send JSON (Content-Type: application/json)")
+        return await _json_body(request)
+
     app.state.hub = hub or EventHub()
     app.state.runs_dir = Path(runs_dir)
     app.state.approver = approver or DashboardApprover()
@@ -346,7 +415,7 @@ def create_app(runs_dir: Path, hub: Optional[EventHub] = None,
         runner = app.state.runner
         if runner is None:
             raise HTTPException(503, "this dashboard only replays; start it with `skillsmith serve`")
-        text = str((await _json_body(request)).get("text") or "").strip()
+        text = str((await guarded_body(request, "dashboard.task")).get("text") or "").strip()
         if not text:
             raise HTTPException(400, "empty task")
         try:
@@ -362,12 +431,14 @@ def create_app(runs_dir: Path, hub: Optional[EventHub] = None,
 
     @app.post("/approve")
     async def approve(request: Request) -> dict:
-        body = await _json_body(request)
-        approved = body.get("approved")
+        body = await guarded_body(request, "dashboard.approve")
+        approved, nonce = body.get("approved"), body.get("nonce")
         if not isinstance(approved, bool):
             raise HTTPException(400, '"approved" must be true or false')
-        if not app.state.approver.decide(approved, str(body.get("note") or ""), body.get("run_id")):
-            raise HTTPException(409, "nothing is waiting for approval in that run")
+        if not isinstance(nonce, str) or not nonce:
+            raise HTTPException(400, '"nonce" is required: read it from GET /approval')
+        if not app.state.approver.decide(approved, str(body.get("note") or ""), body.get("run_id"), nonce):
+            raise HTTPException(409, "nothing is waiting for approval with that run and nonce")
         return {"ok": True}
 
     return app
@@ -384,11 +455,17 @@ def main(cfg) -> int:
     approver = DashboardApprover(timeout_s=float(opts.get("approval_timeout_s", 600.0)))
     run_fn = loop_run_fn(cfg, approver, env_name, author_name)
     camera_url = opts.get("camera_url", (cfg.get("robot") or {}).get("robotd_url"))
-    app = create_app(cfg.path(cfg.repair.runs_dir), approver=approver, run_fn=run_fn, camera_url=camera_url)
-    print(f"dashboard on http://0.0.0.0:{PORT}  env={env_name} author={author_name} camera={camera_url}"
+    host = str(opts.get("host", HOST))
+    allowed = allowed_hosts_for(host, tuple(str(h) for h in opts.get("allowed_hosts") or ()))
+    app = create_app(cfg.path(cfg.repair.runs_dir), approver=approver, run_fn=run_fn,
+                     camera_url=camera_url, allowed_hosts=allowed)
+    print(f"dashboard on http://{host}:{PORT}  env={env_name} author={author_name} camera={camera_url}"
           "  (replay: /?replay=<run_id>&speed=2)")
+    if allowed is None:
+        print("warning: bound to every interface with no dashboard.allowed_hosts; anyone on the "
+              "network can open it (approvals still need the nonce)")
     try:
-        uvicorn.run(app, host="0.0.0.0", port=PORT, log_level="warning")
+        uvicorn.run(app, host=host, port=PORT, log_level="warning")
     except KeyboardInterrupt:
         pass
     return 0
