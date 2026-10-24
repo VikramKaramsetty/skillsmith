@@ -14,6 +14,7 @@ author can attach them to Droid's call and copy them into the workspace.
 
 from __future__ import annotations
 
+import dataclasses
 import math
 import re
 from typing import List, Optional, Tuple
@@ -256,6 +257,31 @@ def attempt_report(task: TaskSpec, attempt: AttemptResult, history: List[str], *
     parts.append("## Scene before\n" + _scene_table(attempt.scene_before))
     parts.append("## Scene after\n" + _scene_table(attempt.scene_after))
     parts += [s for s in (_history(history), _lessons(lessons)) if s]
+    return "\n".join(parts)
+
+
+def unlabelled_reason(attempt: AttemptResult) -> str:
+    """attempt.reason() without the failure class: the raw error / safety / camera line."""
+    return dataclasses.replace(attempt, classification=None).reason()
+
+
+def attempt_report_v1(task: TaskSpec, attempt: AttemptResult, history: List[str]) -> str:
+    """The pre-v2 report, for the WS5.6 benchmark baseline: why it failed, trace and scenes.
+    No failure class, phase table, key frames, expected-vs-actual or lessons."""
+    stage = {"real": "the REAL arm", "sim": "simulation", "fake": "the test world"}.get(attempt.env, attempt.env)
+    parts = [f"# Failure report: `{attempt.skill}` v{attempt.version} failed on {stage}\n",
+             f"**Task:** {task.text}\n",
+             f"**Params:** `{task.params}`\n",
+             f"**Success check:** `{_pred_text(task.success)}`\n",
+             f"**Why it failed:** {unlabelled_reason(attempt)}\n"]
+    if attempt.verify:
+        parts.append(f"**Camera check:** {'PASS' if attempt.verify.ok else 'FAIL'}: {attempt.verify.detail}\n")
+    parts.append(f"**Safety:** {attempt.safety.summary()}\n")
+    parts.append("## Trace\n" + _trace_table(attempt))
+    parts.append("## Scene before\n" + _scene_table(attempt.scene_before))
+    parts.append("## Scene after\n" + _scene_table(attempt.scene_after))
+    if history:
+        parts.append(_history(history))
     return "\n".join(parts)
 
 
