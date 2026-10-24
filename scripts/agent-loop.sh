@@ -12,6 +12,7 @@
 #     machine wins a race for the same task.
 #   - `touch .agent-stop` in the repo root stops the loop after the current task.
 set -euo pipefail
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_lib.sh"
 
 ALL_WS="ws1 ws2 ws3 ws4 ws5 ws6 ws7 qa"
 HOST=${HOST_TAG:-$(hostname -s 2>/dev/null || hostname)}
@@ -27,7 +28,7 @@ rotate() {  # start each machine at a different workstream so they spread out in
 busy() {  # a workstream is busy while any of its open issues is in-progress or blocked
   local n
   n=$(gh issue list --label "$1" --state open --limit 100 --json labels \
-        --jq '[.[] | select(any(.labels[]; .name == "in-progress" or .name == "blocked"))] | length')
+        --jq '[.[] | select(any(.labels[]; .name == "in-progress" or .name == "blocked"))] | length') || return 0  # unreachable = treat as busy
   [[ "$n" -gt 0 ]]
 }
 
@@ -82,7 +83,7 @@ while true; do
   NUM=""
   for ws in $(rotate "$@"); do
     busy "$ws" && continue
-    NEXT=$(oldest_ready "$ws")
+    NEXT=$(oldest_ready "$ws") || { log "GitHub unreachable; skipping $ws this round"; continue; }
     [[ -z "$NEXT" ]] && continue
     IFS=$'\t' read -r num title <<< "$NEXT"
     if ! claim "$num"; then log "lost the race for #$num; trying another workstream"; continue; fi
@@ -110,8 +111,8 @@ while true; do
   else
     reason="the agent run did not finish cleanly (exit $rc)"
     [[ $rc -eq 3 ]] && reason="the agent made no changes (task unclear, already done, or the agent CLI failed)"
-    gh issue edit "$NUM" --remove-label in-progress --add-label blocked >/dev/null
-    gh issue comment "$NUM" --body "agent-loop on $HOST: $reason. Needs a human; $WS is paused until this is unblocked (relabel \`ready\` or close). Log: ../skillsmith-logs/" >/dev/null
+    gh issue edit "$NUM" --remove-label in-progress --add-label blocked >/dev/null || true
+    gh issue comment "$NUM" --body "agent-loop on $HOST: $reason. Needs a human; $WS is paused until this is unblocked (relabel \`ready\` or close). Log: ../skillsmith-logs/" >/dev/null || true
   fi
 done
 }
