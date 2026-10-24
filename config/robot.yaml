@@ -1,0 +1,58 @@
+# Skillsmith configuration. Owned by the lead. Numbers marked MEASURE are placeholders
+# until the first hardware session (see docs/BUILD_PLAN.md, gate G3).
+
+robot:
+  follower_port: /dev/serial/by-id/usb-1a86_USB_Single_Serial_5AE6057566-if00
+  leader_port: /dev/serial/by-id/usb-1a86_USB_Single_Serial_5AE6055440-if00
+  calibration_id: follower          # ~/.cache/huggingface/lerobot/calibration/robots/so_follower/follower.json
+  robotd_url: http://127.0.0.1:8100
+  joint_names: [shoulder_pan, shoulder_lift, elbow_flex, wrist_flex, wrist_roll, gripper]
+  urdf: assets/so101/so101_new_calib.urdf      # WS2 vendors this from TheRobotStudio SO-ARM100
+  mjcf: assets/so101/scene.xml                 # WS2 vendors from mujoco_menagerie/robotstudio_so101
+  ee_frame: gripper_frame_link
+  home_xyz: [0.18, 0.0, 0.15]       # MEASURE: safe pose above the middle of the table
+  gripper_open: 100
+  gripper_closed: 0
+
+cameras:
+  wrist: /dev/v4l/by-id/usb-Sonix_Technology_Co.__Ltd._USB2.0_CAM1_USB2.0_CAM1-video-index0
+  wrist_size: [640, 480]
+  front: http://100.67.242.86:8001/stream    # MacBook stand-in; replace with a fixed overhead webcam
+  homography: config/homography.json          # written by `skillsmith calibrate-camera` (WS3)
+
+workspace:                          # tip must stay inside this box (robot frame, metres). MEASURE
+  x: [0.08, 0.34]
+  y: [-0.20, 0.20]
+  z: [0.0, 0.25]
+  min_reach: 0.08                   # radial distance from the base axis
+  max_reach: 0.33
+
+safety:
+  min_tip_z: 0.005                  # tip never goes below 5 mm above the table
+  max_tcp_speed: 0.15               # m/s
+  default_tcp_speed: 0.08
+  max_joint_speed_dps: 60
+  max_step_deg: 10                  # robotd per-command clamp (5-10 works; 2 stalled the elbow)
+  max_calls: 80                     # primitive calls per attempt (includes nested skills)
+  max_skill_depth: 3
+  approach_step: 0.02               # vertical moves split into steps this size
+  require_sim_before_real: true
+  require_approval_before_real: true
+
+verify:
+  xy_tol: 0.03
+  z_tol: 0.01
+
+repair:
+  max_rounds: 4                     # Droid calls per task
+  runs_dir: runs
+  library_dir: skills/library
+  droid_ws_root: ~/.skillsmith/droid_ws
+
+droid:
+  bin: droid
+  auto: low                         # file edits only; see docs/SAFETY.md
+  model: null                       # null = Droid default; e.g. claude-opus-5-5
+  reasoning: null
+  remove_tools: [Execute]           # Droid edits skill.py; WE run checks and sim
+  timeout_s: 240

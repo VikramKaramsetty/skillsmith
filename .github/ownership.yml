@@ -1,0 +1,36 @@
+# Which branch prefix may touch which paths. Enforced by scripts/check_ownership.py in CI
+# and in scripts/ship.sh. Branch names: <prefix>/<slug>, e.g. ws2/mujoco-scene.
+# A PR labelled `lead-approved` skips the check. `lead/*` branches may touch anything.
+# Every workstream may also edit tests/<prefix>/ (added automatically).
+
+lead_branches: [lead]
+
+workstreams:
+  ws1:
+    title: robotd + real arm client
+    paths: [robotd/, src/skillsmith/hal/real.py]
+  ws2:
+    title: kinematics + MuJoCo sim
+    paths: [src/skillsmith/kinematics.py, src/skillsmith/hal/sim.py, assets/so101/]
+  ws3:
+    title: perception
+    paths: [src/skillsmith/perception/, tools/hsv_tuner.py, tools/calibrate_camera.py]
+  ws4:
+    title: runtime + safety hardening
+    paths: [src/skillsmith/skills/validator.py, src/skillsmith/skills/runtime.py, src/skillsmith/safety.py,
+            src/skillsmith/verify.py, src/skillsmith/tasks.py, tests/test_validator.py, tests/test_safety_verify.py]
+  ws5:
+    title: Droid repair loop
+    paths: [src/skillsmith/repair/, droid_template/, tests/test_repair_loop.py]
+  ws6:
+    title: dashboard
+    paths: [src/skillsmith/dashboard/]
+  ws7:
+    title: calibration skill + library growth
+    paths: [src/skillsmith/calibration/, skills/library/]
+  qa:
+    title: integration tests
+    paths: [tests/integration/]
+  docs:
+    title: documentation only
+    paths: [docs/, README.md]

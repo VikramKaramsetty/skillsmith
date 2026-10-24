@@ -1,0 +1,65 @@
+name: ci
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, ready_for_review]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: make check
+
+  heavy:
+    runs-on: ubuntu-latest
+    env:
+      MUJOCO_GL: egl
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - run: sudo apt-get update -qq && sudo apt-get install -y -qq libegl1 libgl1
+      - run: make check-heavy
+
+  ownership:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2   # the PR merge commit and its first parent (main)
+      - uses: astral-sh/setup-uv@v5
+      - name: Check the branch only touches its workstream's paths
+        env:
+          OWNERSHIP_OVERRIDE: ${{ contains(github.event.pull_request.labels.*.name, 'lead-approved') && '1' || '0' }}
+        run: uv run --no-project --with pyyaml python scripts/check_ownership.py --base HEAD^1 --branch "${{ github.head_ref }}"
+
+  # Merges green PRs labelled `automerge`, without needing paid branch protection.
+  # Contract changes always wait for the lead.
+  automerge:
+    needs: [check, heavy, ownership]
+    if: >-
+      github.event_name == 'pull_request' &&
+      !github.event.pull_request.draft &&
+      contains(github.event.pull_request.labels.*.name, 'automerge') &&
+      !contains(github.event.pull_request.labels.*.name, 'contract-change') &&
+      !contains(github.event.pull_request.labels.*.name, 'blocked')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Squash-merge
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: gh pr merge ${{ github.event.pull_request.number }} --squash --delete-branch

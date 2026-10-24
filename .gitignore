@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+runs/
+skills/history/
+config/homography.json
+assets/so101/*.stl
+*.mp4
+uv.lock
+HANDOFF.md
+calibration/offsets.json

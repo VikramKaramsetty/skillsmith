@@ -1,0 +1,40 @@
+# WS3: perception
+
+**Branch prefix:** `ws3/` · **Owns:** `src/skillsmith/perception/`, `tools/hsv_tuner.py`, `tools/calibrate_camera.py`, `tests/ws3/`
+**Reads:** `docs/INTERFACES.md` §1 (Scene/SceneObject) and §2 (Perception), `docs/ARCHITECTURE.md` "Perception"
+
+## Goal
+`CameraPerception.observe() -> Scene` with object positions in the robot frame, accurate
+to about 1 cm on the table, fast (< 200 ms), from a fixed front/overhead camera.
+
+## Tasks (one PR each, in order)
+- [ ] WS3.1 Frame sources (robotd /frame client, OpenCV device, MJPEG URL) plus recorded sample frames as test fixtures
+- [ ] WS3.2 ArUco table calibration tool that writes a pixel-to-table homography
+- [ ] WS3.3 HSV colour detector that returns a Scene, with a known-object size table and stacked-z inference
+- [ ] WS3.4 HSV tuner tool with live sliders that saves thresholds
+- [ ] WS3.5 CameraPerception class implementing observe() and snapshot()
+- [ ] WS3.6 Measure position accuracy on the real table at marked points (hardware)
+- [ ] WS3.7 Stretch: open-vocabulary detector on the GX10 GPU behind the same interface
+
+## Design notes
+- Objects sit on the table plane, so a homography (4+ ArUco markers at known robot-frame
+  points) gives (x, y) with no depth. Measure the marker positions by touching them with
+  the gripper tip and reading FK (needs WS2), or with a ruler from the base axis.
+- For cups seen at an angle, use the blob's bottom-centre, not its centroid.
+- `z`: 0 on the table. If a blob's footprint overlaps another object's footprint and
+  it sits higher in the image, it is stacked: z = the lower object's top.
+- Size: look up `height`/`width` by kind from a table (cup 0.08/0.065, block
+  0.03/0.03; measure the real objects). Don't estimate size from pixels.
+- Stable ids: `<color>_<kind>_<n>`, ordered by x then y.
+- Import `cv2` lazily. Fixture frames (WS3.1) make the detector testable in CI.
+- The Mac camera stream has 125–235 ms of latency over Tailscale. Fine for snapshots;
+  a fixed USB webcam on the GX10 is better (no Wi-Fi in the loop).
+
+## Acceptance (in `make check`, heavy job for cv2 tests)
+- On the fixture frames: every expected object found with the right label, and position
+  error < 1.5 cm against hand-labelled ground truth in `tests/ws3/fixtures/truth.json`.
+- `CameraPerception` satisfies the `Perception` protocol.
+
+## Hardware test (arm operator, WS3.6)
+Place a cup on 5 taped marks, run `python tools/calibrate_camera.py --check`, report the
+error per mark. Target < 1 cm.
