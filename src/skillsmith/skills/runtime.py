@@ -18,7 +18,7 @@ import sys
 import time
 import traceback
 from contextlib import contextmanager
-from typing import Any, Callable, Dict, Iterator, Optional
+from typing import Any, Callable, Dict, Iterator, Optional, Tuple
 
 from skillsmith.events import EventBus
 from skillsmith.primitives import Robot, SkillCaller
@@ -161,6 +161,7 @@ def run_skill(source: str, env, params: dict, cfg, bus: EventBus, *, skill: str,
     duration = time.time() - t0
 
     scene_after = env.perception.observe()
+    bus.emit("scene.observed", scene=scene_after, image_path=scene_after.image_path)  # recordings replay it
     verify = evaluate(success, scene_after, cfg.verify.xy_tol, cfg.verify.z_tol) if success else None
     extra = getattr(env.arm, "safety_issues", lambda: [])()
     safety = audit_trace(robot.trace, cfg, extra, scene=scene_before)
@@ -171,7 +172,7 @@ def run_skill(source: str, env, params: dict, cfg, bus: EventBus, *, skill: str,
                            error=error, verify=verify, safety=safety, scene_before=scene_before,
                            scene_after=scene_after, duration_s=round(duration, 3),
                            video_path=getattr(env.arm, "last_video_path", None))
-    _analyse(result, cfg, bus)
+    _analyse(result, cfg, bus, None if result.ok else _perception_gate(env, bus))
     bus.emit("attempt.finished", env=env.name, skill=skill, version=version, ok=ok,
              error=error, duration_s=result.duration_s, reason=result.reason())
     return result
@@ -184,13 +185,32 @@ def _stop_arm(env, bus: EventBus) -> None:
         bus.emit("error", where="arm.stop", message=repr(stop_err))
 
 
-def _analyse(result: AttemptResult, cfg, bus: EventBus) -> None:
-    """Phase checks + failure classification (WS4.4/WS4.5). A no-op until analysis is built."""
+def _perception_gate(env, bus: EventBus) -> Optional[Tuple[bool, str]]:
+    """`perception_ok()` from the live world model, if the env has one (fake and sim do not)."""
+    check = getattr(env.perception, "perception_ok", None)
+    if not callable(check):
+        return None
+    try:
+        ok, reason = check()
+    except NotImplementedError:
+        return None
+    except Exception as e:  # a gate that cannot answer is not a gate that passed
+        bus.emit("error", where="perception_ok", message=repr(e))
+        return False, f"perception_ok failed: {type(e).__name__}: {e}"
+    return bool(ok), str(reason)
+
+
+def _analyse(result: AttemptResult, cfg, bus: EventBus, perception: Optional[Tuple[bool, str]] = None) -> None:
+    """Phase checks + failure classification (WS4.4/WS4.5)."""
     from skillsmith.analysis import analyse_attempt
 
     try:
-        result.phases, result.classification = analyse_attempt(result, cfg)
+        extra = {} if perception is None else {"perception": perception}  # fake/sim: the plain contract
+        result.phases, result.classification = analyse_attempt(result, cfg, **extra)
     except NotImplementedError:
+        return
+    except Exception as e:  # analysis must never lose the attempt; the report falls back to the raw error
+        bus.emit("error", where="analysis", message=f"{type(e).__name__}: {e}")
         return
     for phase in result.phases:
         bus.emit("phase.check", **dataclasses.asdict(phase))
