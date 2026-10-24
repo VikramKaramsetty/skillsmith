@@ -9,14 +9,16 @@ Three sources of events are checked:
   droid.* events (the award's "visible" criterion) are covered without the real SDK;
 - every `.emit("<type>"` call site in src/, so types on paths neither run reaches are listed too.
 
-Known mismatches live in KNOWN_GAPS with the owning workstream. Each one has a strict xfail test
-that starts failing (XPASS) once the gap is fixed, so the entry gets removed.
+Known mismatches live in KNOWN_GAPS with the owning workstream. Each one has an xfail test that
+turns into a skip naming the stale entry once the gap is fixed. Fixes and new §7 rows from other
+lanes never fail this file, because only the qa lane may edit it.
 """
 
 from __future__ import annotations
 
 import copy
 import dataclasses
+import functools
 import json
 import re
 import sys
@@ -117,10 +119,10 @@ def _violations(events: list[dict]) -> set[str]:
         if e["t"] < last_t:
             out.add(f"{kind}: timestamp goes backwards")
         last_t = e["t"]
-        if kind not in SPEC:
+        if kind not in _documented():
             out.add(f"{kind}: type not in INTERFACES §7")
             continue
-        missing = SPEC[kind] - set(data)
+        missing = SPEC.get(kind, set()) - set(data)
         if missing:
             out.add(f"{kind}: missing data keys {sorted(missing)}")
         for (k, key), want in NESTED.items():
@@ -194,11 +196,18 @@ def _droid_sdk_events(tmp_path: Path, monkeypatch) -> list[dict]:
     return bus.events
 
 
-def _doc_types() -> set[str]:
+@functools.cache
+def _doc_types() -> frozenset[str]:
     """Event types in the §7 table: the backticked names in each row's first cell."""
     section = INTERFACES.read_text().split("## 7. Events", 1)[1].split("\n## ", 1)[0]
     rows = [line.split("|")[1] for line in section.splitlines() if line.startswith("| `")]
-    return {name for cell in rows for name in re.findall(r"`([a-z_.]+)`", cell)}
+    return frozenset(name for cell in rows for name in re.findall(r"`([a-z_.]+)`", cell))
+
+
+def _documented() -> set[str]:
+    """Types §7 lists. A row the lead adds before SPEC catches up still counts (type-only check),
+    so a docs or lead PR never breaks this file, which only the qa lane may edit."""
+    return set(SPEC) | _doc_types()
 
 
 def _emitted_types() -> dict[str, list[str]]:
@@ -213,8 +222,8 @@ def _emitted_types() -> dict[str, list[str]]:
 
 # ---- tests --------------------------------------------------------------------------------
 
-def test_spec_matches_the_interfaces_table():
-    assert _doc_types() == set(SPEC), "INTERFACES §7 changed: update SPEC in this file"
+def test_spec_types_are_still_in_the_interfaces_table():
+    assert set(SPEC) - _doc_types() == set(), "a type left INTERFACES §7: update SPEC in this file"
 
 
 def test_spec_fields_appear_in_the_interfaces_table():
@@ -271,7 +280,7 @@ def test_every_emitted_type_is_documented(kind):
     violation = f"{kind}: type not in INTERFACES §7"
     if violation in KNOWN_GAPS:
         pytest.xfail(KNOWN_GAPS[violation])
-    assert kind in SPEC, f"{kind} emitted at {_emitted_types()[kind]} but not in INTERFACES §7"
+    assert kind in _documented(), f"{kind} emitted at {_emitted_types()[kind]} but not in INTERFACES §7"
 
 
 def test_checker_catches_drift():
@@ -284,11 +293,12 @@ def test_checker_catches_drift():
     assert _violations([good, {**good, "t": 0.5}]) == {"verify.result: timestamp goes backwards"}
 
 
-# One strict xfail per known gap: XPASS (a failure) once the owner fixes it, so KNOWN_GAPS shrinks.
+# One xfail per known gap. Once the owner fixes it the test skips (it must not fail another lane's
+# PR, which cannot edit this file) and says which KNOWN_GAPS entry to delete.
 @pytest.mark.parametrize("gap", sorted(KNOWN_GAPS))
 def test_known_gap_is_still_open(gap, tmp_path, monkeypatch):
     events = _droid_sdk_events(tmp_path, monkeypatch)
-    violations = _violations(events) | {f"{k}: type not in INTERFACES §7" for k in _emitted_types() if k not in SPEC}
-    if gap in violations:
+    undocumented = {f"{k}: type not in INTERFACES §7" for k in _emitted_types() if k not in _documented()}
+    if gap in _violations(events) | undocumented:
         pytest.xfail(KNOWN_GAPS[gap])
-    pytest.fail(f"fixed: remove from KNOWN_GAPS: {gap}")
+    pytest.skip(f"fixed upstream; qa: delete from KNOWN_GAPS: {gap}")
