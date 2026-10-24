@@ -3,39 +3,52 @@
 You are writing or repairing one **skill**: a short Python program that moves a
 SO-ARM101 robot arm by combining safe primitive moves. You never control motors directly.
 
+## Your tools
+
+You have **only** these, all from the `skillsmith` tool server (call them from a Script as
+`tools.skillsmith.<name>({...})`). There are no other file, shell or web tools.
+
+| Tool | Use |
+|---|---|
+| `read_file(name)` | Text files in your workspace: `failure.md`, `skill.py`, `LESSONS.md`, `AGENTS.md`, `API.md`, `scene.json`, `library/<skill>.py`. It refuses images. |
+| `write_skill(source)` | Save the **complete** new `skill.py` (whole file, not a diff). The only way to change the skill; the static checker runs at once and lists any issue. |
+| `validate_skill()` | The static checker on your current `skill.py`. |
+| `simulate_skill()` | Runs your `skill.py` in simulation on a copy of the real table: PASS/FAIL, trace, safety report. A few runs per round. |
+| `get_scene()`, `list_library()`, `read_library_skill(name)` | The current objects; saved skills you can call or copy from. |
+| `get_frame(phase)` | One phase's check, its calls and what its annotated frame shows, as text: objects with positions, gripper tip, planned target, error arrow in cm. Phases: approach, grasp, lift, carry, place, release, retreat, crop_before, crop_after. Empty = the failing phase. |
+| `get_object_track(name)` | Where one object was through the attempt, e.g. when a held cup left the gripper. |
+| `compare_with_success(phase)` | That phase next to the same phase of a run that passed, call by call, with how far apart the gripper tip was. |
+
+Your reply also carries `skill_source`: the complete new `skill.py`. The orchestrator saves
+it and re-runs every check, so it must match what you last saved with `write_skill`.
+
 ## Your job
 
-1. Read the evidence (the prompt, also saved as `failure.md`), then `API.md` (everything
-   you may call), `LESSONS.md` (rules learned on earlier tasks: follow them), then `skill.py`.
+1. The evidence is in the prompt (also `failure.md`). The rules (this file) and the skill API
+   (`API.md`) are in your instructions. Get `skill.py` and `LESSONS.md` (rules learned on
+   earlier tasks: follow them) with `read_file`.
 2. The evidence leads with the **failure class** and the **phase** it happened in; trust it
-   unless it says `UNKNOWN` or low confidence. Then read the **phase table**, the **expected vs
+   unless it says `UNKNOWN` or low confidence. Then study the **phase table**, the **expected vs
    actual** tables (where the success check wanted each object, and how the run that passed in
    simulation differed from this one), the **trace table** (every call, tip position
    before/after, the failing call marked **← failed here**) and the **scene before/after**
-   tables. The camera snapshot and annotated key frames are attached as images (copies in
-   `frames/`). `library/*.py` are working skills you can call or copy from.
-   If that is not enough to be sure, pull more evidence (fast, no simulation budget):
-   - `get_frame(phase)`: one phase's check, its calls and its annotated frame (saved into
-     `frames/`; open it with Read). Phases: approach, grasp, lift, carry, place, release, retreat.
-   - `get_object_track(name)`: where one object was through the attempt, e.g. when a held
-     cup left the gripper.
-   - `compare_with_success(phase)`: that phase next to the same phase of a run that passed,
-     call by call, with how far apart the gripper tip was.
+   tables. The camera snapshot and annotated key frames are attached to the prompt as images.
+   If that is not enough to be sure, pull more evidence with `get_frame`, `get_object_track`
+   or `compare_with_success` (fast, no simulation budget).
 3. Make the **smallest change** to `skill.py` that fixes the stated failure. Never rewrite
    working parts. You are being timed live: aim to fix it in **one round**.
-4. Edit **only `skill.py`**. Any other edit, and any shell command, is refused.
-5. **Check your work with the `skillsmith` tools** before finishing:
-   - `validate_skill`: the static checker. Fix everything it reports.
-   - `simulate_skill`: runs your skill in simulation on a copy of the real table and returns
-     PASS/FAIL with the trace. You have a few runs per round, so use them to iterate.
-   - `get_scene`, `list_library`, `read_library_skill` when you need them.
+4. Change the skill **only with `write_skill`**. Nothing else in the workspace can be changed,
+   and no command can be run.
+5. **Check your work** before finishing: fix everything `write_skill` / `validate_skill`
+   report, then `simulate_skill` until it passes (or the budget runs out).
    After you finish, the orchestrator re-runs every check itself and a human approves before
    the real arm moves. If anything fails you get new evidence in this same conversation.
 6. Reply with the JSON result: `diagnosis` (what went wrong, with numbers), `change` (what
    you changed and why), `change_type` (`"parameter"` if you only changed numbers or
    constants, `"strategy"` if you changed the approach: which calls, their order, the logic),
-   `sim_checked` (did `simulate_skill` pass on your final version), `confidence` (0–1), and
-   `lesson` (one reusable rule for future skills, or "").
+   `sim_checked` (did `simulate_skill` pass on your final version), `confidence` (0–1),
+   `lesson` (one reusable rule for future skills, or "") and `skill_source` (the complete
+   new `skill.py`).
    If the evidence says a value-only change already failed for this class, your next change
    must be a `"strategy"` change.
 
@@ -73,13 +86,25 @@ def run(robot, scene, skills, top, bottom):
 
 ## Static rules (code breaking these is rejected before it runs)
 
+`write_skill` and `validate_skill` run this checker; the orchestrator runs it again.
+
 - No `import` (`math` is already available), `while`, `try`/`except`, `with`, `class`,
-  `lambda`, `global`, `nonlocal`, `del`, generators or `async`.
-- No attribute starting with `_`. No `eval exec compile open getattr setattr type …`.
-- Use `robot`, `scene`, `skills` only as `robot.method(...)` or as a call argument.
-  Don't assign them to other names or reassign them.
-- Only the methods listed in `API.md`.
-- `range()` with a literal bound of at most 50. At most 200 lines.
+  `global`, `nonlocal`, `async`, `yield` (no generators) or `lambda`. No decorators.
+- No attribute starting with `_`. None of the names `eval exec compile open __import__ getattr
+  setattr delattr globals locals vars input breakpoint type object super`.
+- Only the names the runtime gives you (the builtins listed in `API.md`, `math`, `SkillError`,
+  `ValueError`, `RuntimeError`) and names your skill binds itself. No `print`: use `robot.note`.
+- Only the `robot.*`, `scene.*`, `skills.*` attributes listed in `API.md`. No frame or
+  generator introspection attributes, no `.format` (use f-strings), no `.mro`.
+- Use `robot`, `scene`, `skills` only as `robot.attr` or as a call argument: no aliasing,
+  no reassigning. Pass them to your own helper functions only as parameters of the same name
+  (`helper(robot, x, y)` with `def helper(robot, x, y)`).
+- No attribute assignment (`obj.x = ...`) and no mutating robot or scene data.
+- `range()` bound at most 50 (it must fold to a constant). No recursion.
+- Exponents must be constants with |e| ≤ 10; no `<<`; sequence repetition (`[0] * n`) at
+  most 1000.
+- Top-level assignments are constants only. At most 200 lines.
+- A `def run(robot, scene, skills, ...)` must exist.
 
 ## Units and frame
 

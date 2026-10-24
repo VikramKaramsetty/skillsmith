@@ -31,6 +31,8 @@ from skillsmith.types import TaskSpec
 
 PROMPT_HEADER = """\
 You are repairing a robot skill. First read AGENTS.md and API.md in this folder.
+This CLI mode has no skillsmith tools: ignore the tool table in AGENTS.md and change
+skill.py with your own file edit tool instead of write_skill.
 Edit ONLY skill.py. Do not create other files. Do not try to run anything: the
 orchestrator runs static checks, a MuJoCo simulation and safety checks after you finish.
 When done, reply with 2-3 sentences: what went wrong and what you changed.
