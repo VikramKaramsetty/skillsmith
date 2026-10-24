@@ -20,6 +20,7 @@ from skillsmith.events import EventBus
 from skillsmith.hal.base import Env
 from skillsmith.repair.protocols import Approver, AuthorContext, SkillAuthor
 from skillsmith.repair.report import attempt_report, rejection_report, static_report
+from skillsmith.repair.workspace import lessons_path
 from skillsmith.skills.library import SkillLibrary
 from skillsmith.skills.runtime import run_skill
 from skillsmith.skills.validator import validate
@@ -98,7 +99,8 @@ class RepairLoop:
             if rounds >= max_rounds:
                 break
             rounds += 1
-            report = attempt_report(task, attempt, self.history)
+            expected = self._last_check if needs_gates else None  # the sim run of this same source
+            report = attempt_report(task, attempt, self.history, expected=expected, lessons=self._lessons())
             self.history.append(f"v{attempt.version} on {attempt.env}: {attempt.reason()}")
             self._reset_scene()
             scene = self._observe()
@@ -133,7 +135,7 @@ class RepairLoop:
             self._last_check = sim
             return True, ""
         self.history.append(f"v{rnd} failed in {env.name}: {sim.reason()}")
-        return False, attempt_report(task, sim, self.history)
+        return False, attempt_report(task, sim, self.history, lessons=self._lessons())
 
     def _approve(self, task: TaskSpec, source: str, rnd: int) -> Tuple[bool, str]:
         check = self._last_check
@@ -161,6 +163,10 @@ class RepairLoop:
     # ---- helpers --------------------------------------------------------------------
     def _ctx(self, rnd: int, scene: Optional[Scene], snapshot: Optional[str] = None) -> AuthorContext:
         return AuthorContext(self.bus.run_id, rnd, scene, snapshot, self.library.sources())
+
+    def _lessons(self) -> Optional[str]:
+        path = lessons_path(self.cfg)
+        return path.read_text() if path.exists() else None
 
     def _observe(self) -> Scene:
         scene = self.target.perception.observe()

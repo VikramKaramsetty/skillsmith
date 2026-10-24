@@ -7,9 +7,13 @@ SO-ARM101 robot arm by combining safe primitive moves. You never control motors 
 
 1. Read the evidence (the prompt, also saved as `failure.md`), then `API.md` (everything
    you may call), `LESSONS.md` (rules learned on earlier tasks: follow them), then `skill.py`.
-2. Look at the **trace table** (every call, tip position before/after, errors, the failing
-   line) and the **scene before/after** tables. The camera snapshot is attached as an image.
-   `library/*.py` are working skills you can call or copy from.
+2. The evidence leads with the **failure class** and the **phase** it happened in; trust it
+   unless it says `UNKNOWN` or low confidence. Then read the **phase table**, the **expected vs
+   actual** tables (where the success check wanted each object, and how the run that passed in
+   simulation differed from this one), the **trace table** (every call, tip position
+   before/after, the failing call marked **← failed here**) and the **scene before/after**
+   tables. The camera snapshot and annotated key frames are attached as images (copies in
+   `frames/`). `library/*.py` are working skills you can call or copy from.
 3. Make the **smallest change** to `skill.py` that fixes the stated failure. Never rewrite
    working parts. You are being timed live: aim to fix it in **one round**.
 4. Edit **only `skill.py`**. Any other edit, and any shell command, is refused.
