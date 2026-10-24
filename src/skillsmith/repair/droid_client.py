@@ -72,7 +72,7 @@ class DroidAuthor:
         return workspace_dir(self.cfg, run_id)
 
     def _round(self, source: str, report_md: str, ctx: AuthorContext) -> str:
-        ws = prepare_workspace(self.cfg, source, PROMPT_HEADER + report_md, report_md, ctx)
+        ws = prepare_workspace(self.cfg, source, PROMPT_HEADER + report_md, report_md, ctx, bus=self.bus)
         code = self._exec(ws, ctx)
         new = (ws / "skill.py").read_text()
         if code != 0 and new == source:

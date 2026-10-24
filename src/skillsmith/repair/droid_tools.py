@@ -20,7 +20,8 @@ from typing import Callable, Dict, List, Optional, Tuple
 
 from skillsmith.events import EventBus, NullBus
 from skillsmith.repair import evidence_tools
-from skillsmith.repair.report import _scene_table, attempt_report
+from skillsmith.repair.report import _scene_table, attempt_report, clean_lesson
+from skillsmith.repair.workspace import image_roots
 from skillsmith.skills.runtime import run_skill
 from skillsmith.skills.validator import validate
 from skillsmith.types import AttemptResult, Scene, TaskSpec
@@ -196,7 +197,7 @@ class RepairTools:
 
     def get_frame(self, phase: str = "") -> str:
         """Text only: droid-sdk 0.5 tool results cannot carry images (see evidence_tools)."""
-        return evidence_tools.get_frame(self.attempt, phase, self.workspace, self.round)
+        return evidence_tools.get_frame(self.attempt, phase, self.workspace, self.round, image_roots(self.cfg))
 
     def get_object_track(self, name: str = "") -> str:
         return evidence_tools.get_object_track(self.attempt, name)
@@ -205,7 +206,8 @@ class RepairTools:
         reference, kind = self.expected, "the sim gate run of this skill"
         if reference is None and self.last_pass is not None:
             reference, kind = self.last_pass, "your last passing simulate_skill run"
-        return evidence_tools.compare_with_success(self.attempt, reference, kind, phase, self.workspace, self.round)
+        return evidence_tools.compare_with_success(self.attempt, reference, kind, phase, self.workspace, self.round,
+                                                   image_roots(self.cfg))
 
     def functions(self) -> List[Tuple[str, str, Callable]]:
         """(name, description, function) for each SDK MCP tool (no EVIDENCE_TOOLS in v1)."""
@@ -247,7 +249,10 @@ LESSONS_HEADER = ("# Lessons Droid has learned\n\n"
 
 
 def append_lesson(path: Path, task_text: str, lesson: str) -> bool:
-    lesson = " ".join(lesson.split())
+    """Add one cleaned lesson line (no links, images, HTML or code fences; capped). False if empty
+    after cleaning or already there."""
+    lesson = clean_lesson(lesson)
+    task_text = clean_lesson(task_text, 200)  # lessons.lesson_context(): task; skill; class in phase
     if not lesson:
         return False
     existing = path.read_text() if path.exists() else LESSONS_HEADER

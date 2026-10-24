@@ -42,8 +42,17 @@ from skillsmith.repair.droid_tools import (
 )
 from skillsmith.repair.lessons import lesson_context
 from skillsmith.repair.protocols import AuthorContext
-from skillsmith.repair.report import draft_brief, evidence_images
-from skillsmith.repair.workspace import AGENTS_FILES, lessons_path, prepare_workspace, template_file, workspace_dir
+from skillsmith.repair.report import clean_lesson, draft_brief
+from skillsmith.repair.workspace import (
+    AGENTS_FILES,
+    evidence_paths,
+    image_roots,
+    lessons_path,
+    prepare_workspace,
+    template_file,
+    under_roots,
+    workspace_dir,
+)
 from skillsmith.types import Scene, TaskSpec
 
 SYSTEM_APPEND = (
@@ -108,7 +117,8 @@ class DroidSDKAuthor:
 
     # ---- one round -----------------------------------------------------------------------
     def _round(self, task: TaskSpec, source: str, report_md: str, ctx: AuthorContext) -> str:
-        ws = prepare_workspace(self.cfg, source, PROMPT_HEADER + report_md, report_md, ctx, self.evidence)
+        ws = prepare_workspace(self.cfg, source, PROMPT_HEADER + report_md, report_md, ctx,
+                               self.evidence, bus=self.bus)
         tools = self._tools.get(ctx.run_id)
         if tools is None:
             tools = RepairTools(self.cfg, self.bus, ws, task, ctx.library, self.make_check_env,
@@ -143,7 +153,7 @@ class DroidSDKAuthor:
             raise RuntimeError(message)
         context = lesson_context(task, getattr(ctx, "attempt", None))  # class + phase, for later matching
         if out.get("lesson") and append_lesson(lessons_path(self.cfg), context, out["lesson"]):
-            self.bus.emit("droid.lesson", round=ctx.round, lesson=out["lesson"])
+            self.bus.emit("droid.lesson", round=ctx.round, lesson=clean_lesson(out["lesson"]))
         return new
 
     async def _stream(self, ws: Path, report_md: str, ctx: AuthorContext, tools: RepairTools):
@@ -151,7 +161,7 @@ class DroidSDKAuthor:
 
         session = await self._session(ctx.run_id, ws, tools)
         kwargs = {"output": JsonSchema(REPAIR_RESULT_SCHEMA), "timeout": self.d.timeout_s}
-        images = self._images(ctx.snapshot_path, report_md)
+        images = self._images(ctx)
         if images:
             kwargs["images"] = images
         async with session.stream(PROMPT_HEADER + report_md, **kwargs) as stream:
@@ -269,13 +279,19 @@ class DroidSDKAuthor:
         elif kind == "ErrorEvent":
             self.bus.emit("error", where="droid", message=getattr(event, "message", repr(event)))
 
-    def _images(self, snapshot_path: Optional[str], report_md: str = ""):
-        """The failure snapshot plus the evidence's key frames, riding along in the same call."""
+    def _images(self, ctx: AuthorContext):
+        """The failure snapshot plus the attempt's key frames, riding along in the same call. Only
+        paths from the AttemptResults / snapshot that resolve under runs_dir (WS5.11): never links
+        parsed out of the report text."""
         paths = []
-        if self.d.get("attach_snapshot", True) and snapshot_path:
-            paths.append(snapshot_path)
+        if self.d.get("attach_snapshot", True) and ctx.snapshot_path:
+            if under_roots(ctx.snapshot_path, image_roots(self.cfg)):
+                paths.append(ctx.snapshot_path)
+            else:
+                self.bus.emit("error", where="droid.images", round=ctx.round,
+                              message=f"snapshot outside runs_dir not sent to Droid: {ctx.snapshot_path}")
         if self.d.get("attach_frames", True):
-            paths += evidence_images(report_md)
+            paths += evidence_paths(self.cfg, ctx)  # prepare_workspace already reported rejects
         paths = [p for p in dict.fromkeys(paths) if Path(p).is_file()][:int(self.d.get("max_images", 6))]
         if not paths:
             return None

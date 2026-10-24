@@ -33,6 +33,7 @@ def tmp_cfg(tmp_path, **droid) -> Config:
     data = copy.deepcopy(load_config().raw())
     data["repair"]["droid_ws_root"] = str(tmp_path / "droid_ws")
     data["repair"]["lessons_file"] = str(tmp_path / "lessons.md")
+    data["repair"]["runs_dir"] = str(tmp_path)  # evidence images must resolve under runs_dir (WS5.11)
     data["droid"].update(droid)
     return Config(data)
 
