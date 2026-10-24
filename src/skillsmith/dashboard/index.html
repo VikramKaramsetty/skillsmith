@@ -3,6 +3,8 @@
      WS6.3: task input (POST /task) and the human gate (POST /approve: Approve, or Reject with a note).
      WS6.4: the detail drawer ("Details"): annotated key frames (served by GET /frame), the phase
      table, Droid's tool calls and checks, every permission decision (refusals highlighted).
+     WS6.6: the improvement panel ("Getting better"): rounds, seconds-to-fix, skills saved, reuse
+     and lessons, over the recorded runs (GET /improvement) plus the live run folded here.
      Renders ONLY from the SSE stream (docs/INTERFACES.md §7). Open /?replay=<run_id>&speed=2
      to replay a recorded run. The reducer in <script id="story-reducer"> is pure (no DOM) so
      tests/ws6 can run it under node. -->
@@ -34,6 +36,16 @@
   #cams button { font-size: 13px; padding: 2px 10px; border: 0; border-radius: 4px; background: #333; color: #ccc; cursor: pointer; }
   #cams button.on { background: #2a6; color: #fff; }
   #sim-video { width: 100%; border-radius: 8px; background: #000; }
+  #improve-stats { display: grid; grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); gap: 8px; margin-top: 4px; }
+  .stat { background: #1a1a1a; border-radius: 8px; padding: 8px 10px; }
+  .stat .num { display: block; font-size: 30px; font-weight: 800; }
+  .stat .what { color: #999; font-size: 13px; }
+  #improve-runs { border-collapse: collapse; width: 100%; font-size: 14px; margin-top: 8px; }
+  #improve-runs td, #improve-runs th { text-align: left; padding: 3px 6px; border-bottom: 1px solid #2a2a2a; }
+  #improve-runs th { color: #888; font-weight: 400; }
+  #improve-runs tr.current { background: #1d2a22; }
+  #improve-runs .ok { color: #6e6; } #improve-runs .bad { color: #f77; }
+  #improve-lessons { color: #cdb; font-size: 15px; margin-top: 6px; }
   .label { color: #888; font-size: 14px; text-transform: uppercase; letter-spacing: .08em; }
   #task { font-size: 34px; font-weight: 600; }
   #task.empty { color: #555; }
@@ -148,6 +160,10 @@
     <div id="world-text"></div>
     <section id="sim-box" class="hidden"><div class="label">Sim replay <span id="sim-name"></span></div>
       <video id="sim-video" muted autoplay loop controls playsinline></video></section>
+    <section id="improve-box"><div class="label">Getting better</div>
+      <div id="improve-stats"></div>
+      <table id="improve-runs"></table>
+      <div id="improve-lessons"></div></section>
   </aside>
 </main>
 
@@ -168,6 +184,80 @@ function initialState() {
     saved: null, lesson: null, finished: null,
     drawer: initialDrawer(),
     world: initialWorld(),
+  };
+}
+
+// The improvement panel (WS6.6). Same rules as dashboard/improvement.py `run_summary`:
+// the server summarises recorded runs, this folds the live one. State: null or
+// {run: run summary (same shape as GET /improvement), failed_at}. Kept beside the story state,
+// not in it: seconds-to-fix is timing, and the story must not depend on timing (QA.3).
+const FAIL_EVENTS = {
+  "attempt.finished": (d) => !d.ok,
+  "gate.result": (d) => d.ok === false,
+  "approval.decided": (d) => d.approved === false,
+};
+
+function reduceImprove(im, e) {
+  const d = e.data || {};
+  if (e.type === "run.started") {
+    const task = d.task || {};
+    return { failed_at: null, run: { run_id: e.run_id ?? null, t: e.t ?? null, task: task.text ?? null,
+      skill: task.skill ?? null, source: null, ok: null, rounds: 0, failure: null, seconds_to_fix: null,
+      droid_s: 0.0, saved: null, reused: false, lessons: [] } };
+  }
+  if (!im) return im;
+  const failed_at = im.failed_at == null && FAIL_EVENTS[e.type] && FAIL_EVENTS[e.type](d) ? e.t ?? null : im.failed_at;
+  const r = { ...im.run };
+  switch (e.type) {
+    case "plan.selected":
+      Object.assign(r, { skill: d.skill || r.skill, source: d.source ?? null, reused: d.source === "library" });
+      break;
+    case "repair.started":
+      r.rounds = Math.max(r.rounds, Number(d.round) || 0);
+      break;
+    case "attempt.classified":
+      if (r.failure == null) r.failure = d.cls ?? null;
+      break;
+    case "droid.result":
+      r.droid_s += Number(d.duration) || 0;
+      break;
+    case "droid.lesson":
+      if (d.lesson) r.lessons = [...r.lessons, d.lesson];
+      break;
+    case "skill.saved":
+      if (r.source === "draft" || r.rounds > 0) r.saved = d.version ?? null;  // a reused skill re-emits its old version
+      break;
+    case "run.finished":
+      r.ok = !!d.ok;
+      r.rounds = Number(d.rounds ?? r.rounds);
+      if (r.ok && failed_at != null && e.t != null) r.seconds_to_fix = e.t - failed_at;
+      break;
+    default:
+      if (failed_at === im.failed_at) return im;
+  }
+  return { failed_at, run: r };
+}
+
+// Recorded runs from GET /improvement plus the live run. Only runs that started before the
+// current one count, so a replayed run never shows its own future.
+function panelRuns(past, current) {
+  const earlier = (past || []).filter((p) => !current || (p.run_id !== current.run_id && (p.t ?? 0) < (current.t ?? Infinity)));
+  return current ? [...earlier, current] : earlier;
+}
+
+function improvementTotals(runs) {
+  const done = runs.filter((r) => r.ok != null);
+  const fixes = runs.filter((r) => r.seconds_to_fix != null).map((r) => r.seconds_to_fix);
+  const repaired = done.filter((r) => r.ok && r.rounds > 0);
+  return {
+    runs: runs.length, passed: done.filter((r) => r.ok).length,
+    repaired: repaired.length, one_round: repaired.filter((r) => r.rounds === 1).length,
+    avg_fix_s: fixes.length ? fixes.reduce((a, b) => a + b, 0) / fixes.length : null,
+    last_fix_s: fixes.length ? fixes[fixes.length - 1] : null,
+    skills_saved: [...new Set(runs.filter((r) => r.saved != null).map((r) => r.skill))],
+    reused: done.filter((r) => r.ok && r.reused && r.rounds === 0).length,
+    lessons: runs.flatMap((r) => r.lessons || []),
+    rounds_trend: done.map((r) => r.rounds),
   };
 }
 
@@ -427,7 +517,8 @@ function reduceEvent(s, e) {
   }
 }
 
-if (typeof module !== "undefined") module.exports = { initialState, reduce, shortDiff, keyframes, tableMap, worldLine };
+if (typeof module !== "undefined") module.exports = { initialState, reduce, shortDiff, keyframes, tableMap, worldLine,
+                                                         reduceImprove, panelRuns, improvementTotals };
 </script>
 
 <script>
@@ -492,6 +583,59 @@ function render(s) {
 
   renderDrawer(s.drawer);
   renderWorld(s.world);
+  renderImprove(improve);
+}
+
+// ---- WS6.6: improvement panel (recorded runs from GET /improvement + the live run) ----
+const IMPROVE_ROWS = 6;
+let improve = null, pastRuns = [], pastError = null;
+const secs = (v) => v == null ? "–" : `${Math.round(v)} s`;
+
+async function loadPastRuns() {
+  try {
+    const r = await fetch("/improvement");
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    pastRuns = await r.json();
+    pastError = null;
+  } catch (err) {
+    pastError = err.message;
+  }
+  render(state);
+}
+
+function stat(num, what) {
+  const n = el("div", "stat");
+  n.append(el("span", "num", num), el("span", "what", what));
+  return n;
+}
+
+function renderImprove(im) {
+  const current = im ? im.run : null;
+  const runs = panelRuns(pastRuns, current);
+  const t = improvementTotals(runs);
+  $("improve-stats").replaceChildren(
+    stat(current ? String(current.rounds) : "–", "repair rounds, this run"),
+    stat(secs(current && current.seconds_to_fix != null ? current.seconds_to_fix : t.last_fix_s), "fail → fixed"),
+    stat(t.repaired ? `${t.one_round}/${t.repaired}` : "–", "fixed in one round"),
+    stat(String(t.skills_saved.length), "skills saved"),
+    stat(String(t.reused), "reused as-is"),
+    stat(String(t.lessons.length), "lessons kept"));
+
+  const head = el("tr");
+  ["run", "task", "failure", "rounds", "fix", "result"].forEach((h) => head.append(el("th", null, h)));
+  const rows = runs.slice(-IMPROVE_ROWS).map((r, i, shown) => {
+    const row = el("tr", r === current ? "current" : null);
+    const result = r.ok == null ? el("td", null, "running")
+      : el("td", r.ok ? "ok" : "bad", r.ok ? (r.saved != null ? `PASS · v${r.saved} saved` : r.reused ? "PASS · reused" : "PASS") : "FAIL");
+    row.append(el("td", null, String(runs.length - shown.length + i + 1)), el("td", null, firstLine(r.task, 40)),
+               el("td", null, r.failure || "–"), el("td", null, String(r.rounds)), el("td", null, secs(r.seconds_to_fix)), result);
+    return row;
+  });
+  $("improve-runs").replaceChildren(...(rows.length ? [head, ...rows] : []));
+  $("improve-lessons").textContent = [
+    t.lessons.length ? `latest lesson: ${t.lessons[t.lessons.length - 1]}` : runs.length ? "" : "no runs yet",
+    pastError ? `earlier runs unavailable: ${pastError}` : "",
+  ].filter(Boolean).join(" · ");
 }
 
 // ---- WS6.5: live camera (robotd via GET /camera), world-state map, sim replay ----
@@ -704,6 +848,7 @@ const src = new EventSource(url);
 src.onopen = () => {
   // The server resends its history on every (re)connect, so start the story from scratch.
   state = initialState();
+  improve = null;
   $("log").replaceChildren();
   render(state);
   $("status").textContent = "connected";
@@ -713,8 +858,11 @@ src.onmessage = (m) => {
   const e = JSON.parse(m.data);
   logEvent(e);
   state = reduce(state, e);
+  improve = reduceImprove(improve, e);
   render(state);
+  if (e.type === "run.finished" && !replay) loadPastRuns();  // the finished run is now on disk
 };
+loadPastRuns();
 src.addEventListener("replay.end", () => { $("status").textContent = "replay finished"; src.close(); });
 </script>
 </body>
