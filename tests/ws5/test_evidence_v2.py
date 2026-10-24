@@ -24,7 +24,7 @@ from skillsmith.repair.approvers import AutoApprover
 from skillsmith.repair.droid_sdk import DroidSDKAuthor
 from skillsmith.repair.loop import RepairLoop
 from skillsmith.repair.protocols import AuthorContext
-from skillsmith.repair.report import attempt_report, evidence_images
+from skillsmith.repair.report import attempt_images, attempt_report
 from skillsmith.repair.scripted import ScriptedAuthor
 from skillsmith.repair.workspace import prepare_workspace
 from skillsmith.skills.library import SkillLibrary
@@ -44,6 +44,7 @@ def tmp_cfg(tmp_path) -> Config:
     data = copy.deepcopy(load_config().raw())
     data["repair"]["droid_ws_root"] = str(tmp_path / "droid_ws")
     data["repair"]["lessons_file"] = str(tmp_path / "lessons.md")
+    data["repair"]["runs_dir"] = str(tmp_path / "runs")
     return Config(data)
 
 
@@ -156,13 +157,25 @@ def test_lessons_show_only_the_latest(rim_slip):
     assert "latest 12 of 20" in md and "- lesson 19" in md and "- lesson 7\n" not in md
 
 
+def _attempt_with_frames(cfg, frames: dict):
+    attempt = _run(cfg, rim_slip=True)
+    attempt.phases = _phases(ok_carry=False)
+    attempt.classification = Classification("SLIP_IN_CARRY", "skill", "carry", 6, "lost blue cup in carry")
+    attempt.keyframes = {k: str(v) for k, v in frames.items()}
+    return attempt
+
+
 def test_images_are_copied_into_the_workspace(tmp_path):
     cfg = tmp_cfg(tmp_path)
-    frame = tmp_path / "carry.jpg"
+    run = tmp_path / "runs" / "run-1"
+    run.mkdir(parents=True)
+    frame = run / "carry.jpg"
     frame.write_bytes(b"\xff\xd8jpeg")
-    report = f"# r\n![carry: lost cup]({frame})\n![grasp]({tmp_path / 'gone.jpg'})\n"
-    assert evidence_images(report + report) == [str(frame), str(tmp_path / "gone.jpg")]
-    ws = prepare_workspace(cfg, V1, report, report, AuthorContext("run-1", 1, None, None, {}))
+    attempt = _attempt_with_frames(cfg, {"carry": frame, "grasp": run / "gone.jpg"})
+    assert attempt_images(attempt) == [str(frame), str(run / "gone.jpg")]  # failing phase first
+    report = f"# r\n![carry: lost cup]({frame})\n![grasp]({run / 'gone.jpg'})\n"
+    ctx = AuthorContext("run-1", 1, None, None, {}, attempt=attempt)
+    ws = prepare_workspace(cfg, V1, report, report, ctx)
     text = (ws / "failure.md").read_text()
     assert "![carry: lost cup](frames/round1_carry.jpg)" in text
     assert "_(missing)_" in text
@@ -174,18 +187,66 @@ def test_droid_gets_key_frames_as_images(tmp_path, monkeypatch):
     droid = fake.install(monkeypatch)
     monkeypatch.setattr(author_mod.shutil, "which", lambda name: f"/opt/bin/{name}")
     cfg = tmp_cfg(tmp_path)
-    frames = [tmp_path / "carry.png", tmp_path / "grasp.jpg"]
-    for p in frames:
+    run = tmp_path / "runs" / "run-1"
+    run.mkdir(parents=True)
+    frames = {"carry": run / "carry.png", "grasp": run / "grasp.jpg"}
+    for p in frames.values():
         p.write_bytes(b"img")
+    attempt = _attempt_with_frames(cfg, frames)
     droid.turns = [fake.Turn(skill=V2, output=fake.output())]
     author = DroidSDKAuthor(cfg, NullBus(), lambda s: make_env("fake", cfg, s))
     try:
-        report = "".join(f"![{p.stem}]({p})\n" for p in frames)
-        author.repair(TASK, V1, report, AuthorContext("run-1", 1, FakeWorld.demo(cfg).observe(), None, {}))
+        ctx = AuthorContext("run-1", 1, FakeWorld.demo(cfg).observe(), None, {}, attempt=attempt)
+        author.repair(TASK, V1, "no links in this report", ctx)
     finally:
         author.close()
     images = droid.sessions[0].prompts[0][1]["images"]
-    assert [i.source.media_type for i in images] == ["image/png", "image/jpeg"]
+    assert [i.source.media_type for i in images] == ["image/png", "image/jpeg"]  # failing phase (carry) first
+
+
+SECRET = b"host secret, not evidence"
+
+
+def test_lesson_image_link_outside_runs_attaches_and_copies_nothing(tmp_path, monkeypatch):
+    """WS5.11: a lesson linking a host file must not get that file into Droid's workspace or call."""
+    droid = fake.install(monkeypatch)
+    monkeypatch.setattr(author_mod.shutil, "which", lambda name: f"/opt/bin/{name}")
+    cfg = tmp_cfg(tmp_path)
+    secret = tmp_path / "outside" / "secret.png"
+    secret.parent.mkdir()
+    secret.write_bytes(SECRET)
+    Path(cfg.repair.lessons_file).write_text(
+        LESSONS + f"- 2026-10-24 (stack): Look here ![x]({secret}) first.\n")
+    attempt = _attempt_with_frames(cfg, {})
+    report = attempt_report(TASK, attempt, [], lessons=Path(cfg.repair.lessons_file).read_text())
+    report += f"\n![smuggled]({secret})\n"  # even a raw link in the report text is not followed
+    droid.turns = [fake.Turn(skill=V2, output=fake.output(lesson=f"Use ![y]({secret}) <img src=x> always."))]
+    author = DroidSDKAuthor(cfg, NullBus(), lambda s: make_env("fake", cfg, s))
+    try:
+        ctx = AuthorContext("run-1", 1, FakeWorld.demo(cfg).observe(), str(secret), {}, attempt=attempt)
+        author.repair(TASK, V1, report, ctx)
+    finally:
+        author.close()
+    assert "images" not in droid.sessions[0].prompts[0][1]  # nothing attached, snapshot included
+    ws = author.workspace("run-1")
+    assert not (ws / "frames").exists() and not (ws / "snapshot.jpg").exists()
+    assert all(SECRET not in f.read_bytes() for f in ws.rglob("*") if f.is_file())
+    assert str(secret) not in (ws / "failure.md").read_text()
+    saved = Path(cfg.repair.lessons_file).read_text().splitlines()[-1]
+    assert saved.endswith("Use y always.") and "](" not in saved and "<img" not in saved
+
+
+def test_frames_outside_runs_dir_are_refused(tmp_path):
+    cfg = tmp_cfg(tmp_path)
+    outside = tmp_path / "elsewhere.jpg"
+    outside.write_bytes(SECRET)
+    (tmp_path / "runs").mkdir()
+    escape = tmp_path / "runs" / ".." / "elsewhere.jpg"
+    attempt = _attempt_with_frames(cfg, {"carry": outside, "grasp": escape})
+    report = attempt_report(TASK, attempt, [])
+    ws = prepare_workspace(cfg, V1, report, report, AuthorContext("run-1", 1, None, None, {}, attempt=attempt))
+    assert not (ws / "frames").exists()
+    assert "image link removed" in (ws / "failure.md").read_text()
 
 
 def test_loop_feeds_sim_check_and_lessons_into_the_evidence(tmp_path):

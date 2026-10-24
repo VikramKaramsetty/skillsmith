@@ -45,7 +45,7 @@ succeeds outright, say so and ask the judge for a harder variant.
   blocked); our code writes its fix; our gates; human approval.
 - *Visible:* failure class, Droid's messages, tool calls, permission decisions, diff, diagnosis, events log.
 - *Improvement:* the lesson line in `skills/lessons.md`; the second task reusing the skill; the measured
-  numbers in `docs/RESULTS.md` (real Droid: 8/8 seeded bugs fixed in one round, median 17 s; sandbox proof).
+  numbers in `docs/RESULTS.md` (real Droid: 8/8 seeded bugs fixed in one round, median 15 s, with no hint where the bug is; sandbox proof).
 
 ## Q&A prep (honest answers)
 
