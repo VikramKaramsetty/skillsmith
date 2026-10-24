@@ -313,7 +313,7 @@ One JSON object per line in `runs/<run_id>/events.jsonl`, also pushed to subscri
 | `droid.tool_call` / `droid.tool_result` | `round`, `name`, `input` / `round`, `tool`, `is_error`, `content` |
 | `droid.permission` | `round`, `action`, `target`, `allowed`, `reason` |
 | `droid.check` | `round`, `tool` (validate_skill \| simulate_skill), `ok`, `run`, `reason` |
-| `droid.result` | `round`, `subtype`, `result` {diagnosis, change, sim_checked, confidence, lesson}, `session_id`, `duration`, `credits` |
+| `droid.result` | `round`, `subtype`, `result` {diagnosis, change, sim_checked, confidence, lesson}, `error` (RunFailure message or null), `session_id`, `duration` (seconds, float), `credits` |
 | `droid.lesson` | `round`, `lesson` (appended to skills/lessons.md) |
 | `droid.event` / `droid.finished` | CLI fallback only: raw stream-json event / `round`, `session_id`, `exit_code` |
 | `skill.diff` | `old_version`, `new_version`, `diff` (unified) |

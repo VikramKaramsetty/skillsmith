@@ -95,7 +95,12 @@ for i in $(seq 0 "$MAX_FIX"); do
     # Wait for the merge so the next task in this workstream starts from a main that has this change.
     for _ in $(seq 1 30); do
       if [[ $(gh pr view --json state --jq .state) == "MERGED" ]]; then
-        echo "agent-run: merged $(gh pr view --json url --jq .url)"
+        URL=$(gh pr view --json url --jq .url)
+        echo "agent-run: merged $URL"
+        # Merges by the CI bot (GITHUB_TOKEN) do not fire "Closes #N", so close the issue here.
+        if [[ -n "$ISSUE" ]]; then
+          gh issue close "$ISSUE" --reason completed --comment "Done in $URL" >/dev/null 2>&1 || true
+        fi
         exit 0
       fi
       sleep 10
