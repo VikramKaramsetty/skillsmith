@@ -79,7 +79,7 @@ $(printf '%s' "$OUT" | tail -60)" continue
 done
 
 if git diff --quiet && git diff --cached --quiet && [[ -z $(git ls-files --others --exclude-standard) ]]; then
-  echo "agent-run: agent made no changes; nothing to ship"; exit 0
+  echo "agent-run: agent made no changes; nothing to ship (see $LOG)"; exit 3
 fi
 
 TITLE="$WS: $TASK"

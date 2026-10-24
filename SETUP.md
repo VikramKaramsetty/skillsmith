@@ -124,6 +124,7 @@ scripts/ship.sh "ws3: what I did" <issue-number>
 |---|---|
 | `make setup` can't find Python 3.12 | `uv python install 3.12`, then retry |
 | `git push` → 403 / repository not found | the invite isn't accepted yet: re-run the invitation command in step 2 |
+| loop exits with "Claude CLI is not ready" | the terminal CLI isn't logged in (separate from the desktop app): run `claude`, type `/login`, restart the loop |
 | `claude: command not found` inside tmux | open a new terminal (PATH), or use the full path from `which claude` |
 | loop prints "nothing free" | every workstream is busy or the queue is empty; use `POLL=300` to keep waiting |
 | issue stuck `in-progress` after a crash | `gh issue edit <n> --remove-label in-progress --add-label ready` |
