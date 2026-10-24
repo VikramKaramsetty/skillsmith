@@ -25,7 +25,7 @@ gh api -X PUT "repos/$REPO/actions/permissions/workflow" \
   -f default_workflow_permissions=write -F can_approve_pull_request_reviews=true
 
 label() { gh label create "$1" --color "$2" --description "$3" --force -R "$REPO" >/dev/null; }
-for ws in ws1 ws2 ws3 ws4 ws5 ws6 ws7 qa docs lead; do label "$ws" "1d76db" "workstream $ws"; done
+for ws in ws1 ws2 ws3a ws3b ws3c ws4 ws5 ws6 ws7 qa docs lead; do label "$ws" "1d76db" "workstream $ws"; done
 label ready          "0e8a16" "queued for an agent"
 label in-progress    "fbca04" "claimed by an agent-loop"
 label blocked        "b60205" "needs a human"

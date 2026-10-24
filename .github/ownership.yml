@@ -12,9 +12,17 @@ workstreams:
   ws2:
     title: kinematics + MuJoCo sim
     paths: [src/skillsmith/kinematics.py, src/skillsmith/hal/sim.py, assets/so101/]
-  ws3:
-    title: perception & world state
-    paths: [src/skillsmith/perception/, tools/hsv_tuner.py, tools/calibrate_camera.py]
+  # WS3 runs as three parallel tracks; perception/__init__.py belongs to the lead.
+  ws3a:
+    title: perception A, geometry & frames
+    paths: [src/skillsmith/perception/frames.py, src/skillsmith/perception/geometry.py, tools/calibrate_camera.py, tests/ws3/]
+  ws3b:
+    title: perception B, detectors & annotation
+    paths: [src/skillsmith/perception/color.py, src/skillsmith/perception/annotate.py, src/skillsmith/perception/vision.py,
+            tools/hsv_tuner.py]
+  ws3c:
+    title: perception C, world model & wrist
+    paths: [src/skillsmith/perception/world.py, src/skillsmith/perception/wrist.py]
   ws4:
     title: runtime, safety & failure analysis
     paths: [src/skillsmith/skills/validator.py, src/skillsmith/skills/runtime.py, src/skillsmith/safety.py,

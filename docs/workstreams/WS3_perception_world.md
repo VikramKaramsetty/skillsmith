@@ -1,6 +1,6 @@
 # WS3: perception & world state
 
-**Branch prefix:** `ws3/` · **Owns:** `src/skillsmith/perception/`, `tools/hsv_tuner.py`, `tools/calibrate_camera.py`, `tests/ws3/` · **Reads:** `docs/NORTH_STAR.md`, `docs/ARCHITECTURE.md` (perception and world state), `docs/INTERFACES.md` §1–2, `docs/DECISIONS.md` (3D positions)
+**Split into three parallel tracks** (separate files, separate queues) · **Reads:** `docs/NORTH_STAR.md`, `docs/ARCHITECTURE.md` (perception and world state), `docs/INTERFACES.md` §1–2, `docs/DECISIONS.md` (3D positions)
 
 ## Goal
 Know where every object is, live, accurately, and say when we're unsure. The WorldModel tracks
@@ -8,17 +8,16 @@ objects at 10–15 Hz in the robot frame (~1 cm), notices when something gets bu
 with the wrist camera, and produces the annotated frames Droid needs to see what went wrong.
 Serves NORTH_STAR: 1, 3, 4.
 
-## Tasks (one PR each, in order)
-- [ ] WS3.1 Frame sources (robotd client, OpenCV, MJPEG) plus recorded fixture frames
-- [ ] WS3.2 Camera calibration: checkerboard intrinsics plus ArUco pose in the robot frame, saved to config/camera.json
-- [ ] WS3.3 Ray-plane localisation: pixel to (x, y) at an object's known height, with stacked-object z inference
-- [ ] WS3.4 Detectors behind one interface: YOLO-World/YOLO-E main, HSV backup, with confidence
-- [ ] WS3.5 WorldModel: live tracking at 10-15 Hz, stable ids, held object follows the gripper, hidden objects keep last position, bump detection
-- [ ] WS3.6 Perception confidence gate: marker drift, low confidence and object-count changes reported to the classifier
-- [ ] WS3.7 Wrist camera: post-grasp holding check and fine-alignment offset for align_over
-- [ ] WS3.8 Annotated key frames and cropped before/after pairs for Droid and the dashboard
-- [ ] WS3.9 Accuracy test: cups on 5 taped marks under demo lighting, under 1 cm error (hardware)
-- [ ] WS3.10 Stretch: frontier-API vision second opinion on cropped before/after (advisory)
+## Tracks (each has its own label, queue, branch prefix and files, so three machines build at once)
+| Track | Brief | Owns | Tasks |
+|---|---|---|---|
+| `ws3a` geometry & frames | `WS3A_geometry_frames.md` | `perception/frames.py`, `perception/geometry.py`, `tools/calibrate_camera.py`, `tests/ws3/` (fixtures) | WS3.2, 3.3, 3.9, 3.11 |
+| `ws3b` detectors & annotation | `WS3B_detect_annotate.md` | `perception/color.py`, `perception/annotate.py`, `perception/vision.py`, `tools/hsv_tuner.py` | WS3.4, 3.8, 3.10 |
+| `ws3c` world model & wrist | `WS3C_world_wrist.md` | `perception/world.py`, `perception/wrist.py` | WS3.5, 3.6, 3.7 |
+
+No track waits on another: each codes against the contract stubs (`CameraModel`, `Detection`,
+`WorldModel`) and tests with fakes or fixture frames. `perception/__init__.py` belongs to the lead.
+This file keeps the shared design notes; the track briefs hold the task lists.
 
 ## Design notes
 - Contract stubs exist: `perception/geometry.py` (CameraModel, calibrate), `color.py` (detectors),

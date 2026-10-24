@@ -31,7 +31,6 @@ WT="$ROOT/../skillsmith-worktrees/$NAME"
 LOGS="$ROOT/../skillsmith-logs"; mkdir -p "$LOGS"
 LOG="$LOGS/$NAME.jsonl"
 WS_UPPER=$(printf '%s' "$WS" | tr '[:lower:]' '[:upper:]')
-WSFILE=$(cd "$ROOT" && ls docs/workstreams/"${WS_UPPER}"_*.md 2>/dev/null | head -1 || true)
 
 echo "agent-run: $AGENT on $BRANCH (log: $LOG)"
 git -C "$ROOT" fetch -q origin main
@@ -40,6 +39,8 @@ if [[ -d "$WT" ]]; then echo "agent-run: reusing $WT"; else
 fi
 cd "$WT"
 uv sync -q --extra dev
+# Read the brief from the worktree (fresh origin/main), not ROOT, which may be behind.
+WSFILE=$(ls docs/workstreams/"${WS_UPPER}"_*.md 2>/dev/null | head -1 || true)
 
 PROMPT="You are a coding agent on the Skillsmith hackathon project (robot arm that writes its own skills).
 Workstream: $WS. Task: $TASK.${ISSUE:+ GitHub issue #$ISSUE.}
