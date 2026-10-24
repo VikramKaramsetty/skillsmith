@@ -42,7 +42,12 @@ green. Nobody waits for anybody, and no two agents ever edit the same file.
 
 - **Ownership:** `.github/ownership.yml` maps each branch prefix to the paths it may
   edit. CI enforces it, so parallel PRs almost never conflict.
-- **One machine per workstream.** Tasks within a workstream run in order on one machine.
+- **One task in flight per workstream.** The loop skips any workstream that has an
+  `in-progress` or `blocked` issue, so a workstream's tasks run in order (WS2.3 starts
+  only after WS2.2 has merged), whichever machine picks them up.
+- **Safe claims.** A machine claims an issue by posting a claim comment, waits 5 s, and
+  keeps the issue only if its comment came first. GitHub orders comments, so exactly one
+  machine wins; losers move on to another workstream.
 - **Shared contracts** (`types.py`, `hal/base.py`, `primitives.py`, `events.py`,
   `config/robot.yaml`, `docs/INTERFACES.md`, ...) change only on `lead/*` branches. The
   `contract-change` label blocks automerge, so the lead merges those by hand.
@@ -74,20 +79,23 @@ claude                                           # log in once (or install droid
 Then start the loop in tmux so it survives disconnects:
 
 ```bash
-tmux new -s agents 'scripts/agent-loop.sh ws2 ws6'
+tmux new -s agents 'POLL=300 scripts/agent-loop.sh all'
 ```
 
 Use `AGENT=droid` for Droid, `POLL=300` to keep waiting for new issues, `MODEL=...` to
-pick a model, `MAX_FIX=3` for the repair budget. Logs: `../skillsmith-logs/*.jsonl`.
+pick a model, `MAX_FIX=3` for the repair budget. `touch .agent-stop` stops a loop after
+its current task. Logs: `../skillsmith-logs/*.jsonl`.
 
-## Suggested split
+## Shared queue (recommended) or a fixed split
 
-| Machine | Workstreams | Why |
-|---|---|---|
-| Mac A (lead) | ws4, ws5, then qa | closest to the contracts; the lead reviews contract changes here |
-| Machine B | ws2, ws6 | sim needs mujoco; the dashboard is independent |
-| Machine C | ws3, ws1, ws7 | perception and robotd code, both mockable; ws7 once WS1–3 land |
-| GX10 (human) | `needs-hardware` issues | the only place the arm exists |
+**Shared queue:** run `scripts/agent-loop.sh all` on every machine. No assignment
+needed: each machine starts at a different workstream and takes whatever is free. With
+8 workstreams and 4 machines, every machine stays busy until the queue drains.
+Hardware tasks (`needs-hardware`) are never taken by agents; the arm operator does them
+on the GX10.
+
+**Fixed split** (if you want a machine to own an area, e.g. the only one with a GPU):
+`scripts/agent-loop.sh ws2 ws6`. You can mix both: one machine on `ws2` only, the rest on `all`.
 
 Each Claude/Droid account has its own usage limits, so spreading the agents across
 accounts also multiplies throughput.
