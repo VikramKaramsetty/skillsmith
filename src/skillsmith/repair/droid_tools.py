@@ -94,13 +94,14 @@ TOOL_NAMES = ("read_file", "write_skill", "validate_skill", "simulate_skill", "g
               "read_library_skill", "get_frame", "get_object_track", "compare_with_success")
 
 MAX_READ_CHARS = 20_000
+EVIDENCE_TOOLS = ("get_frame", "get_object_track", "compare_with_success")  # evidence v2 only
 
 
 class RepairTools:
     """State for one run. `update()` is called at the start of every round."""
 
     def __init__(self, cfg, bus: EventBus, workspace: Path, task: TaskSpec, library: Dict[str, str],
-                 make_check_env: Callable[[Scene], object], sim_budget: int = 3):
+                 make_check_env: Callable[[Scene], object], sim_budget: int = 3, evidence_tools: bool = True):
         self.cfg = cfg
         self.bus = bus
         self.workspace = workspace
@@ -108,6 +109,7 @@ class RepairTools:
         self.library = library
         self.make_check_env = make_check_env
         self.sim_budget = sim_budget
+        self.evidence_tools = evidence_tools  # False in evidence v1 (the benchmark baseline)
         self.scene: Scene | None = None
         self.round = 0
         self.sim_runs = 0
@@ -205,7 +207,10 @@ class RepairTools:
         return evidence_tools.compare_with_success(self.attempt, reference, kind, phase, self.workspace, self.round)
 
     def functions(self) -> List[Tuple[str, str, Callable]]:
-        """(name, description, function) for each SDK MCP tool."""
+        """(name, description, function) for each SDK MCP tool (no EVIDENCE_TOOLS in v1)."""
+        return [t for t in self._all_functions() if self.evidence_tools or t[0] not in EVIDENCE_TOOLS]
+
+    def _all_functions(self) -> List[Tuple[str, str, Callable]]:
         return [
             ("read_file", "Read a file in your workspace: AGENTS.md, API.md, LESSONS.md, failure.md, skill.py, "
                           "scene.json or library/<skill>.py.", self.read_file),

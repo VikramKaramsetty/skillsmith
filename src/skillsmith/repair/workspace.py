@@ -24,6 +24,12 @@ from skillsmith.repair.protocols import AuthorContext
 from skillsmith.repair.report import evidence_images
 
 TEMPLATE_DIR = REPO_ROOT / "droid_template"
+AGENTS_FILES = {"v1": "AGENTS_v1.md", "v2": "AGENTS.md"}  # evidence version -> rules Droid reads as AGENTS.md
+
+
+def template_file(name: str, evidence: str = "v2") -> Path:
+    """droid_template/<name>; AGENTS.md is the v1 rules (no evidence v2 sections) in v1 mode."""
+    return TEMPLATE_DIR / (AGENTS_FILES[evidence] if name == "AGENTS.md" else name)
 
 
 def workspace_dir(cfg, run_id: str) -> Path:
@@ -34,11 +40,12 @@ def lessons_path(cfg) -> Path:
     return cfg.path(cfg.repair.get("lessons_file", "skills/lessons.md"))
 
 
-def prepare_workspace(cfg, source: str, prompt_md: str, report_md: str, ctx: AuthorContext) -> Path:
+def prepare_workspace(cfg, source: str, prompt_md: str, report_md: str, ctx: AuthorContext,
+                      evidence: str = "v2") -> Path:
     ws = workspace_dir(cfg, ctx.run_id)
     (ws / "history").mkdir(parents=True, exist_ok=True)
     for name in ("AGENTS.md", "API.md"):
-        shutil.copy(TEMPLATE_DIR / name, ws / name)
+        shutil.copy(template_file(name, evidence), ws / name)
     (ws / "skill.py").write_text(source)
     (ws / "failure.md").write_text(localise_images(prompt_md, ws, ctx.round))
     (ws / "history" / f"round_{ctx.round}.md").write_text(localise_images(report_md, ws, ctx.round))

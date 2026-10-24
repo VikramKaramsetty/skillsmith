@@ -19,6 +19,7 @@ from skillsmith.repair import benchmark as bench
 from skillsmith.repair import droid_sdk as author_mod
 from skillsmith.repair.approvers import AutoApprover
 from skillsmith.repair.benchmark import CASES, OracleAuthor, run_benchmark, run_case, stack_source
+from skillsmith.repair.droid_tools import EVIDENCE_TOOLS
 from skillsmith.repair.loop import RepairLoop
 from skillsmith.skills.library import SkillLibrary
 from skillsmith.skills.runtime import run_skill
@@ -43,7 +44,7 @@ class Recording:
         self.make = make
         self.authors = []
 
-    def __call__(self, cfg, bus, make_check_env, case):
+    def __call__(self, cfg, bus, make_check_env, case, *, evidence="v2"):
         author = self.make(case)
         self.authors.append(author)
         return author
@@ -86,6 +87,7 @@ def test_oracle_benchmark_fixes_every_class_in_one_round_with_both_evidence_vers
     for cls in {c.cls for c in CASES}:
         assert f"`{cls}`" in table
     assert "| `COLLISION` | 2 |" in table and "invalid" not in table
+    assert bench.SEEDED_CAVEAT in table  # seeded labels are an oracle class: say so next to the numbers
     json.dumps(result.to_json())
 
 
@@ -146,6 +148,7 @@ def test_real_classifier_is_used_once_it_exists(monkeypatch):
     monkeypatch.setattr("skillsmith.analysis.analyse_attempt", classifier)
     res = run_case(BY_NAME["grip_above_top"], "v2", Recording(lambda c: OracleAuthor(c.fix)), cfg)
     assert res.labels == "classifier" and res.observed_cls == "UNKNOWN" and res.fixed
+    assert bench.SEEDED_CAVEAT not in bench.BenchmarkResult("oracle", 1, [res]).table()
     import skillsmith.analysis as analysis
     assert analysis.analyse_attempt is classifier  # the benchmark put it back
 
@@ -178,3 +181,72 @@ def test_unknown_evidence_version_is_refused():
     with pytest.raises(ValueError, match="evidence"):
         RepairLoop(cfg, Env("fake", w, w, w), lambda s: make_env("fake", cfg, s), SkillLibrary(temp_library()),
                    OracleAuthor(""), AutoApprover("fake"), NullBus(), evidence="v3")
+
+
+# ---- #157: no slot-revealing hints; v1 gets the v1 rules and no evidence tools -------------------
+SLOT_WORDS = ["grip height", "grip z", "grip_z", "travel height", "travel z", "travel_z", "place x", "place y",
+              "place_xy", "place z", "place_z", "place height", "grasp call", "lookup", "require", "label"]
+
+
+def test_seeded_hints_never_name_a_template_slot():
+    assert not hasattr(CASES[0], "hint")  # the old per-case hint named the bugged slot
+    assert set(bench._CORRECT) <= {w.replace(" ", "_") for w in SLOT_WORDS} | {"grasp", "lookup"}
+    for hint in bench.CLASS_HINTS.values():
+        assert not [w for w in SLOT_WORDS if w in hint.lower()], hint
+    for case in CASES:
+        factory = Recording(lambda c: OracleAuthor(c.fix))
+        assert run_case(case, "v2", factory, cfg).fixed
+        report = factory.authors[0].reports[0]
+        (look,) = [line for line in report.splitlines() if line.startswith("**Look at:**")]
+        assert look == f"**Look at:** {bench.CLASS_HINTS[case.cls]}", case.name
+        assert not [w for w in SLOT_WORDS if w in look.lower()], (case.name, look)
+
+
+V2_MARKERS = ["Failure class", "## Phases", "phase table", "expected vs", "key frames", "get_frame",
+              "get_object_track", "compare_with_success", "value-only change", "frames/"]
+
+
+def test_v1_droid_gets_the_v1_rules_and_no_evidence_tools(monkeypatch, tmp_path):
+    droid = fake.install(monkeypatch)
+    monkeypatch.setattr(author_mod.shutil, "which", lambda name: f"/opt/bin/{name}")
+    case = BY_NAME["rim_grip"]
+    droid.turns = [fake.Turn(skill=case.fix, output=fake.output(change_type="parameter"))]
+    res = run_case(case, "v1", bench.droid_author, cfg, runs_dir=tmp_path)
+    assert res.fixed and res.error is None
+    (session,) = droid.sessions
+    prompt = session.prompts[0][0]
+    append = session.config.system_prompt["append"]
+    (server,) = session.config.mcp_servers
+    tools = [t.name for t in server.tools]
+    for marker in V2_MARKERS:
+        assert marker not in prompt, marker
+        assert marker not in append, marker
+    assert "SLIP_IN_CARRY" not in prompt and "## Trace" in prompt
+    assert "# AGENTS.md" in append and "# API.md" in append and "trace table" in append
+    assert not set(tools) & set(EVIDENCE_TOOLS) and "simulate_skill" in tools
+    assert not [t for t in session.config.restrict_tools if t.split("___")[-1] in EVIDENCE_TOOLS]
+
+
+def test_v2_droid_keeps_the_v2_rules_and_evidence_tools(monkeypatch, tmp_path):
+    droid = fake.install(monkeypatch)
+    monkeypatch.setattr(author_mod.shutil, "which", lambda name: f"/opt/bin/{name}")
+    case = BY_NAME["rim_grip"]
+    droid.turns = [fake.Turn(skill=case.fix, output=fake.output(change_type="parameter"))]
+    assert run_case(case, "v2", bench.droid_author, cfg, runs_dir=tmp_path).fixed
+    (session,) = droid.sessions
+    append = session.config.system_prompt["append"]
+    assert append.startswith(author_mod.SYSTEM_APPEND) and "compare_with_success(phase)" in append
+    (server,) = session.config.mcp_servers
+    assert set(EVIDENCE_TOOLS) <= {t.name for t in server.tools}
+
+
+def test_v1_rules_differ_from_v2_only_in_the_evidence_steps():
+    from skillsmith.repair.workspace import TEMPLATE_DIR
+
+    v1, v2 = ((TEMPLATE_DIR / n).read_text() for n in ("AGENTS_v1.md", "AGENTS.md"))
+    tail = "## No magic offsets"
+    assert v1[v1.index(tail):] == v2[v2.index(tail):]  # everything below the job steps stays in sync
+    assert author_mod.EVIDENCE_TOOLS_HINT in author_mod.SYSTEM_APPEND
+    assert author_mod.EVIDENCE_TOOLS_HINT not in author_mod.system_text("v1")
+    with pytest.raises(ValueError, match="evidence"):
+        author_mod.DroidSDKAuthor(cfg, NullBus(), lambda s: None, evidence="v3")
