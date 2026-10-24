@@ -43,6 +43,9 @@ SCENES = [
     # a stack ~17 cm off-centre: ~4 cm of table-plane parallax on the top cup (docs/DECISIONS.md D7)
     ("stacked_far.jpg", [obj("red", CUP, 0.29, -0.09), obj("blue", CUP, 0.29, -0.09, z=0.08),
                          obj("green", BLOCK, 0.15, 0.06)]),
+    # the moment before stacked_far: the red cup alone where the stack will be (tracking learns the support)
+    ("stacked_far_before.jpg", [obj("red", CUP, 0.29, -0.09), obj("blue", CUP, 0.13, 0.13),
+                                obj("green", BLOCK, 0.15, 0.06)]),
 ]
 
 
