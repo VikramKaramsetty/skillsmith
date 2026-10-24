@@ -11,8 +11,10 @@ repairs it with evidence v2 (the product) or v1 (the pre-v2 report: raw error, t
 - **seconds-to-fix:** first `repair.started` → `run.finished ok=True`, from event timestamps.
 
 Labels come from `skillsmith.analysis.analyse_attempt`. Until WS4.5 lands it raises
-NotImplementedError and the case's seeded class stands in (`labels: seeded` in the results),
-so the benchmark measures the repair, not the classifier.
+NotImplementedError and the case's seeded class stands in (`labels: seeded` in the results, plus
+a caveat line), so the benchmark measures the repair, not the classifier. Seeded labels carry
+only a generic per-class hint (`CLASS_HINTS`), never the bugged slot. In v1 Droid also gets the
+v1 rules and no evidence tools.
 
     python -m skillsmith.repair.benchmark --author droid            # real Droid via the SDK
     python -m skillsmith.repair.benchmark --author oracle           # plumbing check, no Droid
@@ -94,8 +96,7 @@ class SeededBug:
     name: str
     cls: str     # the class a correct classifier gives it (a key of FAILURE_CLASSES)
     phase: str
-    hint: str
-    bug: Dict[str, str]
+    bug: Dict[str, str]  # template slot -> buggy code; never shown to the author
     task: str = TASK
 
     @property
@@ -109,23 +110,32 @@ class SeededBug:
 
 
 CASES: List[SeededBug] = [
-    SeededBug("rim_grip", "SLIP_IN_CARRY", "carry", "grip height",
-              {"grip_z": "a.top - 0.01  # grab near the rim"}),
-    SeededBug("grip_above_top", "GRASP_MISS", "grasp", "grip height",
-              {"grip_z": "a.top + 0.02"}),
-    SeededBug("never_grasps", "NO_PICK", "grasp", "grasp call",
-              {"grasp": "robot.note(\"gripper ready\")"}),
-    SeededBug("low_travel", "COLLISION", "carry", "travel height",
-              {"travel_z": "0.09"}),
-    SeededBug("place_ignores_height", "COLLISION", "place", "place z",
-              {"place_z": "b.z + (grip_z - a.z)"}),
-    SeededBug("place_wrong_axis", "PLACE_OFF_TARGET", "place", "place x, y",
-              {"place_xy": "b.x, a.y"}),
-    SeededBug("travel_above_workspace", "UNSAFE_TARGET", "approach", "travel height",
-              {"travel_z": "0.30"}),
-    SeededBug("label_typo", "SKILL_ERROR", "approach", "object lookup",
-              {"lookup": "a = scene.require(top.label)"}),
+    SeededBug("rim_grip", "SLIP_IN_CARRY", "carry", {"grip_z": "a.top - 0.01  # grab near the rim"}),
+    SeededBug("grip_above_top", "GRASP_MISS", "grasp", {"grip_z": "a.top + 0.02"}),
+    SeededBug("never_grasps", "NO_PICK", "grasp", {"grasp": "robot.note(\"gripper ready\")"}),
+    SeededBug("low_travel", "COLLISION", "carry", {"travel_z": "0.09"}),
+    SeededBug("place_ignores_height", "COLLISION", "place", {"place_z": "b.z + (grip_z - a.z)"}),
+    SeededBug("place_wrong_axis", "PLACE_OFF_TARGET", "place", {"place_xy": "b.x, a.y"}),
+    SeededBug("travel_above_workspace", "UNSAFE_TARGET", "approach", {"travel_z": "0.30"}),
+    SeededBug("label_typo", "SKILL_ERROR", "approach", {"lookup": "a = scene.require(top.label)"}),
 ]
+
+# What a classifier can say knowing only the class: where to look in the EVIDENCE, never which part
+# of the code is wrong. Seeded labels use these, so v2 is not handed the bugged slot (#157).
+CLASS_HINTS: Dict[str, str] = {
+    "KNOCKED_ON_APPROACH": "the approach phase: which object moved before the grasp",
+    "GRASP_MISS": "the grasp phase: where the tip was, against the object, when the gripper closed",
+    "SLIP_IN_CARRY": "the object track: when the held object left the gripper",
+    "COLLISION": "the trace: the tip path against the other objects and the table",
+    "NO_PICK": "the trace and object track: whether the object was ever held",
+    "PLACE_OFF_TARGET": "expected vs actual: where the object ended against where the check wanted it",
+    "PLACE_WRONG_HEIGHT": "expected vs actual: the object's final height against the check",
+    "DROPPED_FROM_HEIGHT": "the release phase: how far above its support the object was let go",
+    "UNSAFE_TARGET": "the refused call: its target against the workspace limits",
+    "SKILL_ERROR": "the error message and the failing call",
+}
+SEEDED_CAVEAT = ("**caveat:** labels are seeded (the classifier is a stub), so v2 gets each case's true class "
+                 "and a generic per-class hint; v1 vs v2 measures an oracle class label, not the classifier.")
 
 
 @dataclass
@@ -185,6 +195,8 @@ class BenchmarkResult:
             rows.append("| " + " | ".join(cells) + " |")
         labels = sorted({c.labels for c in self.cases})
         notes = [f"author: `{self.author}` · max_rounds {self.max_rounds} · labels: {', '.join(labels)}"]
+        if "seeded" in labels:
+            notes.append(SEEDED_CAVEAT)
         invalid = sorted({c.case for c in self.cases if not c.seeded_failed})
         if invalid:
             notes.append(f"**seed did not fail (invalid):** {', '.join(invalid)}")
@@ -210,7 +222,7 @@ def _fmt(metric: str, value) -> str:
 
 
 # ---- authors --------------------------------------------------------------------------------
-AuthorFactory = Callable[[Config, EventBus, Callable, SeededBug], SkillAuthor]
+AuthorFactory = Callable[..., SkillAuthor]  # (cfg, bus, make_check_env, case, *, evidence) -> author
 
 
 class SeededAuthor:
@@ -246,14 +258,15 @@ class OracleAuthor:
         return self.fix
 
 
-def oracle_author(cfg, bus, make_check_env, case: SeededBug) -> SkillAuthor:
+def oracle_author(cfg, bus, make_check_env, case: SeededBug, *, evidence: str = "v2") -> SkillAuthor:
     return OracleAuthor(case.fix)
 
 
-def droid_author(cfg, bus, make_check_env, case: SeededBug) -> SkillAuthor:
+def droid_author(cfg, bus, make_check_env, case: SeededBug, *, evidence: str = "v2") -> SkillAuthor:
+    """v1 gets the v1 rules (droid_template/AGENTS_v1.md) and no evidence tools."""
     from skillsmith.repair.droid_sdk import DroidSDKAuthor
 
-    return DroidSDKAuthor(cfg, bus, make_check_env)
+    return DroidSDKAuthor(cfg, bus, make_check_env, evidence=evidence)
 
 
 AUTHORS: Dict[str, AuthorFactory] = {"oracle": oracle_author, "droid": droid_author}
@@ -287,7 +300,7 @@ def seeded_label(case: SeededBug, attempt: AttemptResult) -> Classification:
     failed = [c.index for c in attempt.trace if not c.ok]
     call = failed[0] if failed else (attempt.trace[-1].index if attempt.trace else None)
     return Classification(case.cls, FAILURE_CLASSES[case.cls], case.phase, call,
-                          unlabelled_reason(attempt), hint=case.hint)
+                          unlabelled_reason(attempt), hint=CLASS_HINTS.get(case.cls, ""))
 
 
 # ---- running --------------------------------------------------------------------------------
@@ -304,7 +317,7 @@ def run_case(case: SeededBug, evidence: str, author_factory: AuthorFactory, cfg:
     def make_check_env(scene):
         return make_env("fake", cfg, scene)
 
-    author = author_factory(cfg, bus, make_check_env, case)
+    author = author_factory(cfg, bus, make_check_env, case, evidence=evidence)
     loop = RepairLoop(cfg, Env("fake", world, world, world), make_check_env,
                       SkillLibrary(_temp_library()), SeededAuthor(author, case.source),
                       AutoApprover("fake"), bus, evidence=evidence)

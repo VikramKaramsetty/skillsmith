@@ -42,7 +42,7 @@ from skillsmith.repair.droid_tools import (
 )
 from skillsmith.repair.protocols import AuthorContext
 from skillsmith.repair.report import draft_brief, evidence_images
-from skillsmith.repair.workspace import lessons_path, prepare_workspace, workspace_dir
+from skillsmith.repair.workspace import AGENTS_FILES, lessons_path, prepare_workspace, template_file, workspace_dir
 from skillsmith.types import Scene, TaskSpec
 
 SYSTEM_APPEND = (
@@ -60,6 +60,7 @@ SYSTEM_APPEND = (
     "Put the COMPLETE new skill.py in `skill_source`: that is how your fix is applied (the "
     "orchestrator saves it and re-runs every check). The rules and the skill API follow."
 )
+EVIDENCE_TOOLS_HINT = ", and get_frame / get_object_track / compare_with_success when the evidence is not enough"
 
 PROMPT_HEADER = """\
 The evidence is below; AGENTS.md and API.md are in your instructions. Read skill.py and LESSONS.md
@@ -72,8 +73,12 @@ with read_file if you need them, then reply with the JSON result. Put the COMPLE
 
 
 class DroidSDKAuthor:
-    def __init__(self, cfg, bus: EventBus, make_check_env: Callable[[Scene], object]):
+    def __init__(self, cfg, bus: EventBus, make_check_env: Callable[[Scene], object], evidence: str = "v2"):
+        """`evidence="v1"` (the WS5.6 benchmark baseline): the v1 rules and no evidence tools."""
+        if evidence not in AGENTS_FILES:
+            raise ValueError(f"evidence must be one of {sorted(AGENTS_FILES)}, got {evidence!r}")
         self.cfg = cfg
+        self.evidence = evidence
         self.bus = bus
         self.d = cfg.droid
         self.make_check_env = make_check_env
@@ -102,11 +107,11 @@ class DroidSDKAuthor:
 
     # ---- one round -----------------------------------------------------------------------
     def _round(self, task: TaskSpec, source: str, report_md: str, ctx: AuthorContext) -> str:
-        ws = prepare_workspace(self.cfg, source, PROMPT_HEADER + report_md, report_md, ctx)
+        ws = prepare_workspace(self.cfg, source, PROMPT_HEADER + report_md, report_md, ctx, self.evidence)
         tools = self._tools.get(ctx.run_id)
         if tools is None:
             tools = RepairTools(self.cfg, self.bus, ws, task, ctx.library, self.make_check_env,
-                                sim_budget=self.d.get("sim_tool_budget", 3))
+                                sim_budget=self.d.get("sim_tool_budget", 3), evidence_tools=self.evidence == "v2")
             self._tools[ctx.run_id] = tools
         tools.update(ctx.scene, ctx.round, ctx.library,  # RepairContext fields, if the loop sent them
                      attempt=getattr(ctx, "attempt", None), expected=getattr(ctx, "expected", None))
@@ -218,7 +223,7 @@ class DroidSDKAuthor:
             mcp_servers=[server],
             disabled_tools=list(self.d.disabled_tools or []) or None,
             restrict_tools=self.allowlist(tools),
-            system_prompt={"type": "preset", "preset": "droid", "append": _system_append()},
+            system_prompt={"type": "preset", "preset": "droid", "append": _system_append(self.evidence)},
         )
 
     def allowlist(self, tools: RepairTools) -> list:
@@ -285,12 +290,15 @@ def _media_type(path: str) -> str:
     return "image/png" if path.lower().endswith(".png") else "image/jpeg"
 
 
-def _system_append() -> str:
-    """Our instructions plus the full rules and skill API, so Droid needs no file tools to start."""
-    from skillsmith.repair.workspace import TEMPLATE_DIR
+def system_text(evidence: str = "v2") -> str:
+    """SYSTEM_APPEND for this evidence version: v1 does not mention the evidence tools."""
+    return SYSTEM_APPEND if evidence == "v2" else SYSTEM_APPEND.replace(EVIDENCE_TOOLS_HINT, "")
 
-    docs = "\n\n".join(f"# {name}\n\n{(TEMPLATE_DIR / name).read_text()}" for name in ("AGENTS.md", "API.md"))
-    return f"{SYSTEM_APPEND}\n\n{docs}"
+
+def _system_append(evidence: str = "v2") -> str:
+    """Our instructions plus the full rules and skill API, so Droid needs no file tools to start."""
+    docs = "\n\n".join(f"# {name}\n\n{template_file(name, evidence).read_text()}" for name in ("AGENTS.md", "API.md"))
+    return f"{system_text(evidence)}\n\n{docs}"
 
 
 def _succeeded(result) -> bool:
