@@ -24,6 +24,7 @@ criteria and the decision rule. It wins over every other doc.
 | A workstream agent | `AGENTS.md`, `docs/ARCHITECTURE.md`, `docs/INTERFACES.md`, your `docs/workstreams/*.md` |
 | The lead | `docs/WORKFLOW.md` (shared queue, CI, contract changes) |
 | Touching hardware | `docs/RUNBOOK_GX10.md`, `docs/SAFETY.md` |
+| Wanting proof it works | `docs/RESULTS.md` (measured with real Droid: benchmark, demo repair, sandbox check) |
 | Asking "why X?" | `docs/DECISIONS.md` (decisions, hard truths, sources) |
 
 ## Quick start (no hardware)
