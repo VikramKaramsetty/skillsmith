@@ -12,6 +12,12 @@ A run summary:
 - `saved`: the version written to the library (a draft or a repaired skill), else None.
 - `reused`: the plan came from the library (`plan.selected.source == "library"`).
 - `lessons`: `droid.lesson` texts (appended to skills/lessons.md).
+- `env` (WS6.9): where the skill ran for real, the env of the latest attempt that was not a sim
+  gate (an attempt between a static `gate.result` and the sim one is the gate's check run).
+- `author` (WS6.9): who wrote code this run: `droid.started.via` ("droid-sdk"), "droid-cli" for the
+  CLI fallback (its `droid.started` has no `via`), "scripted" when a skill changed (`skill.diff`)
+  with no Droid session (ScriptedAuthor emits nothing), None when nothing was written (reuse).
+  So a fake or scripted run never reads as a real-arm Droid fix.
 """
 
 from __future__ import annotations
@@ -30,10 +36,16 @@ def _failed(e: dict) -> bool:
             or (kind == "approval.decided" and d.get("approved") is False))
 
 
+def _author(d: dict) -> str:
+    """The author tag of a `droid.started`."""
+    return "droid-sdk" if d.get("via") == "droid-sdk" else "droid-cli"
+
+
 def run_summary(events: Iterable[dict]) -> Optional[dict]:
     """Summary of one run, or None if the events hold no `run.started`."""
     s: Optional[dict] = None
     failed_at = None
+    in_gate = False  # between a passed static gate and the sim gate: attempts are check runs
     for e in events:
         d = e.get("data") or {}
         kind = e.get("type")
@@ -41,8 +53,8 @@ def run_summary(events: Iterable[dict]) -> Optional[dict]:
             task = d.get("task") or {}
             s = {"run_id": e.get("run_id"), "t": e.get("t"), "task": task.get("text"), "skill": task.get("skill"),
                  "source": None, "ok": None, "rounds": 0, "failure": None, "seconds_to_fix": None,
-                 "droid_s": 0.0, "saved": None, "reused": False, "lessons": []}
-            failed_at = None
+                 "droid_s": 0.0, "saved": None, "reused": False, "lessons": [], "env": None, "author": None}
+            failed_at, in_gate = None, False
             continue
         if s is None:
             continue
@@ -54,6 +66,14 @@ def run_summary(events: Iterable[dict]) -> Optional[dict]:
             s["rounds"] = max(s["rounds"], int(d.get("round") or 0))
         elif kind == "attempt.classified" and s["failure"] is None:
             s["failure"] = d.get("cls")
+        elif kind == "attempt.started" and not in_gate:
+            s["env"] = d.get("env")
+        elif kind == "gate.result":
+            in_gate = d.get("gate") == "static" and bool(d.get("ok"))
+        elif kind == "droid.started":
+            s["author"] = _author(d)
+        elif kind == "skill.diff" and s["author"] is None:
+            s["author"] = "scripted"
         elif kind == "droid.result":
             s["droid_s"] += float(d.get("duration") or 0.0)
         elif kind == "droid.lesson" and d.get("lesson"):
