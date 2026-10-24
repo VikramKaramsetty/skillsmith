@@ -125,3 +125,27 @@ def test_sdk_config_and_permission_handler(tmp_path):
     assert bad.responses[0][0] == sdk.ToolConfirmationOutcome.CANCEL and "Refused" in bad.responses[0][1]
     assert [e["data"]["allowed"] for e in bus.events if e["type"] == "droid.permission"] == [True, False]
     author.close()
+
+
+def test_read_file_stays_inside_workspace(tmp_path):
+    t = tools_for(tmp_path, demo_sources()[1])
+    (tmp_path / "AGENTS.md").write_text("rules")
+    assert t.read_file("AGENTS.md") == "rules"
+    assert "def run" in t.read_file("skill.py")
+    assert t.read_file("../secret.txt").startswith("Refused")
+    assert t.read_file("/etc/passwd").startswith("Refused")
+    assert t.read_file("missing.md").startswith("No file")
+
+
+def test_write_skill_is_the_write_path_and_validates(tmp_path):
+    t = tools_for(tmp_path, "placeholder")
+    _, v2 = demo_sources()
+    assert "PASS" in t.write_skill(v2)
+    assert (tmp_path / "skill.py").read_text() == v2
+    bad = t.write_skill("import os\n" + v2)
+    assert "FAIL" in bad and "imports are not allowed" in bad
+
+
+def test_new_tools_are_exposed_to_droid(tmp_path):
+    names = [name for name, _, _ in tools_for(tmp_path, demo_sources()[1]).functions()]
+    assert names[:2] == ["read_file", "write_skill"]
