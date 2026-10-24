@@ -34,17 +34,21 @@ Sim Env (WS2.4):
 - `move_joints` drives the position actuators along a straight joint-space line at `speed_dps`, then
   waits up to SETTLE_S for the joints to land within SETTLE_DEG, else raises SkillError.
 - Grasping: closing the gripper with both jaws touching one object attaches it to the gripper
-  (pinned at its grasp pose every physics step; same idea as a weld). Opening detaches it and lets
+  (pinned at its grasp point every physics step; same idea as a weld). Opening detaches it and lets
   it fall onto its support. So the sim checks geometry, reach and collisions, never friction or slip.
+  A held object keeps its grasp-time orientation, like the fake world: above z ~ 0.08 the IK has to
+  tilt the gripper (wrist_flex limit, see kinematics.py), and that tilt is NOT passed on to the
+  object. A rim grip placed at 0.155 m tilts the gripper ~30 deg, and a rigid real grasp would tilt
+  the cup with it.
 - Allowed contacts: object↔table, object↔object (stacks, neighbours), jaws↔held object, jaws↔an
   object while the gripper is closing on it or right after releasing it (until they first separate),
   and the held object resting on the table or another object with less than PLACE_TOL penetration
   (the fake world's 5 mm). Every other contact stops the arm, is appended to `safety_issues()` as a
   COLLISION SafetyIssue with names and heights, and raises CollisionError. Issues accumulate until
   `reset_scene()`.
-- The kinematic tip (URDF gripper_frame_link) is the FIXED jaw's tip, about 2 cm from the centre
-  between the jaws (MJCF site "gripperframe"). The sim keeps that geometry honest: a skill that puts
-  the tip on an object's centre drives the fixed jaw into it and gets a CollisionError.
+- The kinematic tip is the grasp point, kinematics.TIP_OFFSET past the fixed jaw (the URDF's
+  gripper_frame_link is the fixed jaw's tip). The sim models the jaws as they are, so a skill that
+  lands the fixed jaw on an object gets a CollisionError.
 - `snapshot()` returns None and there is no `last_video_path` until WS2.5 renders frames and video
   (the runtime reads it with getattr, and QA's video test skips while it is absent).
 """
@@ -277,7 +281,7 @@ class SimArm:
         self._held: Optional[str] = None
         self._released: Optional[str] = None
         self._gripping = False
-        self._grip_pose: Tuple[object, object] = (None, None)  # held object's pos, quat in the gripper frame
+        self._grip_pose: Tuple[object, object] = (None, None)  # held: pos in the gripper frame, world quat
         self._issues: List[SafetyIssue] = []
 
     # ---- Perception ---------------------------------------------------------------------------
@@ -330,25 +334,22 @@ class SimArm:
         import numpy as np
 
         mj, d = self._mj, self.data
-        gq, oq = d.body(JAW_BODIES[0]).xquat, d.body(oid).xquat
-        inv, rel_q, rel_p = np.zeros(4), np.zeros(4), np.zeros(3)
-        mj.mju_negQuat(inv, gq)
-        mj.mju_mulQuat(rel_q, inv, oq)
+        inv, rel_p = np.zeros(4), np.zeros(3)
+        mj.mju_negQuat(inv, d.body(JAW_BODIES[0]).xquat)
         mj.mju_rotVecQuat(rel_p, d.body(oid).xpos - d.body(JAW_BODIES[0]).xpos, inv)
-        self._grip_pose = (rel_p, rel_q)
+        self._grip_pose = (rel_p, d.body(oid).xquat.copy())
         self._held, self._released = oid, None
         d.ctrl[self._grip_act] = d.qpos[self._grip_q]  # hold the jaws where they stalled, no squeeze
 
     def _pin(self, oid: str) -> None:
-        """Move the held object rigidly with the gripper body (its grasp-time relative pose)."""
+        """Carry the held object at its grasp point on the gripper, keeping its grasp-time orientation."""
         import numpy as np
 
         mj, d, m = self._mj, self.data, self.model
-        rel_p, rel_q = self._grip_pose
+        rel_p, quat = self._grip_pose
         gpos, gq = d.body(JAW_BODIES[0]).xpos, d.body(JAW_BODIES[0]).xquat
-        pos, quat = np.zeros(3), np.zeros(4)
+        pos = np.zeros(3)
         mj.mju_rotVecQuat(pos, rel_p, gq)
-        mj.mju_mulQuat(quat, gq, rel_q)
         jnt = int(m.body(oid).jntadr[0])
         qa, da = int(m.jnt_qposadr[jnt]), int(m.jnt_dofadr[jnt])
         d.qpos[qa:qa + 3] = gpos + pos

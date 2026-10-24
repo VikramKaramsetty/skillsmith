@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from pathlib import Path
 
 import pytest
 
@@ -10,8 +11,9 @@ from skillsmith.config import load_config
 from skillsmith.events import EventBus
 from skillsmith.hal.base import make_env
 from skillsmith.hal.fake import FakeWorld
+from skillsmith.kinematics import TIP_OFFSET
 from skillsmith.skills.runtime import run_skill
-from skillsmith.types import CollisionError, SkillError
+from skillsmith.types import CollisionError, Scene, SkillError
 
 pytest.importorskip("mujoco")
 pytest.importorskip("placo")
@@ -20,26 +22,26 @@ CFG = load_config()
 pytestmark = pytest.mark.skipif(not CFG.path(CFG.robot.mjcf).is_file(), reason="SO101 MJCF not vendored (WS2.1)")
 
 STEP = 0.02  # m; vertical moves in steps, like Robot._waypoints
+REPO = Path(__file__).resolve().parents[2]
 
-# A pick-and-place whose grasp point is shifted by (dx, dy) so the object sits between the jaws
-# (the kinematic tip is the fixed jaw's tip, see hal/sim.py). The fake world uses dx = dy = 0.
+# pick_place with the place height as a parameter, so the same skill runs on fake and sim.
 PLACE_SKILL = '''
 SKILL = {"name": "place_test", "params": {"obj": "str", "x": "float", "y": "float", "place_z": "float"}}
 
 
-def run(robot, scene, skills, obj, x, y, place_z, dx=0.0, dy=0.0):
+def run(robot, scene, skills, obj, x, y, place_z):
     o = scene.require(obj)
     grip = o.height * 0.5
     robot.release()
-    robot.move_to(o.x + dx, o.y + dy, 0.12)
-    robot.move_to(o.x + dx, o.y + dy, o.z + grip)
+    robot.move_to(o.x, o.y, 0.12)
+    robot.move_to(o.x, o.y, o.z + grip)
     if not robot.grasp():
         raise SkillError("grasp missed")
-    robot.move_to(o.x + dx, o.y + dy, 0.15)
-    robot.move_to(x + dx, y + dy, 0.15)
-    robot.move_to(x + dx, y + dy, place_z + grip + 0.005)
+    robot.move_to(o.x, o.y, 0.15)
+    robot.move_to(x, y, 0.15)
+    robot.move_to(x, y, place_z + grip + 0.005)
     robot.release()
-    robot.move_to(x + dx, y + dy, 0.15)
+    robot.move_to(x, y, 0.15)
 '''
 
 
@@ -77,19 +79,9 @@ def _go(env, xyz):
         _tip(env, (xyz[0], xyz[1], z0 + (xyz[2] - z0) * k / n))
 
 
-def _jaw_offset(env):
-    """(dx, dy) from the kinematic tip to the centre between the jaws, robot frame, at the current pose."""
-    centre = env.arm.world.to_robot(tuple(float(v) for v in env.arm.data.site("gripperframe").xpos))
-    tip = env.kin.fk(env.arm.joints())
-    return centre[0] - tip[0], centre[1] - tip[1]
-
-
-def _over(env, obj, z):
-    """Hover with the jaw centre (not the fixed jaw) over obj at tip height z."""
-    _tip(env, (obj.x, obj.y, z))
-    dx, dy = _jaw_offset(env)
-    _tip(env, (obj.x - dx, obj.y - dy, z))
-    return obj.x - dx, obj.y - dy
+def _run(e, source: str, skill: str, params: dict, success=None):
+    library = {"pick_place": (REPO / "skills/library/pick_place.py").read_text()}
+    return run_skill(source, e, params, CFG, _Bus(), skill=skill, library=library, success=success)
 
 
 def test_env_starts_at_home_with_the_scene():
@@ -107,19 +99,39 @@ def test_env_starts_at_home_with_the_scene():
     assert env.perception.snapshot("x.png") is None  # frames and video arrive with WS2.5
 
 
-def test_free_moves_reach_their_targets_without_issues(env):
-    for p in ((0.20, 0.0, 0.15), (0.30, 0.0, 0.15), (0.30, 0.0, 0.03), (0.30, 0.0, 0.15)):
-        _go(env, p)
-        assert env.kin.fk(env.arm.joints()) == pytest.approx(p, abs=0.004)
-    env.arm.set_gripper(0)
-    env.arm.set_gripper(100)
-    assert env.arm.safety_issues() == [] and not env.arm.gripper_holding()
+def test_kinematic_tip_is_the_grasp_point_between_the_jaws(env):
+    """The tip sits TIP_OFFSET from the fixed jaw toward the moving jaw, not on the fixed jaw."""
+    _go(env, (0.20, 0.0, 0.05))
+    d, m = env.arm.data, env.arm.model
+    tip = env.arm.world.to_world(env.kin.fk(env.arm.joints()))
+    gripper = d.body("gripper")
+    local = gripper.xmat.reshape(3, 3).T @ (tip - gripper.xpos)
+    fixed_jaw = m.geom("fixed_jaw_sph_tip1").pos
+    assert local[0] - fixed_jaw[0] == pytest.approx(TIP_OFFSET, abs=0.002)
 
 
-def test_tip_on_object_centre_drives_the_fixed_jaw_into_it(env):
-    block = env.perception.observe().require("green block")
+@pytest.fixture(scope="module")
+def empty():
+    """No objects: free motion and table contact only."""
+    e = make_env("sim", CFG, Scene(objects=(), t=0.0, source="fake"))
+    yield e
+    e.close()
+
+
+def test_free_moves_reach_their_targets_without_issues(empty):
+    empty.arm.reset_scene()
+    for p in ((0.20, 0.0, 0.15), (0.30, 0.0, 0.15), (0.30, 0.0, 0.03), (0.15, -0.12, 0.03), (0.20, 0.10, 0.10)):
+        _go(empty, p)
+        assert empty.kin.fk(empty.arm.joints()) == pytest.approx(p, abs=0.004)
+    empty.arm.set_gripper(0)
+    empty.arm.set_gripper(100)
+    assert empty.arm.safety_issues() == [] and not empty.arm.gripper_holding()
+
+
+def test_fixed_jaw_landing_on_a_block_raises(env):
+    block = env.perception.observe().require("green block")  # at y = 0, so the jaws open along x
     with pytest.raises(CollisionError, match="green block") as err:
-        _go(env, (block.x, block.y, block.z + block.height / 2))
+        _go(env, (block.x + TIP_OFFSET, block.y, block.z + block.height / 2))
     assert "z=" in str(err.value) and "spans z=0.000..0.030" in str(err.value)
     issues = env.arm.safety_issues()
     assert [i.code for i in issues] == ["COLLISION"] and "green block" in issues[0].message
@@ -135,13 +147,14 @@ def test_closed_gripper_pushed_into_a_cup_raises(env):
         _go(env, (cup.x, cup.y, cup.z + cup.height / 2))
 
 
-def test_pushing_into_the_table_raises(env):
-    _go(env, (0.28, -0.15, 0.02))
-    q = env.arm.joints()
+def test_pushing_into_the_table_raises(empty):
+    empty.arm.reset_scene()
+    _go(empty, (0.28, -0.15, 0.02))
+    q = empty.arm.joints()
     q[1] += 15.0  # shoulder down, through the table top (the guard would refuse it; the sim must not allow it)
     with pytest.raises(CollisionError, match="the table"):
-        env.arm.move_joints(q, 30)
-    assert env.arm.safety_issues()[0].code == "COLLISION"
+        empty.arm.move_joints(q, 30)
+    assert empty.arm.safety_issues()[0].code == "COLLISION"
 
 
 def test_joint_target_past_a_limit_raises(env):
@@ -154,57 +167,43 @@ def test_joint_target_past_a_limit_raises(env):
 def test_grasp_carry_and_release_moves_the_object(env):
     block = env.perception.observe().require("green block")
     _go(env, (block.x, block.y, 0.10))
-    gx, gy = _over(env, block, 0.10)
-    _go(env, (gx, gy, block.z + block.height / 2))
+    _go(env, (block.x, block.y, block.z + block.height / 2))
     env.arm.set_gripper(0)
     assert env.arm.gripper_holding()
-    _go(env, (gx, gy, 0.12))
+    grasped = env.perception.observe().require("green block")  # the moving jaw pushes it to the fixed jaw
+    _go(env, (block.x, block.y, 0.12))
     lifted = env.perception.observe().require("green block")
     assert lifted.z == pytest.approx(0.12 - block.height / 2, abs=0.01)
+    assert lifted.xy_dist(grasped) < 0.003
     move = 0.16  # to x ~ 0.31: clear of both cups, including the wrist camera ~6 cm to the jaws' side
-    _go(env, (gx, gy, 0.16))
-    _go(env, (gx + move, gy, 0.16))
-    _go(env, (gx + move, gy, block.height / 2 + 0.005))
+    _go(env, (block.x, block.y, 0.16))
+    _go(env, (block.x + move, block.y, 0.16))
+    _go(env, (block.x + move, block.y, block.height / 2 + 0.005))
     env.arm.set_gripper(100)
     assert not env.arm.gripper_holding()
-    _go(env, (gx + move, gy, 0.16))
+    _go(env, (block.x + move, block.y, 0.16))
     placed = env.perception.observe().require("green block")
-    assert (placed.x, placed.y) == pytest.approx((block.x + move, block.y), abs=0.01)
+    assert (placed.x, placed.y) == pytest.approx((grasped.x + move, grasped.y), abs=0.01)
     assert placed.z == pytest.approx(0.0, abs=0.003)
     assert env.arm.safety_issues() == []
 
 
-def _offset_for(env, obj):
-    _go(env, (obj.x, obj.y, 0.10))
-    dx, dy = _jaw_offset(env)
-    env.arm.reset_scene()
-    return -dx, -dy
-
-
-def _place(e, place_z: float, **offset):
-    bus = _Bus()
-    cup = e.perception.observe().require("red cup")
-    params = {"obj": "green block", "x": cup.x, "y": cup.y, "place_z": place_z, **offset}
-    result = run_skill(PLACE_SKILL, e, params, CFG, bus, skill="place_test",
-                       success={"op": "on_top", "args": ["green block", "red cup"]})
-    return result
-
-
-def test_block_stacks_on_cup_in_sim(env):
-    dx, dy = _offset_for(env, env.perception.observe().require("green block"))
-    result = _place(env, 0.082, dx=dx, dy=dy)
+@pytest.mark.parametrize("demo", ["stack_v1", "stack_v2"])
+def test_demo_stack_skills_succeed_in_sim(env, demo):
+    """Both demo versions pass in sim: the sim checks geometry and collisions, not the rim slip."""
+    source = (REPO / f"src/skillsmith/demo/{demo}.py").read_text()
+    result = _run(env, source, "stack", {"top": "blue cup", "bottom": "red cup"},
+                  {"op": "on_top", "args": ["blue cup", "red cup"]})
     assert result.ok, (result.error, result.verify, result.safety)
+    assert result.safety.issues == []
 
 
 @pytest.mark.parametrize("backend", ["fake", "sim"])
 def test_lowered_place_height_raises_collision_like_the_fake_world(env, backend):
     """Lowering the held block 2 cm into the cup top is a collision in both worlds."""
-    offset = {}
-    if backend == "sim":
-        dx, dy = _offset_for(env, env.perception.observe().require("green block"))
-        offset = {"dx": dx, "dy": dy}
     e = env if backend == "sim" else make_env("fake", CFG)
-    result = _place(e, 0.06, **offset)
+    cup = e.perception.observe().require("red cup")
+    result = _run(e, PLACE_SKILL, "place_test", {"obj": "green block", "x": cup.x, "y": cup.y, "place_z": 0.06})
     assert not result.ok and result.error.startswith("CollisionError"), result.error
     assert "red cup" in result.error
     assert any(i.code == "COLLISION" for i in result.safety.issues)
