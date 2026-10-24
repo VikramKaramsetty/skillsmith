@@ -40,6 +40,7 @@ from skillsmith.repair.droid_tools import (
     append_lesson,
     decide,
 )
+from skillsmith.repair.lessons import lesson_context
 from skillsmith.repair.protocols import AuthorContext
 from skillsmith.repair.report import draft_brief, evidence_images
 from skillsmith.repair.workspace import lessons_path, prepare_workspace, workspace_dir
@@ -135,7 +136,8 @@ class DroidSDKAuthor:
             message = f"Droid finished with '{getattr(result, 'subtype', '?')}' without changing skill.py"
             self.bus.emit("error", where="droid.round", round=ctx.round, message=message)
             raise RuntimeError(message)
-        if out.get("lesson") and append_lesson(lessons_path(self.cfg), task.text, out["lesson"]):
+        context = lesson_context(task, getattr(ctx, "attempt", None))  # class + phase, for later matching
+        if out.get("lesson") and append_lesson(lessons_path(self.cfg), context, out["lesson"]):
             self.bus.emit("droid.lesson", round=ctx.round, lesson=out["lesson"])
         return new
 
