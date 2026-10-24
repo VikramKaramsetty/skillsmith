@@ -16,6 +16,7 @@ judge task ─▶ try skill ─▶ camera verifies ─▶ FAIL ─▶ Droid edit
 
 | You are… | Read |
 |---|---|
+| Setting up a new computer | **`SETUP.md`** (10 minutes, then `scripts/agent-loop.sh all`) |
 | A human on the team | this file, then `docs/BUILD_PLAN.md`, `docs/DEMO.md` |
 | The lead agent | `docs/ORCHESTRATION.md` |
 | Running agents on another machine | `docs/MULTI_MACHINE.md` (`scripts/agent-loop.sh ws2`) |

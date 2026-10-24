@@ -9,13 +9,16 @@ written before any feature work, so five agents (and humans on other machines) c
 in parallel with no hardware, no MuJoCo, and no Droid account. `make demo-fake` runs the
 whole loop in under a second, which makes it the regression test for every merge.
 
-**One owner per file, one worktree per agent, lead-only merges.** Parallel agents fail
-when they edit the same files. Ownership is written into each workstream file; shared
-files belong to the lead. See `ORCHESTRATION.md`.
+**One owner per file, one worktree per agent, CI-enforced.** Parallel agents fail when
+they edit the same files. `.github/ownership.yml` maps each branch prefix to its paths
+and CI rejects PRs that stray; shared contracts change only on `lead/*` branches. See
+`ORCHESTRATION.md`.
 
-**GitHub PR pipeline across machines.** Agents on other laptops and accounts push
-branches and open PRs; CI runs `make check`; the lead merges in dependency order. See
-`docs/MULTI_MACHINE.md`.
+**GitHub as the hub: issue queue + self-merging PRs.** Every machine runs
+`scripts/agent-loop.sh all`. It claims the next free task (one in flight per workstream,
+races settled by comment order), codes in a worktree, and opens a PR. Green CI (`check`,
+`heavy`, `ownership`) triggers the `automerge` job. No human merge step except for
+contract changes. See `docs/MULTI_MACHINE.md`.
 
 **Hardware is a mutex held by a human.** Agents never move the real arm. They hand off
 "needs hardware test" items, and the arm operator runs them in a batch.
@@ -39,12 +42,13 @@ zero is mid-range per joint, which should match LeRobot's calibrated degrees. **
 signs at G3.** Menagerie's actuator gains differ from upstream, so tune for settling, not
 for realism.
 
-**IK:** LeRobot's [`RobotKinematics`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/model/kinematics.py)
-(a placo wrapper over Pinocchio): `inverse_kinematics(current_joint_pos, desired_ee_pose,
-position_weight=1.0, orientation_weight=0.01)`, joints in degrees, frame
-`gripper_frame_link`. It's already in the GX10's LeRobot venv, so there's no new
-dependency. **Do not** apply the hqfang pi05 joint convention (signs `[1,-1,1,1,1,1]`,
-offsets `[0,90,90,0,0,0]`); that is only for the VLA checkpoint.
+**IK: placo directly, the same way LeRobot does it.** LeRobot's
+[`RobotKinematics`](https://github.com/huggingface/lerobot/blob/main/src/lerobot/model/kinematics.py)
+is a thin placo wrapper (joints in degrees, frame `gripper_frame_link`, position weight
+1.0, small orientation weight). We call placo ourselves in `kinematics.py` so the sim, CI
+and every machine avoid LeRobot's torch dependency, and one class serves both sim and
+real. **Do not** apply the hqfang pi05 joint convention (signs `[1,-1,1,1,1,1]`, offsets
+`[0,90,90,0,0,0]`); that is only for the VLA checkpoint.
 
 **Table positions come from an ArUco homography.** Objects rest on the table plane, so
 pixel → (x, y) is a 3×3 homography from four markers at known robot-frame points. No
@@ -89,3 +93,48 @@ a screen recording. Record the fallback before you need it (gate G6).
 **Visualisation:** a custom FastAPI + SSE page, because it needs an Approve button and
 the narrative timeline. [Rerun](https://rerun.io) is a good optional debug viewer for
 engineers (camera + joint states + timeline scrubbing); pin its version if used.
+
+## Hard truths
+
+Things that will bite if we pretend otherwise. Each has a mitigation; none can be wished away.
+
+1. **URDF ↔ calibration mismatch is the #1 hardware risk.** If joint signs or zeros differ
+   between `so101_new_calib` and LeRobot's calibrated degrees, every IK target is wrong
+   and the arm drives somewhere unexpected. *Do G3 (WS2.7) in the first hours, at
+   `max_tcp_speed: 0.05`, hand on the power.*
+2. **The SO101 is a hobby arm.** Expect backlash and ~5–10 mm repeatability from
+   STS3215 servos. *Pick cup-sized tasks with ≥ 1 cm tolerance; never demo precision.*
+3. **The sim gate checks geometry, not grasping.** The weld-on-grasp trick means MuJoCo
+   cannot predict slips, tipping or squeezed cups. A skill can pass sim and fail on the
+   real arm. *That is why the camera verify exists, and that gap is the demo's story; say it plainly.*
+4. **Droid is slow on stage.** One repair round (prompt → edits → static → sim → safety)
+   is tens of seconds to a few minutes. *Narrate it with the dashboard's Droid panel,
+   measure latency in WS5, and pick the fastest model that still fixes the benchmark bugs.*
+5. **Droid's fix rate is unknown until WS5.3 measures it.** *Tune `droid_template/` and
+   the failure report against the seeded-bug benchmark. Never show `ScriptedAuthor` and
+   call it Droid; it exists for tests and rehearsal only.*
+6. **HSV detection depends on the lighting, and the venue's lighting is not ours.**
+   *Re-tune thresholds on site (WS3.4 tool), tape the camera down (moving it breaks the
+   homography), and use matte, saturated objects.*
+7. **`exec` with stripped builtins is not a sandbox.** It works here only because the
+   validator, the guard, sim, human approval and robotd don't depend on it. Say so if asked.
+8. **`demo-fake` proves plumbing, not robotics.** Its physics is a toy. Real confidence
+   starts at G2 (sim) and G5 (full loop on the real arm).
+9. **The network is hostile.** The GX10's public Wi-Fi drops, Tailscale adds 125–235 ms,
+   and Droid needs the internet. *USB-Ethernet for Mac↔GX10, Droid on the Mac as a
+   fallback, and a recorded `events.jsonl` + video for the worst case.*
+10. **The GX10 has crashed before** (NVIDIA "bad register read"). *Watch `dmesg`; keep
+    the sim and dashboard runnable on a laptop.*
+11. **One arm is a single point of failure.** A stripped gear or a cooked servo ends the
+    demo. *The leader arm has the same 6 STS3215 motors, so it is the spare-parts kit;
+    know how to swap one, and re-ID it, before you need to.*
+12. **Agents can write code that passes tests and is still wrong.** Ownership prevents
+    merge conflicts, not bad design, and cross-workstream bugs only show at QA and G5.
+    *Keep acceptance tests behavioural, check `make status` hourly, and integrate on real
+    hardware early, not at hour 20.*
+13. **Untested so far:** a full headless `claude -p` agent run through `agent-run.sh`,
+    Droid on the GX10 (aarch64), and every hardware step. *The first agent-loop run is
+    the test; watch it.*
+14. **Scope will not all fit.** The real MVP is one task (stack cups) with one live Droid
+    repair on the real arm. Vision model, calibration skill and pyramid are the cut list
+    (`BUILD_PLAN.md`), so cut early, not at midnight.
