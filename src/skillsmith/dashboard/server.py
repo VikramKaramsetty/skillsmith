@@ -17,6 +17,8 @@ annotated key frames the events point at (images inside the runs dir only).
 WS6.5 adds `GET /camera/{cam}` (robotd's MJPEG `/stream/{cam}` passed through, so the browser
 only talks to the dashboard and only robotd holds the camera; 503 if robotd isn't reachable)
 and `GET /video?path=` for the sim replay mp4 that `sim.video` points at (runs dir only).
+WS6.6 adds `GET /improvement`: one summary per recorded run (dashboard/improvement.py), so the
+improvement panel shows earlier runs; the page folds the live run itself.
 FastAPI is imported lazily so this module imports with core deps only.
 Replayed events carry `"replay": true` so the UI can label the fallback as a recording.
 No `from __future__ import annotations` here: FastAPI must resolve the locally imported `Request`.
@@ -287,6 +289,11 @@ def create_app(runs_dir: Path, hub: Optional[EventHub] = None,
     @app.get("/runs")
     def runs() -> list[dict]:
         return list_runs(app.state.runs_dir)
+
+    @app.get("/improvement")
+    def improvement() -> list[dict]:
+        from skillsmith.dashboard.improvement import improvement as summaries
+        return summaries(app.state.runs_dir)
 
     @app.get("/frame")
     def frame(path: str):
