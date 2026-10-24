@@ -28,12 +28,18 @@ def cup(color: str, x: float, y: float, confidence: float = 0.9) -> Det:
 class PassCamera:
     """pixel == robot-frame (x, y): positions are already in the robot frame."""
 
-    def __init__(self):
+    def __init__(self, drift: float = 0.0):
         self.planes: List[float] = []
+        self.drift = drift  # metres reported by marker_drift; tests move the camera by setting it
+        self.drift_checks = 0
 
     def pixel_to_table(self, u: float, v: float, z_plane: float) -> Tuple[float, float]:
         self.planes.append(z_plane)
         return (u, v)
+
+    def marker_drift(self, _frame) -> float:
+        self.drift_checks += 1
+        return self.drift
 
 
 class FakeFrames:
