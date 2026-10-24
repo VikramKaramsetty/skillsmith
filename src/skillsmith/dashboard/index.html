@@ -5,6 +5,8 @@
      table, Droid's tool calls and checks, every permission decision (refusals highlighted).
      WS6.6: the improvement panel ("Getting better"): rounds, seconds-to-fix, skills saved, reuse
      and lessons, over the recorded runs (GET /improvement) plus the live run folded here.
+     WS6.7: replay mode for the fallback: pick a recorded run, pause/resume, change speed mid-run
+     (the stream reopens at the next event with ?from=), restart, and an event counter.
      Renders ONLY from the SSE stream (docs/INTERFACES.md §7). Open /?replay=<run_id>&speed=2
      to replay a recorded run. The reducer in <script id="story-reducer"> is pure (no DOM) so
      tests/ws6 can run it under node. -->
@@ -18,6 +20,11 @@
   #mode { padding: 2px 10px; border-radius: 4px; background: #2a6; font-weight: 600; }
   #mode.replay { background: #c80; }
   #status { color: #999; }
+  #replay-bar { display: flex; gap: 6px; align-items: center; }
+  #replay-bar button, #replay-pick { font-size: 14px; padding: 3px 10px; border: 0; border-radius: 4px;
+                                     background: #333; color: #ddd; cursor: pointer; }
+  #replay-bar button.on { background: #c80; color: #111; font-weight: 700; }
+  #replay-pos { color: #ccc; font-variant-numeric: tabular-nums; font-size: 14px; }
   main { padding: 20px 28px; display: grid; gap: 24px; grid-template-columns: minmax(0, 1fr) minmax(360px, 40%);
          align-items: start; max-width: 1900px; }
   #story { display: grid; gap: 18px; min-width: 0; }
@@ -114,6 +121,10 @@
 </head>
 <body>
 <header><strong>Skillsmith</strong><span id="mode">LIVE</span><span id="status">connecting…</span>
+  <span id="replay-bar" class="hidden"><button id="replay-play" type="button" title="pause / resume">⏸</button>
+    <span id="replay-speeds"></span><button id="replay-restart" type="button" title="restart">⟲</button>
+    <span id="replay-pos"></span></span>
+  <select id="replay-pick" class="hidden" title="replay a recorded run (demo fallback)"></select>
   <button id="drawer-toggle" type="button">Details</button></header>
 <aside id="drawer" class="hidden">
   <button class="close" id="drawer-close" type="button" title="close">✕</button>
@@ -517,16 +528,32 @@ function reduceEvent(s, e) {
   }
 }
 
+// Replay controls (WS6.7). Speed 0 means "as fast as the server can send".
+const SPEEDS = [0.5, 1, 2, 4, 8, 0];
+
+function parseSpeed(text) {
+  const v = Number(text);
+  return Number.isFinite(v) && v >= 0 ? v : 1;
+}
+
+function speedLabel(speed) {
+  return speed > 0 ? `${speed}×` : "max";
+}
+
+function replayUrl(runId, speed, from) {
+  const q = new URLSearchParams({ replay: runId, speed: String(speed) });
+  if (from > 0) q.set("from", String(from));
+  return `/events?${q}`;
+}
+
 if (typeof module !== "undefined") module.exports = { initialState, reduce, shortDiff, keyframes, tableMap, worldLine,
-                                                         reduceImprove, panelRuns, improvementTotals };
+                                                         reduceImprove, panelRuns, improvementTotals,
+                                                         SPEEDS, parseSpeed, speedLabel, replayUrl };
 </script>
 
 <script>
 const params = new URLSearchParams(location.search);
 const replay = params.get("replay");
-const url = replay
-  ? `/events?replay=${encodeURIComponent(replay)}&speed=${encodeURIComponent(params.get("speed") || "1")}`
-  : "/events";
 const $ = (id) => document.getElementById(id);
 if (replay) { $("mode").textContent = `RECORDED RUN ${replay}`; $("mode").className = "replay"; }
 
@@ -844,26 +871,123 @@ function logEvent(e) {
   $("log").append(row);
 }
 
-const src = new EventSource(url);
-src.onopen = () => {
-  // The server resends its history on every (re)connect, so start the story from scratch.
+function resetStory() {
   state = initialState();
   improve = null;
   $("log").replaceChildren();
   render(state);
-  $("status").textContent = "connected";
-};
-src.onerror = () => { $("status").textContent = replay ? "replay stopped" : "reconnecting…"; };
-src.onmessage = (m) => {
+}
+
+function onEvent(m) {
   const e = JSON.parse(m.data);
   logEvent(e);
   state = reduce(state, e);
   improve = reduceImprove(improve, e);
   render(state);
   if (e.type === "run.finished" && !replay) loadPastRuns();  // the finished run is now on disk
-};
+}
+
+function connectLive() {
+  const src = new EventSource("/events");
+  // The server resends its history on every (re)connect, so start the story from scratch.
+  src.onopen = () => { resetStory(); $("status").textContent = "connected"; };
+  src.onerror = () => { $("status").textContent = "reconnecting…"; };
+  src.onmessage = onEvent;
+}
+
+// ---- WS6.7: replay of a recorded run with pause, speed and restart ----
+const rp = { src: null, speed: parseSpeed(params.get("speed") || "1"), next: 0, total: null, playing: false, done: false };
+
+function renderReplay() {
+  $("replay-play").textContent = rp.playing ? "⏸" : "▶";
+  $("replay-play").title = rp.done ? "play again" : rp.playing ? "pause" : "resume";
+  $("replay-speeds").replaceChildren(...SPEEDS.map((v) => {
+    const b = el("button", v === rp.speed ? "on" : null, speedLabel(v));
+    b.type = "button";
+    b.onclick = () => setSpeed(v);
+    return b;
+  }));
+  $("replay-pos").textContent = `event ${rp.next}${rp.total != null ? ` / ${rp.total}` : ""}`;
+}
+
+function stopReplay() {
+  if (rp.src) rp.src.close();
+  rp.src = null;
+  rp.playing = false;
+}
+
+function playReplay() {
+  stopReplay();
+  if (rp.done || rp.next === 0) { rp.next = 0; rp.done = false; resetStory(); }
+  const src = new EventSource(replayUrl(replay, rp.speed, rp.next));
+  rp.src = src;
+  rp.playing = true;
+  src.onopen = () => { $("status").textContent = `replaying at ${speedLabel(rp.speed)}`; };
+  src.onerror = () => {  // never let EventSource reconnect on its own: it would resend from the old offset
+    stopReplay();
+    $("status").textContent = "replay stopped (connection lost); ▶ resumes";
+    renderReplay();
+  };
+  src.onmessage = (m) => {
+    rp.next += 1;  // the server sends events[from:] in order, so counting gives the next index
+    onEvent(m);
+    renderReplay();
+  };
+  src.addEventListener("replay.end", (m) => {
+    rp.total = JSON.parse(m.data).events;
+    stopReplay();
+    rp.done = true;
+    $("status").textContent = "replay finished";
+    renderReplay();
+  });
+  renderReplay();
+}
+
+function setSpeed(v) {
+  rp.speed = v;
+  params.set("speed", String(v));
+  history.replaceState(null, "", `?${params}`);  // a reload keeps the chosen speed
+  if (rp.playing) playReplay(); else renderReplay();  // reopens at the next event, story kept
+}
+
+async function loadReplayRuns() {
+  try {
+    const runs = await (await fetch("/runs")).json();
+    if (replay) {
+      const me = runs.find((r) => r.run_id === replay);
+      if (me && rp.total == null) { rp.total = me.events; renderReplay(); }
+      return;
+    }
+    if (!runs.length) return;
+    const pick = $("replay-pick");
+    pick.replaceChildren(el("option", null, "Replay a recorded run…"),
+                         ...runs.map((r) => {
+                           const o = el("option", null, `${r.run_id} (${r.events} events)`);
+                           o.value = r.run_id;
+                           return o;
+                         }));
+    pick.classList.remove("hidden");
+    pick.onchange = () => {
+      if (pick.value) location.href = `/?${new URLSearchParams({ replay: pick.value, speed: "2" })}`;
+    };
+  } catch (err) {
+    $("status").textContent = `could not list recorded runs: ${err.message}`;
+  }
+}
+
+if (replay) {
+  $("replay-bar").classList.remove("hidden");
+  $("replay-play").onclick = () => {
+    if (rp.playing) { stopReplay(); $("status").textContent = "replay paused"; renderReplay(); }
+    else playReplay();
+  };
+  $("replay-restart").onclick = () => { stopReplay(); rp.next = 0; rp.done = false; playReplay(); };
+  playReplay();
+} else {
+  connectLive();
+}
 loadPastRuns();
-src.addEventListener("replay.end", () => { $("status").textContent = "replay finished"; src.close(); });
+loadReplayRuns();
 </script>
 </body>
 </html>

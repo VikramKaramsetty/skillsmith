@@ -19,6 +19,10 @@ only talks to the dashboard and only robotd holds the camera; 503 if robotd isn'
 and `GET /video?path=` for the sim replay mp4 that `sim.video` points at (runs dir only).
 WS6.6 adds `GET /improvement`: one summary per recorded run (dashboard/improvement.py), so the
 improvement panel shows earlier runs; the page folds the live run itself.
+WS6.7 adds speed control to replay: `GET /events?replay=<run_id>&speed=4&from=<n>` starts at the
+n-th recorded event, so the page pauses (closes the stream), resumes or changes speed (reopens at
+the next event) without the story starting over. Events and `replay.end` keep their shape (the page
+counts what it got: the next index is from + events received), so replay stays the live stream.
 FastAPI is imported lazily so this module imports with core deps only.
 Replayed events carry `"replay": true` so the UI can label the fallback as a recording.
 No `from __future__ import annotations` here: FastAPI must resolve the locally imported `Request`.
@@ -234,13 +238,16 @@ def list_runs(runs_dir: Path) -> list[dict]:
     return out
 
 
-async def replay_stream(path: Path, speed: float) -> AsyncIterator[str]:
+async def replay_stream(path: Path, speed: float, start: int = 0) -> AsyncIterator[str]:
+    """Replay events[start:]; the first one goes out at once, the rest keep their (sped-up) gaps."""
     events = list(read_events(path))
-    for event, delay in zip(events, replay_delays(events, speed)):
+    rest = events[start:]
+    for event, delay in zip(rest, replay_delays(rest, speed)):
         if delay > 0:
             await asyncio.sleep(delay)
         yield sse({**event, "replay": True})
-    yield f"event: replay.end\ndata: {json.dumps({'run_id': path.parent.name, 'events': len(events)})}\n\n"
+    end = {"run_id": path.parent.name, "events": len(events)}
+    yield f"event: replay.end\ndata: {json.dumps(end)}\n\n"
 
 
 async def live_stream(hub: EventHub, request) -> AsyncIterator[str]:
@@ -272,7 +279,7 @@ def create_app(runs_dir: Path, hub: Optional[EventHub] = None,
                camera_url: Optional[str] = None):
     """`run_fn` is None when the server only replays (then `POST /task` answers 503).
     `camera_url` is robotd's base URL; None means no live camera (`/camera/*` answers 503)."""
-    from fastapi import FastAPI, HTTPException, Request
+    from fastapi import FastAPI, HTTPException, Query, Request
     from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 
     app = FastAPI(title="Skillsmith dashboard")
@@ -322,7 +329,8 @@ def create_app(runs_dir: Path, hub: Optional[EventHub] = None,
         return StreamingResponse(chunks, media_type=content_type, headers=headers)
 
     @app.get("/events")
-    async def events(request: Request, replay: Optional[str] = None, speed: float = 1.0):
+    async def events(request: Request, replay: Optional[str] = None, speed: float = 1.0,
+                     start: int = Query(0, alias="from", ge=0)):
         if replay is None:
             gen = live_stream(app.state.hub, request)
         else:
@@ -330,7 +338,7 @@ def create_app(runs_dir: Path, hub: Optional[EventHub] = None,
             if path is None:
                 app.state.hub.publish(_error_event(replay, f"no recorded run {replay!r}"))
                 raise HTTPException(404, f"no recorded run {replay!r}")
-            gen = replay_stream(path, speed)
+            gen = replay_stream(path, speed, start)
         return StreamingResponse(gen, media_type="text/event-stream", headers=headers)
 
     @app.post("/task", status_code=202)
