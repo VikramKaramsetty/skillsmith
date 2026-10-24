@@ -1,0 +1,8 @@
+# QA.5: hand labels for recorded REAL-arm failures. How to add one: see README.md here.
+# Each entry points at <run>/events.jsonl in this directory. Empty until hardware runs exist.
+#
+# - run: 20261024-153000-ab12
+#   attempt: -1            # which failed attempt in the run (default -1 = the last one)
+#   label: SLIP_IN_CARRY   # a key of skillsmith.types.FAILURE_CLASSES
+#   note: rim grip, blue cup slid out on the 16 cm carry to the red cup
+[]
