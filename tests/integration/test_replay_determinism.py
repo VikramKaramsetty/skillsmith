@@ -187,8 +187,16 @@ def test_two_runs_of_the_same_task_tell_the_same_story(recorded, tmp_path):
     assert second_id != run_id
     second, _ = _replay_sse(client, second_id)
     assert [e["type"] for e in second] == [e["type"] for e in live]
-    state = fold(second, tmp_path)
-    assert {**state, "run_id": run_id} == fold(live, tmp_path)
+    assert _untimed({**fold(second, tmp_path), "run_id": run_id}) == _untimed(fold(live, tmp_path))
+
+
+def _untimed(value):
+    """The story state without timestamps (e.g. the world overlay keeps the scene's `t`)."""
+    if isinstance(value, dict):
+        return {k: _untimed(v) for k, v in value.items() if k != "t"}
+    if isinstance(value, list):
+        return [_untimed(v) for v in value]
+    return value
 
 
 def test_strict_parser_rejects_what_the_browser_rejects():
