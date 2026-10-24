@@ -12,8 +12,9 @@ Contract:
 WS6.1 builds the event feed: the live hub, replay and the run list. WS6.3 adds `/task` (one run
 at a time; 400 if the text doesn't parse, 409 while a run is going) and `/approve` (409 if
 nothing waits; an optional `run_id` must match the waiting run so a stale page can't approve).
-`GET /approval` shows what waits. FastAPI is imported lazily so this module imports with core
-deps only.
+`GET /approval` shows what waits. WS6.4 adds `GET /frame?path=` so the detail drawer can show the
+annotated key frames the events point at (images inside the runs dir only).
+FastAPI is imported lazily so this module imports with core deps only.
 Replayed events carry `"replay": true` so the UI can label the fallback as a recording.
 No `from __future__ import annotations` here: FastAPI must resolve the locally imported `Request`.
 """
@@ -38,6 +39,7 @@ HEARTBEAT_S = 15.0
 HISTORY = 2000  # live events kept so a page opened mid-run still sees the whole story
 INDEX_HTML = Path(__file__).with_name("index.html")
 _RUN_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
+IMAGE_TYPES = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png"}
 
 
 class EventHub:
@@ -182,6 +184,17 @@ def run_path(runs_dir: Path, run_id: str) -> Optional[Path]:
     return path if path.is_file() else None
 
 
+def frame_path(runs_dir: Path, path: str) -> Optional[Path]:
+    """An image the events point at (key frames, snapshots), only if it lies inside runs_dir."""
+    root = Path(runs_dir).resolve()
+    candidate = Path(path)
+    resolved = (candidate if candidate.is_absolute() else Path.cwd() / candidate).resolve()
+    if not resolved.is_relative_to(root):
+        resolved = (root / candidate).resolve()  # also accept paths relative to runs_dir
+    ok = resolved.is_relative_to(root) and resolved.suffix.lower() in IMAGE_TYPES and resolved.is_file()
+    return resolved if ok else None
+
+
 def list_runs(runs_dir: Path) -> list[dict]:
     runs_dir = Path(runs_dir)
     if not runs_dir.is_dir():
@@ -231,7 +244,7 @@ def create_app(runs_dir: Path, hub: Optional[EventHub] = None,
                approver: Optional[DashboardApprover] = None, run_fn: Optional[RunFn] = None):
     """`run_fn` is None when the server only replays (then `POST /task` answers 503)."""
     from fastapi import FastAPI, HTTPException, Request
-    from fastapi.responses import HTMLResponse, StreamingResponse
+    from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 
     app = FastAPI(title="Skillsmith dashboard")
     app.state.hub = hub or EventHub()
@@ -247,6 +260,13 @@ def create_app(runs_dir: Path, hub: Optional[EventHub] = None,
     @app.get("/runs")
     def runs() -> list[dict]:
         return list_runs(app.state.runs_dir)
+
+    @app.get("/frame")
+    def frame(path: str):
+        found = frame_path(app.state.runs_dir, path)
+        if found is None:
+            raise HTTPException(404, f"no image {path!r} under the runs dir")
+        return FileResponse(found, media_type=IMAGE_TYPES[found.suffix.lower()])
 
     @app.get("/events")
     async def events(request: Request, replay: Optional[str] = None, speed: float = 1.0):

@@ -1,6 +1,8 @@
 <!doctype html>
 <!-- Skillsmith dashboard. WS6.2: big-screen story view (DEMO.md "Big-screen layout").
      WS6.3: task input (POST /task) and the human gate (POST /approve: Approve, or Reject with a note).
+     WS6.4: the detail drawer ("Details"): annotated key frames (served by GET /frame), the phase
+     table, Droid's tool calls and checks, every permission decision (refusals highlighted).
      Renders ONLY from the SSE stream (docs/INTERFACES.md §7). Open /?replay=<run_id>&speed=2
      to replay a recorded run. The reducer in <script id="story-reducer"> is pure (no DOM) so
      tests/ws6 can run it under node. -->
@@ -51,6 +53,30 @@
   #task-form button:disabled { background: #333; color: #777; cursor: default; }
   #task-msg { color: #f99; font-size: 16px; }
   .hidden { display: none !important; }
+  #drawer-toggle { margin-left: auto; font-size: 16px; padding: 6px 16px; border: 0; border-radius: 6px;
+                   background: #345; color: #fff; cursor: pointer; }
+  #drawer-toggle .refused { color: #f99; font-weight: 700; }
+  #drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(760px, 55vw); overflow: auto;
+            background: #181818; border-left: 1px solid #333; padding: 14px 22px 40px; font-size: 15px;
+            box-shadow: -8px 0 24px #000a; }
+  #drawer h2 { font-size: 15px; color: #888; text-transform: uppercase; letter-spacing: .08em; margin: 20px 0 8px; }
+  #drawer .close { float: right; font-size: 20px; background: none; border: 0; color: #aaa; cursor: pointer; }
+  #drawer .empty { color: #555; }
+  #frames { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; }
+  .frame { margin: 0; border: 3px solid #2a6; border-radius: 6px; overflow: hidden; background: #000; }
+  .frame.bad { border-color: #e33; }
+  .frame img { width: 100%; display: block; }
+  .frame figcaption { padding: 4px 8px; font-size: 13px; color: #ccc; background: #222; }
+  #drawer table { border-collapse: collapse; width: 100%; margin-bottom: 8px; }
+  #drawer td, #drawer th { text-align: left; padding: 3px 8px; border-bottom: 1px solid #2a2a2a; vertical-align: top; }
+  #drawer th { color: #888; font-weight: 400; }
+  #drawer .caption { color: #aaa; margin: 6px 0 2px; }
+  #drawer span.ok { color: #6e6; } #drawer span.bad { color: #f77; }
+  #drawer tr.failed, .perm.refused { background: #3a1616; }
+  .step { padding: 4px 0; border-bottom: 1px solid #222; }
+  .step .kind { display: inline-block; min-width: 56px; color: #6cf; }
+  .step pre { margin: 2px 0 0 56px; font: 12px ui-monospace, monospace; color: #999; white-space: pre-wrap; word-break: break-all; }
+  .perm .why { color: #bbb; }
   details { color: #999; }
   #log { font: 12px ui-monospace, monospace; max-height: 260px; overflow: auto; }
   .ev { padding: 1px 0; border-bottom: 1px solid #222; white-space: pre-wrap; word-break: break-all; }
@@ -58,7 +84,16 @@
 </style>
 </head>
 <body>
-<header><strong>Skillsmith</strong><span id="mode">LIVE</span><span id="status">connecting…</span></header>
+<header><strong>Skillsmith</strong><span id="mode">LIVE</span><span id="status">connecting…</span>
+  <button id="drawer-toggle" type="button">Details</button></header>
+<aside id="drawer" class="hidden">
+  <button class="close" id="drawer-close" type="button" title="close">✕</button>
+  <h2>Annotated key frames</h2><div id="frames"></div>
+  <h2>Phase checks</h2><div id="phases"></div>
+  <h2>Permission decisions</h2><div id="permissions"></div>
+  <h2>Droid tool calls</h2><div id="steps"></div>
+  <h2>Droid session</h2><div id="session"></div>
+</aside>
 <main>
   <section><div class="label">Task</div><div id="task" class="empty">waiting for a task…</div>
     <form id="task-form"><input id="task-input" placeholder="stack the blue cup on the red cup" autocomplete="off">
@@ -103,7 +138,73 @@ function initialState() {
     gates: Object.fromEntries(GATES.map((g) => [g, { state: "pending", detail: "" }])),
     approval: null,           // {state: pending|approved|rejected, kind: approval|reset, title, note}
     saved: null, lesson: null, finished: null,
+    drawer: initialDrawer(),
   };
+}
+
+// The detail drawer (WS6.4): everything behind the click, kept for the whole run.
+function initialDrawer() {
+  return {
+    attempts: [],             // [{env, skill, version, ok, phases: [PhaseCheck], classification}]
+    session: null,            // {round, via, autonomy, disabled_tools, workspace, tools}
+    steps: [],                // [{kind: call|result|check, round, name, ok, text}]
+    permissions: [],          // [{round, action, target, allowed, reason}]
+  };
+}
+
+const STEP_TEXT = 400;
+
+function clip(s, max = STEP_TEXT) {
+  const text = typeof s === "string" ? s : s == null ? "" : JSON.stringify(s);
+  return text.length > max ? text.slice(0, max - 1) + "…" : text;
+}
+
+// Key frames are the annotated images the analysis attached to each phase check.
+function keyframes(drawer) {
+  const out = [];
+  drawer.attempts.forEach((a, i) => a.phases.forEach((p) => {
+    if (p.frame_path) out.push({ attempt: i + 1, version: a.version, phase: p.phase, ok: p.ok, detail: p.detail, path: p.frame_path });
+  }));
+  return out;
+}
+
+function onLastAttempt(drawer, update) {
+  const attempts = drawer.attempts.length ? drawer.attempts.slice()
+    : [{ env: null, skill: null, version: null, ok: null, phases: [], classification: null }];
+  attempts[attempts.length - 1] = update({ ...attempts[attempts.length - 1] });
+  return { ...drawer, attempts };
+}
+
+function reduceDrawer(drawer, e) {
+  const d = e.data || {};
+  switch (e.type) {
+    case "attempt.started":
+      return { ...drawer, attempts: [...drawer.attempts,
+        { env: d.env, skill: d.skill, version: d.version, ok: null, phases: [], classification: null }] };
+    case "phase.check":
+      return onLastAttempt(drawer, (a) => ({ ...a, phases: [...a.phases, d] }));
+    case "attempt.classified":
+      return onLastAttempt(drawer, (a) => ({ ...a, classification: d }));
+    case "attempt.finished":
+      return onLastAttempt(drawer, (a) => ({ ...a, ok: !!d.ok }));
+    case "droid.started":
+      return { ...drawer, session: { tools: (drawer.session && drawer.session.tools) || [], round: d.round, via: d.via,
+                                     autonomy: d.autonomy, disabled_tools: d.disabled_tools || [], workspace: d.workspace } };
+    case "droid.tools":
+      return { ...drawer, session: { ...(drawer.session || {}), tools: d.tools || [] } };
+    case "droid.tool_call":
+      return { ...drawer, steps: [...drawer.steps, { kind: "call", round: d.round, name: d.name, ok: null, text: clip(d.input) }] };
+    case "droid.tool_result":
+      return { ...drawer, steps: [...drawer.steps, { kind: "result", round: d.round, name: d.tool, ok: !d.is_error, text: clip(d.content) }] };
+    case "droid.check":
+      return { ...drawer, steps: [...drawer.steps, { kind: "check", round: d.round, name: d.tool, ok: !!d.ok,
+                                                     text: clip([d.run != null ? `run ${d.run}` : "", d.reason || ""].filter(Boolean).join(": ")) }] };
+    case "droid.permission":
+      return { ...drawer, permissions: [...drawer.permissions,
+        { round: d.round, action: d.action, target: clip(d.target, 200), allowed: !!d.allowed, reason: d.reason || "" }] };
+    default:
+      return drawer;
+  }
 }
 
 function firstLine(s, max = 160) {
@@ -132,7 +233,8 @@ function reduce(s, e) {
   if (s.approval && s.approval.kind === "reset" && s.approval.state === "pending" && RESET_DONE.includes(e.type)) {
     s = { ...s, approval: { ...s.approval, state: "approved" } };
   }
-  return reduceEvent(s, e);
+  s = reduceEvent(s, e);
+  return { ...s, drawer: reduceDrawer(s.drawer || initialDrawer(), e) };
 }
 
 function reduceEvent(s, e) {
@@ -215,7 +317,7 @@ function reduceEvent(s, e) {
   }
 }
 
-if (typeof module !== "undefined") module.exports = { initialState, reduce, shortDiff };
+if (typeof module !== "undefined") module.exports = { initialState, reduce, shortDiff, keyframes };
 </script>
 
 <script>
@@ -277,7 +379,73 @@ function render(s) {
   $("approval-text").textContent = !a ? ""
     : a.state === "pending" ? (replay ? `${a.title} (recorded run)` : a.title)
     : `${a.state}${a.note ? ": " + a.note : ""}`;
+
+  renderDrawer(s.drawer);
 }
+
+const frameUrl = (path) => `/frame?path=${encodeURIComponent(path)}`;
+const mark = (ok) => ok == null ? el("span", null, "·") : el("span", ok ? "ok" : "bad", ok ? "✓" : "✗");
+const orEmpty = (nodes, text) => nodes.length ? nodes : [el("div", "empty", text)];
+
+function renderDrawer(d) {
+  const refused = d.permissions.filter((p) => !p.allowed).length;
+  $("drawer-toggle").replaceChildren("Details");
+  if (refused) $("drawer-toggle").append(" · ", el("span", "refused", `${refused} refused`));
+
+  $("frames").replaceChildren(...orEmpty(keyframes(d).map((f) => {
+    const fig = el("figure", f.ok ? "frame" : "frame bad");
+    const img = el("img");
+    img.src = frameUrl(f.path);
+    img.alt = `${f.phase} key frame`;
+    img.onerror = () => img.replaceWith(el("div", "empty", `frame unavailable: ${f.path}`));
+    fig.append(img, el("figcaption", null, `attempt ${f.attempt} · v${f.version ?? "?"} · ${f.phase} ${f.ok ? "✓" : "✗"} · ${f.detail}`));
+    return fig;
+  }), "no key frames yet"));
+
+  $("phases").replaceChildren(...orEmpty(d.attempts.filter((a) => a.phases.length || a.classification).map((a, i) => {
+    const box = el("div");
+    const c = a.classification;
+    box.append(el("div", "caption", `attempt ${i + 1} · ${a.skill ?? "?"} v${a.version ?? "?"} on ${a.env ?? "?"}`
+      + (c ? ` · ${c.cls} (${c.bucket}${c.confidence != null ? `, conf ${c.confidence}` : ""})` : "")));
+    if (c && c.hint) box.append(el("div", "caption", `hint: ${c.hint}`));
+    const table = el("table");
+    const head = el("tr");
+    ["phase", "", "detail", "calls"].forEach((h) => head.append(el("th", null, h)));
+    table.append(head);
+    a.phases.forEach((p) => {
+      const row = el("tr", p.ok ? null : "failed");
+      const cell = el("td"); cell.append(mark(p.ok));
+      row.append(el("td", null, p.phase), cell, el("td", null, p.detail), el("td", null, `#${p.start_index}–${p.end_index}`));
+      table.append(row);
+    });
+    box.append(table);
+    return box;
+  }), "no phase checks yet"));
+
+  $("permissions").replaceChildren(...orEmpty(d.permissions.map((p) => {
+    const row = el("div", `step perm ${p.allowed ? "" : "refused"}`);
+    row.append(el("span", p.allowed ? "ok" : "bad", p.allowed ? "ALLOWED " : "REFUSED "),
+               el("span", null, `r${p.round} ${p.action} ${p.target} `), el("span", "why", `— ${p.reason}`));
+    return row;
+  }), "no permission requests yet"));
+
+  $("steps").replaceChildren(...orEmpty(d.steps.map((st) => {
+    const row = el("div", "step");
+    row.append(el("span", "kind", st.kind), mark(st.ok), el("span", null, ` r${st.round} ${st.name}`));
+    if (st.text) row.append(el("pre", null, st.text));
+    return row;
+  }), "no tool calls yet"));
+
+  const ss = d.session;
+  $("session").replaceChildren(...(ss ? [
+    ["via", ss.via], ["autonomy", ss.autonomy], ["disabled tools", (ss.disabled_tools || []).join(", ") || "none"],
+    ["tools Droid can use", (ss.tools || []).join(", ") || "(not reported)"], ["workspace", ss.workspace],
+  ].map(([k, v]) => { const r = el("div"); r.append(el("span", "caption", `${k}: `), String(v ?? "")); return r; })
+    : [el("div", "empty", "Droid has not started")]));
+}
+
+$("drawer-toggle").onclick = () => $("drawer").classList.toggle("hidden");
+$("drawer-close").onclick = () => $("drawer").classList.add("hidden");
 
 let state = initialState();
 render(state);
