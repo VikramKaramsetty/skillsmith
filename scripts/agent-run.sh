@@ -91,8 +91,16 @@ for i in $(seq 0 "$MAX_FIX"); do
   fi
   sleep 15  # let GitHub register the checks
   if gh pr checks --watch --interval 20 >/dev/null 2>&1; then
-    echo "agent-run: CI green; automerge will merge it: $(gh pr view --json url --jq .url)"
-    exit 0
+    # Wait for the merge so the next task in this workstream starts from a main that has this change.
+    for _ in $(seq 1 30); do
+      if [[ $(gh pr view --json state --jq .state) == "MERGED" ]]; then
+        echo "agent-run: merged $(gh pr view --json url --jq .url)"
+        exit 0
+      fi
+      sleep 10
+    done
+    echo "agent-run: CI green but not merged after 5 min (contract-change/blocked label? automerge label missing?)"
+    exit 1
   fi
   RUN_ID=$(gh run list --branch "$BRANCH" --limit 1 --json databaseId --jq '.[0].databaseId')
   FAIL=$(gh run view "$RUN_ID" --log-failed 2>/dev/null | tail -80)
