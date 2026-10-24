@@ -1,6 +1,7 @@
 <!doctype html>
 <!-- Skillsmith dashboard. WS6.2: big-screen story view (DEMO.md "Big-screen layout").
      WS6.3: task input (POST /task) and the human gate (POST /approve: Approve, or Reject with a note).
+     WS6.8: /approve quotes the per-request nonce from GET /approval.
      WS6.4: the detail drawer ("Details"): annotated key frames (served by GET /frame), the phase
      table, Droid's tool calls and checks, every permission decision (refusals highlighted).
      WS6.6: the improvement panel ("Getting better"): rounds, seconds-to-fix, skills saved, reuse
@@ -839,7 +840,11 @@ async function decide(approved) {
   $("approve").disabled = true;
   $("reject").disabled = true;
   try {
-    await post("/approve", { approved, note: approved ? "" : $("note").value.trim(), run_id: state.run_id });
+    // The nonce is only in GET /approval (never in an event), and only for the request this page shows.
+    const pending = await (await fetch("/approval")).json();
+    if (!pending || pending.run_id !== state.run_id) throw new Error("nothing waits for approval in this run");
+    await post("/approve", { approved, note: approved ? "" : $("note").value.trim(), run_id: state.run_id,
+                             nonce: pending.nonce });
     $("note").value = "";
   } catch (err) {
     $("approval-text").textContent = `${approved ? "approve" : "reject"} failed: ${err.message}`;
