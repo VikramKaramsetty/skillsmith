@@ -36,6 +36,8 @@ safety:
   min_tip_z: 0.005                  # tip never goes below 5 mm above the table
   max_tcp_speed: 0.15               # m/s
   default_tcp_speed: 0.08
+  attempt_timeout_s: 120             # wall-clock limit per attempt; arm stops, error names the line (WS4.2)
+  carry_clearance: 0.01              # m: a held object must clear known objects by this (WS4.3)
   max_joint_speed_dps: 60
   max_step_deg: 10                  # robotd per-command clamp (5-10 works; 2 stalled the elbow)
   joint_limit_margin_deg: 2         # robotd refuses goals this close to a calibrated joint limit
@@ -54,6 +56,8 @@ repair:
   max_rounds: 4                     # Droid calls per task
   runs_dir: runs
   library_dir: skills/library
+  audit_dir: null                   # per-version audit records; null = skills/audit next to the library (WS5.8)
+  audit_commit: auto                # commit each saved skill + audit: auto = not on the fake world | always | never
   droid_ws_root: ~/.skillsmith/droid_ws
   lessons_file: skills/lessons.md   # Droid's lessons; every Droid prompt includes it
 
