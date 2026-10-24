@@ -34,7 +34,8 @@ Confidence gate (WS3.6). `perception_ok()` is (False, reason) when any of these 
 baseline (the first update after construction or `reset_gate()`); issues are joined by "; " and
 each starts with a fixed prefix the classifier can match:
 - "world model stale: ..."  the latest update failed (camera gone, detector crashed).
-- "marker drift X cm ..."   `camera.marker_drift(frame)` (run every `world.drift_every` updates)
+- "marker drift X cm ..."   `camera.marker_drift(frame)` (run every `world.drift_every` updates;
+  falls back to the median of `camera.marker_errors(frame)` while marker_drift is a stub)
   exceeded `world.max_marker_drift` (default 1 cm) on `DRIFT_CHECKS` checks in a row → CAMERA_MOVED.
 - "low confidence: ..."     a detection under `world.min_confidence` for `LOW_CONF_FRAMES`
   frames in a row, away from the tip and the held object (the arm covering a cup lowers its
@@ -383,11 +384,8 @@ class WorldModel:
     def _measure_drift(self, image: Any) -> Optional[float]:
         """Marker drift in metres, or None when it could not be measured this time (markers
         hidden by the arm, or the camera model has no marker check: emitted once)."""
-        fn = getattr(self.camera, "marker_drift", None)
         try:
-            if fn is None:
-                raise NotImplementedError(f"{type(self.camera).__name__} has no marker_drift()")
-            drift = float(fn(image))
+            drift = self._camera_drift(image)
         except Exception as e:
             reason = f"{type(e).__name__}: {e}"
             if reason != self._drift_unavailable:
@@ -397,6 +395,24 @@ class WorldModel:
             return None
         self._drift_unavailable = None
         return drift if math.isfinite(drift) else None
+
+    def _camera_drift(self, image: Any) -> float:
+        """`camera.marker_drift(image)`; while that is still a stub, the median of
+        `camera.marker_errors(image)` (geometry's real calibration check), NaN when no marker is seen."""
+        fn = getattr(self.camera, "marker_drift", None)
+        try:
+            if fn is None:
+                raise NotImplementedError(f"{type(self.camera).__name__} has no marker_drift()")
+            return float(fn(image))
+        except NotImplementedError:
+            errors_fn = getattr(self.camera, "marker_errors", None)
+            if errors_fn is None:
+                raise
+        errors = sorted(float(e) for e in errors_fn(image).values())
+        if not errors:
+            return math.nan
+        mid = len(errors) // 2
+        return errors[mid] if len(errors) % 2 else (errors[mid - 1] + errors[mid]) / 2
 
     def _update_gate(self, detections: Sequence[Any], tip: Optional[Vec3], drift: Optional[float]) -> None:
         if drift is not None:

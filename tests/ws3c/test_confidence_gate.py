@@ -79,6 +79,34 @@ def test_missing_marker_check_is_reported_once_not_silent():
     assert ok and "markers unchecked" in reason
 
 
+def test_falls_back_to_marker_errors_while_marker_drift_is_a_stub():
+    class ErrorsOnly(PassCamera):
+        def __init__(self):
+            super().__init__()
+            self.errors = {0: 0.002, 1: 0.004, 2: 0.03}  # one misdetection; the median ignores it
+
+        def marker_drift(self, _frame):
+            raise NotImplementedError("WS3.6")
+
+        def marker_errors(self, _frame):
+            return dict(self.errors)
+
+    bus = NullBus()
+    camera = ErrorsOnly()
+    world = make_world([cup("red", 0.22, 0.08)], camera=camera, bus=bus, cfg=gate_cfg())
+    steps(world, 3)
+    ok, reason = world.perception_ok()
+    assert ok and "markers 0.4 cm" in reason
+    assert not [e for e in bus.events if e["type"] == "error"]
+    camera.errors = {}  # markers hidden: keep the last measurement
+    steps(world, 3)
+    assert "markers 0.4 cm" in world.perception_ok()[1]
+    camera.errors = {0: 0.02, 1: 0.025}  # camera moved
+    steps(world, 2)
+    ok, reason = world.perception_ok()
+    assert not ok and reason.startswith("marker drift 2.2 cm")
+
+
 def test_occluded_markers_keep_the_last_measurement():
     camera = PassCamera(drift=0.003)
     world = make_world([cup("red", 0.22, 0.08)], camera=camera, cfg=gate_cfg())
