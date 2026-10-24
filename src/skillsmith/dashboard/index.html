@@ -1,0 +1,51 @@
+<!doctype html>
+<!-- Skillsmith dashboard. WS6.1: raw event feed. The big-screen story view arrives in WS6.2.
+     Renders ONLY from the SSE stream (docs/INTERFACES.md §7). Open /?replay=<run_id>&speed=2
+     to replay a recorded run. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Skillsmith</title>
+<style>
+  body { font: 15px/1.4 system-ui, sans-serif; margin: 0; background: #111; color: #eee; }
+  header { padding: 12px 20px; background: #222; display: flex; gap: 16px; align-items: center; }
+  #mode { padding: 2px 10px; border-radius: 4px; background: #2a6; font-weight: 600; }
+  #mode.replay { background: #c80; }
+  #log { padding: 8px 20px; font-family: ui-monospace, monospace; font-size: 13px; }
+  .ev { padding: 2px 0; border-bottom: 1px solid #222; white-space: pre-wrap; word-break: break-all; }
+  .type { color: #6cf; display: inline-block; min-width: 180px; }
+  .error .type { color: #f66; }
+</style>
+</head>
+<body>
+<header><strong>Skillsmith</strong><span id="mode">LIVE</span><span id="status">connecting…</span></header>
+<div id="log"></div>
+<script>
+const params = new URLSearchParams(location.search);
+const replay = params.get("replay");
+const url = replay
+  ? `/events?replay=${encodeURIComponent(replay)}&speed=${encodeURIComponent(params.get("speed") || "1")}`
+  : "/events";
+const mode = document.getElementById("mode");
+const status = document.getElementById("status");
+const log = document.getElementById("log");
+if (replay) { mode.textContent = `RECORDED RUN ${replay}`; mode.className = "replay"; }
+
+const src = new EventSource(url);
+src.onopen = () => { status.textContent = "connected"; };
+src.onerror = () => { status.textContent = replay ? "replay stopped" : "reconnecting…"; };
+src.onmessage = (m) => {
+  const e = JSON.parse(m.data);
+  const row = document.createElement("div");
+  row.className = "ev" + (e.type === "error" ? " error" : "");
+  const type = document.createElement("span");
+  type.className = "type";
+  type.textContent = e.type;
+  row.append(type, JSON.stringify(e.data).slice(0, 300));
+  log.append(row);
+  window.scrollTo(0, document.body.scrollHeight);
+};
+src.addEventListener("replay.end", () => { status.textContent = "replay finished"; src.close(); });
+</script>
+</body>
+</html>
