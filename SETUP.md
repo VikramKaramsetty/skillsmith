@@ -16,8 +16,15 @@ WSL2 with Ubuntu and run everything inside it).
 | uv (Python) | `curl -LsSf https://astral.sh/uv/install.sh \| sh` | same |
 | Claude Code | `curl -fsSL https://claude.ai/install.sh \| bash` | same |
 
-Optional, to use Factory Droid as the coding agent instead of Claude: install the `droid`
-CLI (https://docs.factory.ai) and `export FACTORY_API_KEY=...` in your shell profile.
+**Factory Droid** (needed on machines that run the product's Droid repair step, i.e. the GX10
+and anyone doing WS5 live runs; optional for build agents with `AGENT=droid`):
+
+1. Install the CLI (the Python SDK drives it): `curl -fsSL https://app.factory.ai/cli | sh`
+2. Create an API key at https://app.factory.ai/settings/api-keys (the account needs an active
+   plan or hackathon credits; without them every call returns "402 No active subscription").
+3. Put it in your shell profile, **never in the repo**:
+   `echo 'export FACTORY_API_KEY=<your key>' >> ~/.zshrc` (Linux: `~/.bashrc`), then open a new terminal.
+4. Check: `droid exec "Reply with ok" -o json` must show `"is_error":false`.
 
 Open a new terminal afterwards so `uv` and `claude` are on your PATH.
 

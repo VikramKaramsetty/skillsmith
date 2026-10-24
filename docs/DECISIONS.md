@@ -12,7 +12,11 @@ award wants visible agent work. *Gave up:* dexterity on unstructured objects.
 **D2. The Droid Python SDK, not the CLI.** The award requires the SDK doing real work. It gives
 autonomy levels, disabled tools, a permission callback, custom tools (`simulate_skill`),
 JSON-schema results, persistent sessions and typed stream events. Verified against droid-sdk
-0.5.0. `droid exec` remains a stage-emergency fallback.
+0.5.0. `droid exec` remains a stage-emergency fallback. **Python over the TypeScript SDK**
+(`@factory/droid-sdk`, also award-eligible): our orchestrator and tools are Python, so the
+Python SDK calls `simulate_skill` and the permission policy in-process; the TypeScript SDK would
+need a separate Node service plus a bridge to those tools. Both read `FACTORY_API_KEY` (created at
+app.factory.ai/settings/api-keys, kept in the shell profile, never in the repo).
 
 **D3. Classify before Droid sees anything.** Plain rules label the failure class, phase, numbers
 and bucket. Droid starts in the right place (needed for one round under 60 s), the dashboard
