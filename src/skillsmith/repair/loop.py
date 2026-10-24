@@ -12,6 +12,11 @@ Environment-bucket failures (camera moved, object out of reach, ...) never reach
 the loop asks a human to fix the table, then retries the same code. Before each repair the
 classification is marked `escalate` when the same class repeats after a "parameter" change.
 
+Lessons in action (WS5.8): each v2 report carries the past lessons that fit this failure
+(repair/lessons.py); `repair.started` names them (`lessons`, with why each was chosen). Every
+saved version gets an audit record, and outside the fake world a git commit (repair/audit.py);
+`skill.saved` carries `audit` (the record's path) and `commit` (the sha, or null).
+
 `evidence="v1"` (the WS5.6 benchmark baseline) sends the author the pre-v2 report and no
 evidence tools: no failure class, phases, frames, expected-vs-actual or lessons.
 """
@@ -25,6 +30,8 @@ from typing import Callable, List, Optional, Tuple
 
 from skillsmith.events import EventBus
 from skillsmith.hal.base import Env
+from skillsmith.repair import audit
+from skillsmith.repair import lessons as lessons_mod
 from skillsmith.repair.protocols import Approver, RepairContext, SkillAuthor
 from skillsmith.repair.report import (
     attempt_report,
@@ -71,11 +78,16 @@ class RepairLoop:
         self._last_check: Optional[AttemptResult] = None
         self._gate_failure: Optional[AttemptResult] = None  # the sim run the last gate rejected
         self._last_cls: Optional[Classification] = None     # the last failure class sent to the author
+        self._picks: Optional[List[lessons_mod.Pick]] = None  # lessons in the report being sent
+        self._lessons_total = 0
+        self._audit_rounds: List[audit.RoundRecord] = []
+        self._approval_note = ""
 
     # ---- main entry -----------------------------------------------------------------
     def run(self, task: TaskSpec) -> RunResult:
         bus, max_rounds = self.bus, self.cfg.repair.max_rounds
         bus.emit("run.started", task=task)
+        self._audit_rounds, self._approval_note = [], ""
         scene = self._observe()
 
         if self.library.has(task.skill):
@@ -121,10 +133,12 @@ class RepairLoop:
                 attempt = self._attempt(task, source, rounds)
                 attempts.append(attempt)
             if attempt.ok:
+                previous = self.library.load(task.skill) if needs_gates and self.library.has(task.skill) else ""
                 saved = self.library.save(task.skill, source) if needs_gates else None
                 if saved is None:
                     self.library.record_success(task.skill)
-                bus.emit("skill.saved", skill=task.skill, version=saved or version)
+                trail = self._audit(task, previous, source, saved) if saved is not None else {}
+                bus.emit("skill.saved", skill=task.skill, version=saved or version, **trail)
                 bus.emit("run.finished", ok=True, rounds=rounds)
                 return RunResult(True, rounds, source, saved or version, attempts)
 
@@ -190,6 +204,7 @@ class RepairLoop:
         self.bus.emit("approval.requested", summary=summary)
         approved, note = self.approver.request(self.bus.run_id, summary)
         self.bus.emit("approval.decided", approved=approved, note=note)
+        self._approval_note = note or ""
         if not approved:
             self.history.append(f"v{rnd} rejected by human: {note or 'no note'}")
         return approved, note
@@ -235,20 +250,63 @@ class RepairLoop:
                 attempt: Optional[AttemptResult] = None, expected: Optional[AttemptResult] = None) -> str:
         """`attempt` (the failed run) and `expected` (a passing run of the same skill) back
         Droid's evidence tools; both are None after a static or reviewer rejection."""
-        self.bus.emit("repair.started", round=rnd, reason=report.splitlines()[0] if report else "")
+        reason = report.splitlines()[0] if report else ""
+        picks, self._picks = self._picks, None  # set only by the report built for THIS repair
+        shown = self._lessons_shown(picks) if picks is not None else {}
+        self.bus.emit("repair.started", round=rnd, reason=reason, **shown)
+        picks = picks or []
         snapshot = self._snapshot(rnd)
         ctx = self._ctx(rnd, scene, snapshot)
         if self.evidence == "v2":  # v1 has no evidence tools
             ctx.attempt, ctx.expected = attempt, expected
         new = self.author.repair(task, source, report, ctx)
         self.bus.emit("skill.diff", old_version=rnd - 1, new_version=rnd, diff=_diff(source, new))
+        self._audit_rounds.append(self._round_record(rnd, reason, attempt, picks))
         return new
+
+    def _lessons_shown(self, picks: List[lessons_mod.Pick]) -> dict:
+        """Lessons in action: which past lessons went into this round's evidence, and why."""
+        return {"lessons": [p.to_dict() for p in picks], "lessons_total": self._lessons_total,
+                "lessons_relevant": sum(p.relevant for p in picks)}
+
+    def _round_record(self, rnd: int, reason: str, attempt: Optional[AttemptResult], picks) -> audit.RoundRecord:
+        c = attempt.classification if attempt is not None else None
+        result = getattr(self.author, "last_result", None) or {}  # DroidSDKAuthor's structured result
+        trigger = f"v{attempt.version} on {attempt.env}: {attempt.reason()}" if attempt is not None else reason
+        return audit.RoundRecord(
+            round=rnd, trigger=trigger, failure_class=c.cls if c else None, phase=c.phase if c else None,
+            lessons=[p.lesson.text for p in picks], diagnosis=result.get("diagnosis"),
+            change=result.get("change"), change_type=result.get("change_type"),
+            confidence=result.get("confidence"), lesson=result.get("lesson") or None)
+
+    def _audit(self, task: TaskSpec, previous: str, source: str, version: int) -> dict:
+        """Record the saved version (what failed, Droid's diagnosis and change, sim, approver);
+        commit it to git when repair.audit_commit allows. Never fails the run."""
+        check = self._last_check
+        record = audit.AuditRecord(
+            run_id=self.bus.run_id, skill=task.skill, version=version, task=task.text,
+            target=self.target.name, author=type(self.author).__name__,
+            approver=getattr(self.approver, "name", None) or type(self.approver).__name__,
+            approval_note=self._approval_note,
+            sim=_passed(check) if check else "skipped (no check env)",
+            safety=check.safety.summary() if check else "n/a",
+            rounds=list(self._audit_rounds), diff=_diff(previous, source))
+        commit, paths = None, []
+        try:
+            paths = audit.write(record, audit.audit_dir(self.cfg, self.library.dir))
+            if audit.should_commit(self.cfg.repair.get("audit_commit", "auto"), self.target.name):
+                tracked = [self.library.dir / f"{task.skill}.py", self.library.registry_path,
+                           lessons_path(self.cfg), *paths]
+                commit = audit.commit(tracked, record)
+        except (OSError, RuntimeError) as e:
+            self.bus.emit("error", where="repair.audit", message=f"audit trail for {task.skill} v{version}: {e}")
+        return {"audit": str(paths[1]) if paths else None, "commit": commit}
 
     # ---- helpers --------------------------------------------------------------------
     def _report(self, task: TaskSpec, attempt: AttemptResult, expected: Optional[AttemptResult]) -> str:
         if self.evidence == "v1":
             return attempt_report_v1(task, attempt, self.history)
-        return attempt_report(task, attempt, self.history, expected=expected, lessons=self._lessons())
+        return attempt_report(task, attempt, self.history, expected=expected, lessons=self._lessons(task, attempt))
 
     def _why(self, attempt: AttemptResult) -> str:
         return attempt.reason() if self.evidence == "v2" else unlabelled_reason(attempt)
@@ -256,9 +314,13 @@ class RepairLoop:
     def _ctx(self, rnd: int, scene: Optional[Scene], snapshot: Optional[str] = None) -> RepairContext:
         return RepairContext(self.bus.run_id, rnd, scene, snapshot, self.library.sources())
 
-    def _lessons(self) -> Optional[str]:
+    def _lessons(self, task: TaskSpec, attempt: AttemptResult) -> Optional[str]:
+        """The lessons that fit this failure (relevant first), each marked with why it was chosen."""
         path = lessons_path(self.cfg)
-        return path.read_text() if path.exists() else None
+        stored = lessons_mod.parse(path.read_text() if path.exists() else "")
+        self._lessons_total = len(stored)
+        self._picks = lessons_mod.select(stored, task, attempt)
+        return "\n".join(p.evidence_line() for p in self._picks) or None
 
     def _observe(self) -> Scene:
         scene = self.target.perception.observe()
@@ -279,6 +341,11 @@ class RepairLoop:
             return
         self.bus.emit("reset.requested", message="Reset the objects to their start positions")
         self.approver.request(self.bus.run_id, {"title": "Reset the table, then approve", "kind": "reset"})
+
+
+def _passed(check: AttemptResult) -> str:
+    detail = check.verify.detail if check.verify else "no success check"
+    return f"passed on {check.env}: {detail}"
 
 
 def _needs_human(attempt: Optional[AttemptResult]) -> bool:
