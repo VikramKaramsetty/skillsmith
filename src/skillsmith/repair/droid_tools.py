@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import os
 import time
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
@@ -41,8 +42,11 @@ REPAIR_RESULT_SCHEMA = {
         "sim_checked": {"type": "boolean", "description": "True if simulate_skill passed on your final skill.py."},
         "confidence": {"type": "number", "minimum": 0, "maximum": 1},
         "lesson": {"type": "string", "description": "One reusable rule for future skills, or an empty string."},
+        "skill_source": {"type": "string",
+                         "description": "The COMPLETE new skill.py (whole file). The orchestrator saves it, "
+                                        "re-checks it and runs it; this is how your fix is applied."},
     },
-    "required": ["diagnosis", "change", "change_type", "sim_checked", "confidence", "lesson"],
+    "required": ["diagnosis", "change", "change_type", "sim_checked", "confidence", "lesson", "skill_source"],
     "additionalProperties": False,
 }
 
@@ -86,8 +90,10 @@ def decide(action, workspace: Path) -> Tuple[bool, str]:
 
 
 # ---- tools ---------------------------------------------------------------------------------
-TOOL_NAMES = ("validate_skill", "simulate_skill", "get_scene", "list_library", "read_library_skill",
-              "get_frame", "get_object_track", "compare_with_success")
+TOOL_NAMES = ("read_file", "write_skill", "validate_skill", "simulate_skill", "get_scene", "list_library",
+              "read_library_skill", "get_frame", "get_object_track", "compare_with_success")
+
+MAX_READ_CHARS = 20_000
 
 
 class RepairTools:
@@ -148,6 +154,32 @@ class RepairTools:
         verdict = "PASS: the task succeeded in simulation." if result.ok else f"FAIL: {result.reason()}"
         return f"{verdict}\n\n{attempt_report(self.task, result, [])}"
 
+    def read_file(self, name: str) -> str:
+        """Read a text file inside the workspace (rules, evidence, skill.py, lessons, library/*.py)."""
+        root = self.workspace.resolve()
+        target = (root / name).resolve()
+        if os.path.commonpath([root, target]) != str(root):
+            self.bus.emit("droid.check", round=self.round, tool="read_file", ok=False, reason=f"outside workspace: {name}")
+            return f"Refused: '{name}' is outside your workspace."
+        if not target.is_file():
+            files = sorted(str(f.relative_to(root)) for f in root.rglob("*")
+                           if f.is_file() and f.suffix in (".md", ".py", ".json"))
+            return f"No file '{name}'. Readable files: {', '.join(files)}"
+        if target.suffix.lower() in (".jpg", ".jpeg", ".png"):
+            return f"'{name}' is an image; it is attached to the prompt or described by get_frame."
+        return target.read_text(errors="replace")[:MAX_READ_CHARS]
+
+    def write_skill(self, source: str) -> str:
+        """Replace skill.py with the full new source. The ONLY way Droid changes the skill."""
+        (self.workspace / "skill.py").write_text(source)
+        issues = validate(source)
+        self.bus.emit("droid.check", round=self.round, tool="write_skill", ok=not issues,
+                      lines=source.count("\n") + 1)
+        if not issues:
+            return "Saved skill.py. Static checks PASS. Next: simulate_skill."
+        listed = "\n".join(f"- {i}" for i in issues)
+        return f"Saved skill.py, but static checks FAIL (fix and call write_skill again):\n{listed}"
+
     def get_scene(self) -> str:
         return _scene_table(self.scene)
 
@@ -172,6 +204,10 @@ class RepairTools:
     def functions(self) -> List[Tuple[str, str, Callable]]:
         """(name, description, function) for each SDK MCP tool."""
         return [
+            ("read_file", "Read a file in your workspace: AGENTS.md, API.md, LESSONS.md, failure.md, skill.py, "
+                          "scene.json or library/<skill>.py.", self.read_file),
+            ("write_skill", "Save the COMPLETE new skill.py (the whole file, not a diff). This is the only way "
+                            "to change the skill; the static checker runs immediately.", self.write_skill),
             ("validate_skill", "Run the static safety checker on your current skill.py.", self.validate_skill),
             ("simulate_skill", "Run your current skill.py in simulation on a copy of the real table. "
                                "Returns PASS/FAIL, the trace and the safety report. Limited runs per round.",

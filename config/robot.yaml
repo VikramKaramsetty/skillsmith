@@ -62,7 +62,9 @@ droid:                              # see docs/NORTH_STAR.md
   timeout_s: 240
   # SDK controls
   autonomy: low                     # droid_sdk.Autonomy
-  disabled_tools: [Execute]         # no shell; Droid uses our validate_skill/simulate_skill tools
+  disabled_tools: [Execute, Script, AskUser]   # no shell; no Script (droid-sdk 0.5 can't parse its
+                                              # permission requests); no mid-run questions. Droid reads
+                                              # and writes ONLY through our read_file/write_skill tools.
   restrict_tools: []                # optional built-in allowlist; WS5.1 sets it from the droid.tools event
   sim_tool_budget: 3                # simulate_skill calls Droid may make per round
   attach_snapshot: true             # send the failure camera frame as an image

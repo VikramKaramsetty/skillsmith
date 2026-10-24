@@ -81,7 +81,7 @@ def test_draft_then_repair_reuses_one_session(tmp_path, droid):
     assert session.opened and session.closed
     assert len(session.prompts) == 2
     draft_prompt, repair_prompt = (p for p, _ in session.prompts)
-    assert "Read AGENTS.md" in draft_prompt and "lost blue cup" in repair_prompt
+    assert "read_file" in draft_prompt and "skill_source" in draft_prompt and "lost blue cup" in repair_prompt
     assert (author.workspace(bus.run_id) / "skill.py").read_text() == V2
 
 
@@ -97,9 +97,10 @@ def test_session_is_configured_with_tight_controls(tmp_path, droid):
     s = droid.sessions[0]
     assert s.model == "fast-model" and s.reasoning_effort is fake.ReasoningEffort.HIGH
     assert str(s.runtime.executable) == "/opt/bin/droid"
-    assert s.config.autonomy is fake.Autonomy.LOW and s.config.disabled_tools == ["Execute"]
+    assert s.config.autonomy is fake.Autonomy.LOW and s.config.disabled_tools == ["Execute", "Script", "AskUser"]
     assert s.config.restrict_tools is None
-    assert s.config.system_prompt["append"] == author_mod.SYSTEM_APPEND
+    append = s.config.system_prompt["append"]
+    assert append.startswith(author_mod.SYSTEM_APPEND) and "# API.md" in append and "# AGENTS.md" in append
     (server,) = s.config.mcp_servers
     assert server.name == MCP_SERVER_NAME and tuple(t.name for t in server.tools) == TOOL_NAMES
     _, kwargs = s.prompts[0]

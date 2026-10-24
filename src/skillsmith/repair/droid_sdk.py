@@ -43,18 +43,20 @@ from skillsmith.repair.workspace import lessons_path, prepare_workspace, workspa
 from skillsmith.types import Scene, TaskSpec
 
 SYSTEM_APPEND = (
-    "You write and repair robot skills for the Skillsmith arm. Your working directory holds "
-    "AGENTS.md (rules), API.md (the only API a skill may use), LESSONS.md (what earlier repairs "
-    "learned), library/ (saved skills) and skill.py, the only file you may edit. You cannot run "
-    "shell commands. Use the skillsmith tools: get_frame, get_object_track and compare_with_success "
-    "when the evidence is not enough, validate_skill, then simulate_skill on your final version "
-    "before you finish. Reply with the requested JSON."
+    "You write and repair robot skills for the Skillsmith arm. Use ONLY the skillsmith tools: "
+    "read_file (AGENTS.md, API.md, LESSONS.md, failure.md, skill.py, library/<name>.py), "
+    "write_skill (save the COMPLETE new skill.py; the static checker runs at once; it is the only "
+    "way to change the skill), validate_skill, simulate_skill, and get_frame / get_object_track / "
+    "compare_with_success when the evidence is not enough. Do not use any other tool and do not ask "
+    "questions. Make the smallest change that fixes the failure and reply with the requested JSON. "
+    "Put the COMPLETE new skill.py in `skill_source`: that is how your fix is applied (the "
+    "orchestrator saves it and re-runs every check). The rules and the skill API follow."
 )
 
 PROMPT_HEADER = """\
-Read AGENTS.md, API.md and LESSONS.md, then the evidence below. Fix skill.py with the smallest
-change that addresses the failure, check it with validate_skill and simulate_skill, then reply
-with the JSON result.
+The evidence is below; AGENTS.md and API.md are in your instructions. Read skill.py and LESSONS.md
+with read_file if you need them, then reply with the JSON result. Put the COMPLETE new skill.py in
+`skill_source` (the smallest change that fixes the failure).
 
 ---
 
@@ -111,11 +113,20 @@ class DroidSDKAuthor:
             self._drop_session(ctx.run_id)  # a broken session must not be reused next round
             raise
         new = (ws / "skill.py").read_text()
+        out = self.last_result or {}
+        proposed = out.get("skill_source")
+        if new == source and isinstance(proposed, str) and proposed.strip() and proposed != source:
+            # Droid's fix arrives in its structured result; OUR code writes it (Droid never writes directly).
+            new = proposed if proposed.endswith("\n") else proposed + "\n"
+            (ws / "skill.py").write_text(new)
+            self.bus.emit("droid.check", round=ctx.round, tool="skill_source", ok=True, lines=new.count("\n"))
+        if new == source:
+            self.bus.emit("error", where="droid.round", round=ctx.round,
+                          message="Droid returned without a changed skill (no write_skill call, no new skill_source)")
         if not _succeeded(result) and new == source:
             message = f"Droid finished with '{getattr(result, 'subtype', '?')}' without changing skill.py"
             self.bus.emit("error", where="droid.round", round=ctx.round, message=message)
             raise RuntimeError(message)
-        out = self.last_result or {}
         if out.get("lesson") and append_lesson(lessons_path(self.cfg), task.text, out["lesson"]):
             self.bus.emit("droid.lesson", round=ctx.round, lesson=out["lesson"])
         return new
@@ -199,7 +210,7 @@ class DroidSDKAuthor:
             mcp_servers=[server],
             disabled_tools=list(self.d.disabled_tools or []) or None,
             restrict_tools=list(self.d.restrict_tools or []) or None,
-            system_prompt={"type": "preset", "preset": "droid", "append": SYSTEM_APPEND},
+            system_prompt={"type": "preset", "preset": "droid", "append": _system_append()},
         )
 
     def build_interactions(self, ws: Path, tools: RepairTools):
@@ -259,6 +270,14 @@ class DroidSDKAuthor:
 
 def _media_type(path: str) -> str:
     return "image/png" if path.lower().endswith(".png") else "image/jpeg"
+
+
+def _system_append() -> str:
+    """Our instructions plus the full rules and skill API, so Droid needs no file tools to start."""
+    from skillsmith.repair.workspace import TEMPLATE_DIR
+
+    docs = "\n\n".join(f"# {name}\n\n{(TEMPLATE_DIR / name).read_text()}" for name in ("AGENTS.md", "API.md"))
+    return f"{SYSTEM_APPEND}\n\n{docs}"
 
 
 def _succeeded(result) -> bool:
