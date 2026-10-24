@@ -49,15 +49,39 @@ Sim Env (WS2.4):
 - The kinematic tip is the grasp point, kinematics.TIP_OFFSET past the fixed jaw (the URDF's
   gripper_frame_link is the fixed jaw's tip). The sim models the jaws as they are, so a skill that
   lands the fixed jaw on an object gets a CollisionError.
-- `snapshot()` returns None and there is no `last_video_path` until WS2.5 renders frames and video
-  (the runtime reads it with getattr, and QA's video test skips while it is absent).
+
+Rendering (WS2.5):
+- `build_world(..., camera=CameraPose)` adds a fixed MuJoCo camera "overhead" at the real overhead
+  camera's pose and pinhole intrinsics, so sim frames line up pixel for pixel with real frames
+  (expected-vs-actual). `overhead_camera(cfg)` reads it from `cameras.calibration`
+  (config/camera.json, WS3.2, X_cam = R @ X_robot + t); with no calibration on this machine it falls
+  back to DEFAULT_CAMERA (a near-overhead view, robot base at the bottom of the image). Lens
+  distortion is not rendered, so expect a few pixels of drift near the image corners.
+- `SimRecorder` renders while physics steps: an mp4 at VIDEO_FPS of sim time (`arm.last_video_path`)
+  and a JPEG of the state at the end of every arm command (kept in memory). Each recording gets its
+  own folder `<repair.runs_dir>/sim/<stamp>-<pid>-<n>/`, created lazily, so the dashboard's
+  runs-dir-only `/video` route can serve it.
+- `arm.last_video_path` finishes the mp4 of the attempt so far and returns its path (None if nothing
+  moved or rendering is unavailable). The runtime reads it right after the skill ends, which is the
+  attempt boundary the arm cannot see; motion after that starts a new recording.
+- `arm.keyframes(trace, phases) -> {phase: path}` writes `<phase>.jpg` next to the mp4: the frame at
+  the end of each phase's last primitive call, matched by wall-clock (`PrimitiveCall.t`). Raw renders;
+  annotation (boxes, crosshair) is WS3's `annotate_keyframe`, which can take the same CameraPose.
+- `snapshot(path)` saves the current overhead render.
+- Rendering never blocks the gate: no GL context (CI needs MUJOCO_GL=egl) means `render_error` is set,
+  a RuntimeWarning is raised, and video, key frames and snapshots return None / {}. `sim.video: false`
+  in the config turns the mp4 off (key frames stay); `sim.video_fps` overrides VIDEO_FPS.
 """
 
 from __future__ import annotations
 
+import itertools
 import math
+import os
 import time
+import warnings
 from dataclasses import dataclass, replace
+from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
 from skillsmith.types import CollisionError, SafetyIssue, Scene, SceneObject, SkillError, Vec3
@@ -108,13 +132,15 @@ class SimWorld:
         return Scene(objects=tuple(objs), t=time.time() if t is None else t, source="sim")
 
 
-def build_world(scene: Optional[Scene], mjcf_path: str) -> SimWorld:
-    """Vendored arm scene + a table at z = 0 + one free body per SceneObject."""
+def build_world(scene: Optional[Scene], mjcf_path: str, camera: Optional[CameraPose] = None) -> SimWorld:
+    """Vendored arm scene + a table at z = 0 + one free body per SceneObject (+ the overhead camera)."""
     import mujoco
 
     spec = mujoco.MjSpec.from_file(str(mjcf_path))
     origin = _robot_origin(spec)
     _add_table(spec, origin)
+    if camera is not None:
+        _add_camera(spec, camera, origin)
     objects: Dict[str, SceneObject] = {}
     for obj in (scene.objects if scene else ()):
         if obj.id in objects:
@@ -180,6 +206,283 @@ def _half_height(obj: SceneObject) -> float:
     return obj.width / 2 if obj.kind == "ball" else obj.height / 2
 
 
+# ---- rendering (WS2.5) ------------------------------------------------------------------------
+OVERHEAD_CAMERA = "overhead"
+DEFAULT_CAMERA = {             # used when config/camera.json is absent (robot frame, metres)
+    "eye": (0.12, 0.0, 0.75), "target": (0.18, 0.0, 0.0), "up": (1.0, 0.0, 0.0),
+    "size": (640, 480), "vfov_deg": 60.0,
+}
+VIDEO_FPS = 10                 # frames per second of SIM time
+VIDEO_MAX_WIDTH = 480          # px; video frames are strided down to at most this, key frames stay full size
+JPEG_QUALITY = 85
+_RECORDING = itertools.count(1)
+
+
+@dataclass
+class CameraPose:
+    """Pinhole camera in the robot frame, OpenCV convention: X_cam = R @ X_robot + t, pixels = K @ X_cam."""
+
+    K: List[List[float]]
+    R: List[List[float]]
+    t: List[float]
+    size: Tuple[int, int]      # (width, height) px
+    source: str = "default"    # "config/camera.json" or "default"
+
+    @classmethod
+    def from_model(cls, cam, source: str) -> CameraPose:
+        """From a WS3 CameraModel (perception.geometry); its size defaults to twice the principal point."""
+        size = cam.size or [round(2 * cam.K[0][2]), round(2 * cam.K[1][2])]
+        return cls(K=[list(map(float, r)) for r in cam.K], R=[list(map(float, r)) for r in cam.R],
+                   t=[float(v) for v in cam.t], size=(int(size[0]), int(size[1])), source=source)
+
+    @classmethod
+    def look_at(cls, eye: Vec3, target: Vec3, up: Vec3, size: Tuple[int, int], vfov_deg: float) -> CameraPose:
+        """Camera at `eye` looking at `target`, with `up` (robot frame) pointing up in the image."""
+        z = _unit(_sub(target, eye))
+        up_in_plane = _sub(up, _scale(z, _dot(up, z)))
+        y = _scale(_unit(up_in_plane), -1.0)        # image y points down
+        x = _cross(y, z)
+        rot = [list(x), list(y), list(z)]
+        t = [-_dot(row, eye) for row in rot]
+        w, h = size
+        f = (h / 2) / math.tan(math.radians(vfov_deg) / 2)
+        return cls(K=[[f, 0.0, w / 2], [0.0, f, h / 2], [0.0, 0.0, 1.0]], R=rot, t=t, size=(w, h))
+
+    def center(self) -> Vec3:
+        """Camera centre in the robot frame: -R^T t."""
+        return tuple(-sum(self.R[r][c] * self.t[r] for r in range(3)) for c in range(3))
+
+    def project(self, p: Vec3) -> Tuple[float, float]:
+        """Robot-frame point -> pixel (u right, v down), no lens distortion."""
+        xc, yc, zc = (_dot(self.R[r], p) + self.t[r] for r in range(3))
+        return self.K[0][0] * xc / zc + self.K[0][2], self.K[1][1] * yc / zc + self.K[1][2]
+
+
+def overhead_camera(cfg) -> CameraPose:
+    """The real overhead camera from `cameras.calibration` (WS3.2), or DEFAULT_CAMERA when not calibrated."""
+    from skillsmith.perception.geometry import CalibrationMissing, CameraModel
+
+    cameras = cfg.get("cameras")
+    rel = cameras.get("calibration") if cameras is not None else None
+    if rel:
+        try:
+            return CameraPose.from_model(CameraModel.load(cfg.path(rel)), source=str(rel))
+        except CalibrationMissing:
+            pass
+    d = DEFAULT_CAMERA
+    return CameraPose.look_at(d["eye"], d["target"], d["up"], d["size"], d["vfov_deg"])
+
+
+def _add_camera(spec, cam: CameraPose, origin: Vec3) -> None:
+    """A fixed world camera matching `cam`: MuJoCo looks down its -z with y up, OpenCV down +z with y down."""
+    import mujoco
+    import numpy as np
+
+    rot = np.array(cam.R, float)
+    cam_to_world = np.column_stack([rot[0], -rot[1], -rot[2]])  # columns: the MuJoCo camera's x, y, z
+    quat = np.zeros(4)
+    mujoco.mju_mat2Quat(quat, cam_to_world.flatten())
+    w, h = cam.size
+    (fx, _, cx), (_, fy, cy), _ = cam.K
+    c = spec.worldbody.add_camera(name=OVERHEAD_CAMERA, pos=list(_add(cam.center(), origin)), quat=list(quat))
+    c.resolution = [w, h]
+    c.sensor_size = [float(w), float(h)]       # one sensor unit per pixel, so focal and principal are in px
+    c.focal_pixel = [float(fx), float(fy)]
+    # MuJoCo shifts the frustum by the opposite of the principal point's offset from the image
+    # centre (checked pixel for pixel in tests/ws2/test_sim_render.py).
+    c.principal_pixel = [float(w / 2 - cx), float(h / 2 - cy)]
+    vis = spec.visual.global_
+    vis.offwidth, vis.offheight = max(vis.offwidth, w), max(vis.offheight, h)
+
+
+class SimRecorder:
+    """Offscreen renders of one SimWorld: the attempt mp4, per-command key frames and snapshots."""
+
+    def __init__(self, world: SimWorld, out_root: Path, video: bool = True, fps: float = VIDEO_FPS):
+        self.world = world
+        self.out_root = Path(out_root)
+        self.video = video
+        self.fps = float(fps)
+        self.render_error: Optional[str] = None
+        self._renderer = None
+        model = world.model
+        if _camera_id(model, OVERHEAD_CAMERA) < 0:
+            self._fail(f"no '{OVERHEAD_CAMERA}' camera in the sim model (build_world was given no camera)")
+        else:
+            w, h = (int(v) for v in model.cam_resolution[_camera_id(model, OVERHEAD_CAMERA)])
+            try:
+                import mujoco
+
+                self._renderer = mujoco.Renderer(model, h, w)
+            except Exception as e:  # no GL context: keep the gate running without frames
+                self._fail(f"{type(e).__name__}: {e} (headless? set MUJOCO_GL=egl)")
+        self._dir: Optional[Path] = None
+        self._writer = None
+        self._video_path: Optional[str] = None
+        self._next_t = 0.0
+        self._marks: List[Tuple[float, bytes]] = []
+        self.last_dir: Optional[Path] = None
+        self.last_video: Optional[str] = None
+
+    @property
+    def ok(self) -> bool:
+        return self._renderer is not None
+
+    def frame(self, data):
+        """RGB uint8 array (h, w, 3) of `data` from the overhead camera."""
+        self._renderer.update_scene(data, camera=OVERHEAD_CAMERA)
+        return self._renderer.render()
+
+    def tick(self, data) -> None:
+        """Called every physics step: add a video frame when VIDEO_FPS sim time has passed."""
+        if not (self.ok and self.video) or data.time + 1e-9 < self._next_t:
+            return
+        self._next_t = data.time + 1.0 / self.fps
+        if self._writer is None:
+            self._open_writer()
+        self._writer.append_data(_video_frame(self.frame(data)))
+
+    def mark(self, data) -> None:
+        """Called at the end of every arm command: keep a JPEG of this state with the wall-clock time."""
+        if self.ok:
+            self._marks.append((time.time(), _jpeg(self.frame(data))))
+
+    def finish(self) -> Optional[str]:
+        """Close the mp4 of the current recording; later frames go to a new recording folder."""
+        if self._writer is not None:
+            self._writer.close()
+            self._writer = None
+            self.last_video = self._video_path
+        if self._dir is not None:
+            self.last_dir, self._dir = self._dir, None
+        return self.last_video
+
+    def restart(self) -> None:
+        """A new attempt (reset_scene): finish the old recording and forget its key frames."""
+        self.finish()
+        self.last_video, self.last_dir = None, None
+        self._marks = []
+        self._next_t = 0.0
+
+    def keyframes(self, trace, phases) -> Dict[str, str]:
+        """{phase: jpg}: the last command-end frame before the call after each phase's last call."""
+        self.finish()
+        if not self._marks or not phases:
+            return {}
+        if self.last_dir is None:  # video off: the key frames still get a recording folder
+            self._recording_dir()
+            self.finish()
+        out_dir = self.last_dir
+        out: Dict[str, str] = {}
+        for p in phases:
+            jpg = _frame_before(self._marks, _phase_end(trace, p.end_index))
+            if jpg is not None:
+                path = out_dir / f"{p.phase}.jpg"
+                path.write_bytes(jpg)
+                out[p.phase] = str(path)
+        return out
+
+    def snapshot(self, data, path: str) -> Optional[str]:
+        if not self.ok:
+            return None
+        import imageio.v3 as iio
+
+        out = Path(path)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        rgb = self.frame(data)
+        if out.suffix.lower() in (".jpg", ".jpeg"):
+            out.write_bytes(_jpeg(rgb))
+        else:
+            iio.imwrite(out, rgb)  # format from the extension (.png for the evidence snapshot, etc.)
+        return str(out)
+
+    def close(self) -> None:
+        self.finish()
+        if self._renderer is not None:
+            self._renderer.close()
+            self._renderer = None
+
+    def _fail(self, why: str) -> None:
+        self.render_error = why
+        warnings.warn(f"sim rendering disabled, no video or key frames: {why}", RuntimeWarning, stacklevel=3)
+
+    def _recording_dir(self) -> Path:
+        if self._dir is None:
+            stamp = time.strftime("%Y%m%d-%H%M%S")
+            self._dir = self.out_root / f"{stamp}-{os.getpid()}-{next(_RECORDING)}"
+            self._dir.mkdir(parents=True, exist_ok=True)
+        return self._dir
+
+    def _open_writer(self) -> None:
+        import imageio.v2 as imageio
+
+        path = self._recording_dir() / "attempt.mp4"
+        self._writer = imageio.get_writer(str(path), fps=self.fps, codec="libx264", quality=6,
+                                          macro_block_size=2, pixelformat="yuv420p")
+        self._video_path = str(path)
+
+
+def _phase_end(trace, end_index: int) -> float:
+    """Wall-clock time a phase ended: the start of the first call after it (inf if it ran to the end)."""
+    return min((c.t for c in trace if c.index > end_index), default=math.inf)
+
+
+def _frame_before(marks: List[Tuple[float, bytes]], t: float) -> Optional[bytes]:
+    jpg = None
+    for mt, data in marks:
+        if mt > t:
+            break
+        jpg = data
+    return jpg
+
+
+def _video_frame(rgb):
+    """Strided down to VIDEO_MAX_WIDTH, cropped to even sides for yuv420p."""
+    step = max(1, math.ceil(rgb.shape[1] / VIDEO_MAX_WIDTH))
+    small = rgb[::step, ::step]
+    h, w = small.shape[0] // 2 * 2, small.shape[1] // 2 * 2
+    return small[:h, :w]
+
+
+def _jpeg(rgb) -> bytes:
+    import imageio.v3 as iio
+
+    return iio.imwrite("<bytes>", rgb, extension=".jpg", quality=JPEG_QUALITY)
+
+
+def _camera_id(model, name: str) -> int:
+    import mujoco
+
+    return mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_CAMERA, name)
+
+
+def _add(a: Sequence[float], b: Sequence[float]) -> Vec3:
+    return (a[0] + b[0], a[1] + b[1], a[2] + b[2])
+
+
+def _sub(a: Sequence[float], b: Sequence[float]) -> Vec3:
+    return (a[0] - b[0], a[1] - b[1], a[2] - b[2])
+
+
+def _scale(a: Sequence[float], s: float) -> Vec3:
+    return (a[0] * s, a[1] * s, a[2] * s)
+
+
+def _dot(a: Sequence[float], b: Sequence[float]) -> float:
+    return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+
+
+def _cross(a: Sequence[float], b: Sequence[float]) -> Vec3:
+    return (a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0])
+
+
+def _unit(a: Sequence[float]) -> Vec3:
+    n = math.sqrt(_dot(a, a))
+    if n < 1e-9:
+        raise ValueError(f"camera direction {tuple(a)} has no length (eye == target, or up along the view)")
+    return _scale(a, 1.0 / n)
+
+
 # ---- the sim Env (WS2.4) ----------------------------------------------------------------------
 FLOOR_NAME = "floor"
 JAW_BODIES = ("gripper", "moving_jaw_so101_v1")   # fixed jaw (on the gripper body), moving jaw
@@ -197,10 +500,11 @@ class SimArm:
 
     name = "sim"
 
-    def __init__(self, world: SimWorld, cfg, home: Sequence[float]):
+    def __init__(self, world: SimWorld, cfg, home: Sequence[float], recorder: Optional[SimRecorder] = None):
         import mujoco
 
         self._mj = mujoco
+        self._rec = recorder
         self.world = world
         self.cfg = cfg
         self.model = world.model
@@ -228,6 +532,12 @@ class SimArm:
         return q + [round(100.0 * (float(self.data.qpos[self._grip_q]) - lo) / (hi - lo), 2)]
 
     def move_joints(self, target: Sequence[float], speed_dps: float) -> None:
+        try:
+            self._move_joints(target, speed_dps)
+        finally:
+            self._mark()
+
+    def _move_joints(self, target: Sequence[float], speed_dps: float) -> None:
         goal = [float(v) for v in target[:5]]
         self._check_limits(goal)
         start = self.joints()[:5]
@@ -257,6 +567,7 @@ class SimArm:
                 self._step()
         finally:
             self._gripping = False
+            self._mark()
         if closing and self._held is None:
             self._attach(self._pinched())
 
@@ -283,13 +594,37 @@ class SimArm:
         self._gripping = False
         self._grip_pose: Tuple[object, object] = (None, None)  # held: pos in the gripper frame, world quat
         self._issues: List[SafetyIssue] = []
+        if self._rec is not None:
+            self._rec.restart()
 
     # ---- Perception ---------------------------------------------------------------------------
     def observe(self) -> Scene:
         return self.world.observe(self.data)
 
     def snapshot(self, path: str) -> Optional[str]:
-        return None
+        return self._rec.snapshot(self.data, path) if self._rec is not None else None
+
+    # ---- rendering (WS2.5) --------------------------------------------------------------------
+    @property
+    def last_video_path(self) -> Optional[str]:
+        """The mp4 of the attempt so far (finished on read), or None if nothing was rendered."""
+        return self._rec.finish() if self._rec is not None else None
+
+    @property
+    def render_error(self) -> Optional[str]:
+        return self._rec.render_error if self._rec is not None else "no recorder"
+
+    def keyframes(self, trace, phases) -> Dict[str, str]:
+        """{phase: jpg path} rendered from the overhead camera at the end of each PhaseCheck."""
+        return self._rec.keyframes(trace, phases) if self._rec is not None else {}
+
+    def close(self) -> None:
+        if self._rec is not None:
+            self._rec.close()
+
+    def _mark(self) -> None:
+        if self._rec is not None:
+            self._rec.mark(self.data)
 
     # ---- physics ------------------------------------------------------------------------------
     def _n(self, seconds: float) -> int:
@@ -303,6 +638,8 @@ class SimArm:
         self._mj.mj_step(self.model, self.data)
         if self._held is not None:
             self._pin(self._held)
+        if self._rec is not None:
+            self._rec.tick(self.data)  # before the contact check, so a collision's frame is in the video
         self._check_contacts()
 
     def _arrived(self, goal: Sequence[float]) -> bool:
@@ -480,5 +817,16 @@ def make_sim_env(cfg, scene: Optional[Scene] = None):
     home = kin.ik((hx, hy, hz), [*HOME_SEED, float(cfg.robot.gripper_open)])
     if home is None:
         raise ValueError(f"robot.home_xyz {cfg.robot.home_xyz} is unreachable")
-    arm = SimArm(build_world(scene, mjcf), cfg, home)
+    world = build_world(scene, mjcf, camera=overhead_camera(cfg))
+    arm = SimArm(world, cfg, home, recorder=_make_recorder(cfg, world))
     return Env("sim", arm, kin, arm)
+
+
+def _make_recorder(cfg, world: SimWorld) -> SimRecorder:
+    """Recordings go under <repair.runs_dir>/sim; `sim.video` / `sim.video_fps` are optional config keys."""
+    repair = cfg.get("repair")
+    runs = cfg.path(repair.get("runs_dir", "runs") if repair is not None else "runs")
+    sim = cfg.get("sim")
+    video = bool(sim.get("video", True)) if sim is not None else True
+    fps = float(sim.get("video_fps", VIDEO_FPS)) if sim is not None else VIDEO_FPS
+    return SimRecorder(world, runs / "sim", video=video, fps=fps)
