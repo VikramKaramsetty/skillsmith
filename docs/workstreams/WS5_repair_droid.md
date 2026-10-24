@@ -17,6 +17,7 @@ designed trigger (task failure), controlled permissions, and work shown on scree
 - [ ] WS5.7 Lessons in action: show a lesson from one task changing Droid's first draft on the next, with a test
 - [ ] WS5.8 Audit trail: commit each saved skill version with Droid's diagnosis and change as the commit message
 - [ ] WS5.9 Stage profile for demo speed: 2 rounds, sim budget 1, 90 s per round, fast model, session warmed up before the demo
+- [ ] WS5.10 Better images for Droid: cropped before/after pair plus 3-4 key frames (pickup, carry, place) attached to the repair call
 
 ## Design notes
 - **Read `docs/NORTH_STAR.md` first.** WS5 *is* the award: Droid SDK doing real work,

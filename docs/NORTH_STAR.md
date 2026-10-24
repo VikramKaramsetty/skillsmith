@@ -73,7 +73,9 @@ How each one is met (keep this table true; it is our judging checklist):
 - scene before and after: every object's x, y, z, top and width
 - the full trace: every primitive call with its arguments, gripper tip position before and
   after, success, and any error with the exact skill line that raised it
-- the camera snapshot, attached as an image
+- images attached to Droid's call (no extra latency): a **cropped before/after pair** of the
+  task's objects plus **3–4 key frames** from the attempt (pickup, carry, place), so Droid can
+  see where it went wrong (WS5.10)
 - earlier rounds in this run ("do not repeat these") and any human reviewer note
 - `LESSONS.md`: everything Droid has learned on earlier tasks
 - the working library skills it can call or copy
@@ -120,7 +122,7 @@ Judges watch the repair happen, so it must be fast and it must read as content, 
 |---|---|---|
 | **Detect** | YOLO-World / YOLO-E open-vocabulary detector on the GX10 (fast); HSV colour blobs as the backup | finds objects and positions (WS3.7, promoted from stretch) |
 | **Decide** | geometric predicates (`on_top`, `inside`, ...) on the detected positions | **the pass/fail authority**: precise and numeric |
-| **Explain** | a local VLM on the GX10 (Qwen-VL class), given **cropped** before/after images | advisory second opinion and a plain-language reason for Droid (WS3.8). It never overrides geometry; if it disagrees with a geometric pass, that counts as a fail and the disagreement goes into Droid's evidence. |
+| **Explain** | **Droid** does the failure reasoning from the trace, the numbers and the images. Optionally a **frontier vision API** gives a second opinion on **cropped** before/after images (pass/fail + one sentence, a few seconds per call; measure it) | advisory only (WS3.8). It never overrides geometry; if it disagrees with a geometric pass, that counts as a fail and its sentence goes into Droid's evidence. No local VLM: Droid is already a frontier model call that sees the images, and Droid already needs the internet, so the API adds no new failure point. |
 
 Why geometry decides: research reports VLM success judges near 0.77 balanced accuracy, under
 0.60 on contact-heavy tasks, with cropping helping (FailBench, arXiv 2609.03611), and VLMs
@@ -151,7 +153,7 @@ The dashboard's improvement panel (WS6.7) shows these numbers.
 - **Should:** YOLO-World/YOLO-E as the main detector; the post-grasp wrist check; a second task
   that reuses the saved skill ("build a tower"); benchmark numbers for fix rate, one-round fix
   rate and seconds-to-fix (WS5.3); a lesson from task 1 visibly used in task 2.
-- **Stretch:** the VLM "explain" layer, self-calibration, pyramid.
+- **Stretch:** the frontier-API vision second opinion, self-calibration, pyramid.
 - **Not this project:** VLA/pi05 policies driving the arm, Droid controlling motors, a chat UI,
   training models, millimetre-precision tasks.
 
