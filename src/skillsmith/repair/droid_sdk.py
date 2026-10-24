@@ -46,8 +46,9 @@ SYSTEM_APPEND = (
     "You write and repair robot skills for the Skillsmith arm. Your working directory holds "
     "AGENTS.md (rules), API.md (the only API a skill may use), LESSONS.md (what earlier repairs "
     "learned), library/ (saved skills) and skill.py, the only file you may edit. You cannot run "
-    "shell commands. Use the skillsmith tools: validate_skill, then simulate_skill on your final "
-    "version before you finish. Reply with the requested JSON."
+    "shell commands. Use the skillsmith tools: get_frame, get_object_track and compare_with_success "
+    "when the evidence is not enough, validate_skill, then simulate_skill on your final version "
+    "before you finish. Reply with the requested JSON."
 )
 
 PROMPT_HEADER = """\
@@ -97,7 +98,8 @@ class DroidSDKAuthor:
             tools = RepairTools(self.cfg, self.bus, ws, task, ctx.library, self.make_check_env,
                                 sim_budget=self.d.get("sim_tool_budget", 3))
             self._tools[ctx.run_id] = tools
-        tools.update(ctx.scene, ctx.round, ctx.library)
+        tools.update(ctx.scene, ctx.round, ctx.library,  # RepairContext fields, if the loop sent them
+                     attempt=getattr(ctx, "attempt", None), expected=getattr(ctx, "expected", None))
 
         self.bus.emit("droid.started", round=ctx.round, via="droid-sdk", workspace=str(ws),
                       autonomy=self.d.autonomy, disabled_tools=list(self.d.disabled_tools or []))

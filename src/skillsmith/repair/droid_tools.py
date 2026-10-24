@@ -4,7 +4,9 @@
   edits only to skill.py in the workspace, tool calls only to our `skillsmith` server,
   everything else refused with a reason Droid can read.
 - `RepairTools` are our functions, exposed to Droid as SDK MCP tools. They run in our process,
-  on the sim/fake check env only. The real arm is never reachable from here.
+  on the sim/fake check env only. The real arm is never reachable from here. The evidence tools
+  (get_frame, get_object_track, compare_with_success; repair/evidence_tools.py) only read the
+  recorded attempt.
 - `REPAIR_RESULT_SCHEMA` is the structured result Droid must return each round.
 - `append_lesson()` grows skills/lessons.md, which every future prompt includes.
 """
@@ -13,13 +15,14 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
-from typing import Callable, Dict, List, Tuple
+from typing import Callable, Dict, List, Optional, Tuple
 
 from skillsmith.events import EventBus, NullBus
+from skillsmith.repair import evidence_tools
 from skillsmith.repair.report import _scene_table, attempt_report
 from skillsmith.skills.runtime import run_skill
 from skillsmith.skills.validator import validate
-from skillsmith.types import Scene, TaskSpec
+from skillsmith.types import AttemptResult, Scene, TaskSpec
 
 MCP_SERVER_NAME = "skillsmith"
 
@@ -76,7 +79,8 @@ def decide(action, workspace: Path) -> Tuple[bool, str]:
 
 
 # ---- tools ---------------------------------------------------------------------------------
-TOOL_NAMES = ("validate_skill", "simulate_skill", "get_scene", "list_library", "read_library_skill")
+TOOL_NAMES = ("validate_skill", "simulate_skill", "get_scene", "list_library", "read_library_skill",
+              "get_frame", "get_object_track", "compare_with_success")
 
 
 class RepairTools:
@@ -94,9 +98,14 @@ class RepairTools:
         self.scene: Scene | None = None
         self.round = 0
         self.sim_runs = 0
+        self.attempt: Optional[AttemptResult] = None   # the failed run this round repairs
+        self.expected: Optional[AttemptResult] = None  # a passing run of the same skill (sim gate)
+        self.last_pass: Optional[AttemptResult] = None  # Droid's latest passing simulate_skill run
 
-    def update(self, scene: Scene | None, round_: int, library: Dict[str, str]) -> None:
+    def update(self, scene: Scene | None, round_: int, library: Dict[str, str],
+               attempt: Optional[AttemptResult] = None, expected: Optional[AttemptResult] = None) -> None:
         self.scene, self.round, self.library, self.sim_runs = scene, round_, library, 0
+        self.attempt, self.expected = attempt, expected
 
     def _source(self) -> str:
         return (self.workspace / "skill.py").read_text()
@@ -127,6 +136,8 @@ class RepairTools:
             env.close()
         self.bus.emit("droid.check", round=self.round, tool="simulate_skill", run=self.sim_runs,
                       ok=result.ok, reason=result.reason())
+        if result.ok:
+            self.last_pass = result
         verdict = "PASS: the task succeeded in simulation." if result.ok else f"FAIL: {result.reason()}"
         return f"{verdict}\n\n{attempt_report(self.task, result, [])}"
 
@@ -139,6 +150,18 @@ class RepairTools:
     def read_library_skill(self, name: str) -> str:
         return self.library.get(name, f"No saved skill named '{name}'. Call list_library.")
 
+    def get_frame(self, phase: str = "") -> str:
+        return evidence_tools.get_frame(self.attempt, phase, self.workspace, self.round)
+
+    def get_object_track(self, name: str = "") -> str:
+        return evidence_tools.get_object_track(self.attempt, name)
+
+    def compare_with_success(self, phase: str = "") -> str:
+        reference, kind = self.expected, "the sim gate run of this skill"
+        if reference is None and self.last_pass is not None:
+            reference, kind = self.last_pass, "your last passing simulate_skill run"
+        return evidence_tools.compare_with_success(self.attempt, reference, kind, phase, self.workspace, self.round)
+
     def functions(self) -> List[Tuple[str, str, Callable]]:
         """(name, description, function) for each SDK MCP tool."""
         return [
@@ -149,6 +172,18 @@ class RepairTools:
             ("get_scene", "Table of the objects currently detected on the table.", self.get_scene),
             ("list_library", "Names of saved, working skills you can call with skills.call().", self.list_library),
             ("read_library_skill", "Source code of a saved skill.", self.read_library_skill),
+            ("get_frame", "One phase of the failed attempt (approach, grasp, lift, carry, place, release, "
+                          "retreat, or crop_before/crop_after): its check, its calls and its annotated "
+                          "key frame, copied into frames/ for you to Read. Empty phase = the failing "
+                          "phase.", self.get_frame),
+            ("get_object_track", "Where one object (e.g. 'blue cup') was through the failed attempt: "
+                                 "camera positions before, at each look() and after, plus the stretch "
+                                 "it rode in the gripper.", self.get_object_track),
+            ("compare_with_success", "One phase of the failed attempt next to the same phase of a run "
+                                     "that passed (the sim gate, else your last passing simulate_skill): "
+                                     "checks, call by call tip positions, frames and end positions. "
+                                     "Empty phase = the failing phase.",
+             self.compare_with_success),
         ]
 
 

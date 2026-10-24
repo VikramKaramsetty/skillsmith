@@ -51,11 +51,13 @@ def _failing_index(attempt: AttemptResult) -> Optional[int]:
     return None
 
 
-def _trace_table(attempt: AttemptResult, limit: int = 40) -> str:
+def _trace_table(attempt: AttemptResult, limit: int = 40, calls: Optional[list] = None) -> str:
+    """The attempt's trace (or just `calls` from it), with the failing call marked."""
+    calls = attempt.trace if calls is None else calls
     rows = ["| # | call | args | tip before | tip after | ok | result / error |",
             "|---|---|---|---|---|---|---|"]
     failing = None if attempt.ok else _failing_index(attempt)
-    for c in attempt.trace[:limit]:
+    for c in calls[:limit]:
         args = ", ".join(f"{k}={v:.3f}" if isinstance(v, float) else f"{k}={v}"
                          for k, v in c.args.items() if v is not None)
         res = c.error or ("" if c.result is None else str(c.result))
@@ -63,8 +65,8 @@ def _trace_table(attempt: AttemptResult, limit: int = 40) -> str:
             res = f"**← failed here** {res}".rstrip()
         rows.append(f"| {c.index} | {c.name} | {args} | {_fmt_xyz(c.ee_before)} | "
                     f"{_fmt_xyz(c.ee_after)} | {'✓' if c.ok else '✗'} | {res} |")
-    if len(attempt.trace) > limit:
-        rows.append(f"| … | {len(attempt.trace) - limit} more calls | | | | | |")
+    if len(calls) > limit:
+        rows.append(f"| … | {len(calls) - limit} more calls | | | | | |")
     return "\n".join(rows) + "\n"
 
 

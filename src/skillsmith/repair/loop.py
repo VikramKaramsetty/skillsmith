@@ -18,7 +18,7 @@ from typing import Callable, List, Optional, Tuple
 
 from skillsmith.events import EventBus
 from skillsmith.hal.base import Env
-from skillsmith.repair.protocols import Approver, AuthorContext, SkillAuthor
+from skillsmith.repair.protocols import Approver, RepairContext, SkillAuthor
 from skillsmith.repair.report import attempt_report, rejection_report, static_report
 from skillsmith.repair.workspace import lessons_path
 from skillsmith.skills.library import SkillLibrary
@@ -50,6 +50,7 @@ class RepairLoop:
         self.bus = bus
         self.history: List[str] = []
         self._last_check: Optional[AttemptResult] = None
+        self._gate_failure: Optional[AttemptResult] = None  # the sim run the last gate rejected
 
     # ---- main entry -----------------------------------------------------------------
     def run(self, task: TaskSpec) -> RunResult:
@@ -74,7 +75,7 @@ class RepairLoop:
                     if rounds >= max_rounds:
                         break
                     rounds += 1
-                    source = self._repair(task, source, report, rounds, scene)
+                    source = self._repair(task, source, report, rounds, scene, self._gate_failure)
                     continue
                 approved, note = self._approve(task, source, rounds)
                 if not approved:
@@ -104,7 +105,7 @@ class RepairLoop:
             self.history.append(f"v{attempt.version} on {attempt.env}: {attempt.reason()}")
             self._reset_scene()
             scene = self._observe()
-            source = self._repair(task, source, report, rounds, scene)
+            source = self._repair(task, source, report, rounds, scene, attempt, expected)
             needs_gates = True
 
         bus.emit("run.finished", ok=False, rounds=rounds)
@@ -112,6 +113,7 @@ class RepairLoop:
 
     # ---- steps ----------------------------------------------------------------------
     def _gates(self, task: TaskSpec, source: str, scene: Scene, rnd: int) -> Tuple[bool, str]:
+        self._gate_failure = None
         issues = validate(source)
         self.bus.emit("gate.result", gate="static", ok=not issues, detail="; ".join(map(str, issues)) or "ok")
         if issues:
@@ -135,6 +137,7 @@ class RepairLoop:
             self._last_check = sim
             return True, ""
         self.history.append(f"v{rnd} failed in {env.name}: {sim.reason()}")
+        self._gate_failure = sim
         return False, attempt_report(task, sim, self.history, lessons=self._lessons())
 
     def _approve(self, task: TaskSpec, source: str, rnd: int) -> Tuple[bool, str]:
@@ -153,16 +156,21 @@ class RepairLoop:
             self.history.append(f"v{rnd} rejected by human: {note or 'no note'}")
         return approved, note
 
-    def _repair(self, task: TaskSpec, source: str, report: str, rnd: int, scene: Scene) -> str:
+    def _repair(self, task: TaskSpec, source: str, report: str, rnd: int, scene: Scene,
+                attempt: Optional[AttemptResult] = None, expected: Optional[AttemptResult] = None) -> str:
+        """`attempt` (the failed run) and `expected` (a passing run of the same skill) back
+        Droid's evidence tools; both are None after a static or reviewer rejection."""
         self.bus.emit("repair.started", round=rnd, reason=report.splitlines()[0] if report else "")
         snapshot = self._snapshot(rnd)
-        new = self.author.repair(task, source, report, self._ctx(rnd, scene, snapshot))
+        ctx = self._ctx(rnd, scene, snapshot)
+        ctx.attempt, ctx.expected = attempt, expected
+        new = self.author.repair(task, source, report, ctx)
         self.bus.emit("skill.diff", old_version=rnd - 1, new_version=rnd, diff=_diff(source, new))
         return new
 
     # ---- helpers --------------------------------------------------------------------
-    def _ctx(self, rnd: int, scene: Optional[Scene], snapshot: Optional[str] = None) -> AuthorContext:
-        return AuthorContext(self.bus.run_id, rnd, scene, snapshot, self.library.sources())
+    def _ctx(self, rnd: int, scene: Optional[Scene], snapshot: Optional[str] = None) -> RepairContext:
+        return RepairContext(self.bus.run_id, rnd, scene, snapshot, self.library.sources())
 
     def _lessons(self) -> Optional[str]:
         path = lessons_path(self.cfg)

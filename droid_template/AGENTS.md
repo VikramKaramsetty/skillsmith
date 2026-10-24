@@ -14,6 +14,13 @@ SO-ARM101 robot arm by combining safe primitive moves. You never control motors 
    before/after, the failing call marked **← failed here**) and the **scene before/after**
    tables. The camera snapshot and annotated key frames are attached as images (copies in
    `frames/`). `library/*.py` are working skills you can call or copy from.
+   If that is not enough to be sure, pull more evidence (fast, no simulation budget):
+   - `get_frame(phase)`: one phase's check, its calls and its annotated frame (saved into
+     `frames/`; open it with Read). Phases: approach, grasp, lift, carry, place, release, retreat.
+   - `get_object_track(name)`: where one object was through the attempt, e.g. when a held
+     cup left the gripper.
+   - `compare_with_success(phase)`: that phase next to the same phase of a run that passed,
+     call by call, with how far apart the gripper tip was.
 3. Make the **smallest change** to `skill.py` that fixes the stated failure. Never rewrite
    working parts. You are being timed live: aim to fix it in **one round**.
 4. Edit **only `skill.py`**. Any other edit, and any shell command, is refused.
