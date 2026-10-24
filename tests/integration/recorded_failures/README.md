@@ -27,8 +27,13 @@ Only `env == "real"` attempts are accepted; fake and sim runs are covered by WS4
 
 ## What the test enforces
 
+- Every recording is complete: `attempt.finished` carries `safety` (a report, not null) and
+  `scene_after` (a Scene or an explicit null). Replay never fills a gap: an absent safety report
+  is not a clean one, and a `look()` mid-skill is not the scene after it. An incomplete recording
+  is listed and fails the test; it is never scored. Record again once the runtime emits both.
 - No failed attempt comes back with no classification.
 - No environment failure gets a skill label (that would send a table problem to Droid as code).
 - Precision per predicted class is at least `MIN_PRECISION`; `UNKNOWN` is an abstention and never
-  lowers precision. Overall score (correct +1, UNKNOWN 0, wrong −2) is above zero.
+  lowers precision. Recall per true class (human `UNKNOWN` excluded) is at least `MIN_RECALL`, so
+  abstaining on a whole class does not pass. Overall score (correct +1, UNKNOWN 0, wrong −2) is above zero.
 - Every recorded `SLIP_IN_CARRY` (the G5 demo failure) is labelled `SLIP_IN_CARRY`.

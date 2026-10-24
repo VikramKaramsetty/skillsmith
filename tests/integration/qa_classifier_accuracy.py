@@ -11,6 +11,11 @@ Hand labels live next to the recordings in `labels.yaml` (see recorded_failures/
       label: SLIP_IN_CARRY        # the true class, a key of types.FAILURE_CLASSES
       note: rim grip, cup slid out on the 16 cm carry
 
+Replay never invents evidence. `safety` and `scene_after` come only from `attempt.finished`; a
+`scene.observed` inside the attempt is a mid-skill look(), not the scene after it, and an absent
+safety report is not a clean one. A recording that lacks them is *incomplete*: it is listed, never
+scored, because the classifier would be judged on evidence it never had.
+
 Scoring follows the rule "a wrong label is worse than UNKNOWN": correct = +1, UNKNOWN = 0,
 wrong = -WRONG_PENALTY. Precision per predicted class ignores UNKNOWN (an honest abstention is not
 a false positive). A *skill* label on an *environment* failure is counted on its own, because it
@@ -28,7 +33,7 @@ import sys
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Dict, List, Optional
+from typing import Callable, Dict, List, Optional, Tuple
 
 import yaml
 
@@ -73,36 +78,55 @@ def _call(d: dict) -> PrimitiveCall:
                          ok=d.get("ok", True), result=d.get("result"), error=d.get("error"))
 
 
-def _safety(d: Optional[dict]) -> SafetyReport:
-    """attempt.finished carries no safety report yet (see HANDOFF); assume clean when absent."""
-    if not d:
-        return SafetyReport(ok=True)
+@dataclass
+class Replayed:
+    """One attempt rebuilt from events. `missing` names evidence the recording lacks; then the
+    matching attempt field is None (safety included), never a guess."""
+    attempt: AttemptResult
+    missing: Tuple[str, ...] = ()
+
+
+def _safety(d: Optional[dict]) -> Optional[SafetyReport]:
+    """None when attempt.finished has no safety report: absent is unknown, not clean."""
+    if d is None:
+        return None
     return SafetyReport(ok=d["ok"], issues=[SafetyIssue(**i) for i in d.get("issues", [])])
 
 
-def _attempt(window: List[dict], scene_before: Optional[Scene]) -> AttemptResult:
+def _missing(finish: dict) -> Tuple[str, ...]:
+    """`scene_after: null` is a recorded fact (no scene); a missing key or a null safety is a gap."""
+    gaps = [] if finish.get("safety") is not None else ["safety"]
+    return tuple(gaps + ([] if "scene_after" in finish else ["scene_after"]))
+
+
+def _attempt(window: List[dict], scene_before: Optional[Scene]) -> Replayed:
     start, finish = window[0]["data"], window[-1]["data"]
-    trace, verify, scene_seen = [], None, None
+    trace, verify = [], None
     for e in window[1:-1]:
         if e["type"] == "primitive.call":
             trace.append(_call(e["data"]))
         elif e["type"] == "verify.result":
             verify = VerifyResult(ok=e["data"]["ok"], detail=e["data"]["detail"])
-        elif e["type"] == "scene.observed":
-            scene_seen = _scene(e["data"]["scene"])
-    return AttemptResult(
+    attempt = AttemptResult(
         ok=finish["ok"], env=start["env"], skill=start["skill"], version=start["version"], trace=trace,
         error=finish.get("error"), verify=verify, safety=_safety(finish.get("safety")),
         scene_before=_scene(finish.get("scene_before")) or scene_before,
-        scene_after=_scene(finish.get("scene_after")) or scene_seen,
+        scene_after=_scene(finish.get("scene_after")),
         duration_s=finish.get("duration_s", 0.0),
     )
+    return Replayed(attempt, _missing(finish))
 
 
 def attempts_from_events(events: List[dict]) -> List[AttemptResult]:
-    """Every complete attempt in a run, in order. Scenes fall back to the last `scene.observed`
-    before the attempt (scene_before) and inside it (scene_after) when attempt.finished lacks them."""
-    attempts: List[AttemptResult] = []
+    """Every complete attempt in a run, in order (see `replay_attempts` for what each one lacks)."""
+    return [r.attempt for r in replay_attempts(events)]
+
+
+def replay_attempts(events: List[dict]) -> List[Replayed]:
+    """Every complete attempt in a run, in order. scene_before falls back to the last
+    `scene.observed` before the attempt (the loop observes just before running); scene_after and
+    safety never fall back to anything."""
+    attempts: List[Replayed] = []
     window: Optional[List[dict]] = None
     last_scene: Optional[Scene] = None
     for e in events:
@@ -128,6 +152,7 @@ class LabelledFailure:
     label: str
     attempt: AttemptResult
     note: str = ""
+    missing: Tuple[str, ...] = ()  # evidence the recording lacks; such a case is never scored
 
 
 def load_corpus(root: Path) -> List[LabelledFailure]:
@@ -141,11 +166,11 @@ def load_corpus(root: Path) -> List[LabelledFailure]:
         if label not in FAILURE_CLASSES:
             raise ValueError(f"{labels_path}: run {entry['run']}: unknown class {label!r}")
         events = read_events(Path(root) / entry["run"] / "events.jsonl")
-        failed = [a for a in attempts_from_events(events) if not a.ok]
+        failed = [r for r in replay_attempts(events) if not r.attempt.ok]
         if not failed:
             raise ValueError(f"{labels_path}: run {entry['run']} has no failed attempt")
-        corpus.append(LabelledFailure(entry["run"], label, failed[entry.get("attempt", -1)],
-                                      entry.get("note", "")))
+        case = failed[entry.get("attempt", -1)]
+        corpus.append(LabelledFailure(entry["run"], label, case.attempt, entry.get("note", ""), case.missing))
     return corpus
 
 
@@ -171,6 +196,7 @@ class ClassScore:
 @dataclass
 class AccuracyReport:
     rows: List[tuple] = field(default_factory=list)  # (run, truth, predicted, note)
+    incomplete: List[tuple] = field(default_factory=list)  # (run, missing evidence): not scored
 
     def add(self, run: str, truth: str, predicted: str, note: str = "") -> None:
         self.rows.append((run, truth, predicted, note))
@@ -219,7 +245,9 @@ class AccuracyReport:
 
         lines = [f"cases {len(self.rows)} · correct {self.correct} · UNKNOWN {self.unknown} · wrong {self.wrong}"
                  f" · score {self.score} (wrong = -{WRONG_PENALTY})",
-                 f"environment failures sent to Droid as skill: {len(self.env_sent_to_droid())}", "",
+                 f"environment failures sent to Droid as skill: {len(self.env_sent_to_droid())}",
+                 f"incomplete recordings (not scored): {len(self.incomplete)}"
+                 + "".join(f" · {run} lacks {', '.join(gaps)}" for run, gaps in self.incomplete), "",
                  "| class | bucket | support | predicted | correct | UNKNOWN | precision | recall |",
                  "|---|---|---|---|---|---|---|---|"]
         for s in self.per_class().values():
@@ -234,6 +262,9 @@ class AccuracyReport:
 def evaluate(corpus: List[LabelledFailure], classify: Classifier) -> AccuracyReport:
     report = AccuracyReport()
     for case in corpus:
+        if case.missing:
+            report.incomplete.append((case.run, case.missing))
+            continue
         c = classify(case.attempt)
         report.add(case.run, case.label, c.cls if c is not None else NO_LABEL, case.note)
     return report
