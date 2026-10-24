@@ -48,11 +48,20 @@ repair:
   runs_dir: runs
   library_dir: skills/library
   droid_ws_root: ~/.skillsmith/droid_ws
+  lessons_file: skills/lessons.md   # Droid's lessons; every Droid prompt includes it
 
-droid:
-  bin: droid
-  auto: low                         # file edits only; see docs/SAFETY.md
-  model: null                       # null = Droid default; e.g. claude-opus-5-5
+droid:                              # see docs/NORTH_STAR.md
+  mode: sdk                         # sdk = Droid Python SDK (the product) | cli = droid exec fallback
+  model: null                       # null = Droid default
   reasoning: null
-  remove_tools: [Execute]           # Droid edits skill.py; WE run checks and sim
   timeout_s: 240
+  # SDK controls
+  autonomy: low                     # droid_sdk.Autonomy
+  disabled_tools: [Execute]         # no shell; Droid uses our validate_skill/simulate_skill tools
+  restrict_tools: []                # optional built-in allowlist; WS5.1 sets it from the droid.tools event
+  sim_tool_budget: 3                # simulate_skill calls Droid may make per round
+  attach_snapshot: true             # send the failure camera frame as an image
+  # CLI fallback only
+  bin: droid
+  auto: low
+  remove_tools: [Execute]

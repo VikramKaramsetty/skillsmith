@@ -16,6 +16,8 @@ Read `docs/ARCHITECTURE.md` for the full picture.
 
 ## Read before you write code
 
+0. **`docs/NORTH_STAR.md`: the objective, the award criteria and the decision rule. It wins
+   over every other doc.** Every task must serve one of its four points; say which in your hand-off.
 1. `docs/ARCHITECTURE.md`: layers, processes, data flow.
 2. `docs/INTERFACES.md`: **the contracts**. If you need to change one, stop and say so;
    do not change it on your own (see "Contract changes" below).
@@ -71,6 +73,7 @@ current contract with a local adapter, and let the lead merge the change.
 
 ```
 ## Hand-off: <workstream> — <short title>
+- Serves (NORTH_STAR decision rule): 1 loop | 2 improvement | 3 control & visibility | 4 safety
 - Done: ...
 - Tests: `make check` summary line
 - Needs hardware test: yes/no — exact command for the human

@@ -63,13 +63,20 @@ above the table, gives stable homography and lower latency.
 
 ## Droid
 
-**Headless `droid exec`, low autonomy, no command execution.**
-[Droid exec](https://docs.factory.ai/cli/droid-exec/overview) is read-only by default;
-`--auto low` allows file edits only, and `--remove-tools Execute` removes command
-execution. Static checks, sim and safety run in our orchestrator after Droid returns, so
-Droid cannot skip or weaken them. `-o stream-json` streams each tool call to the
-dashboard; `--session-id` keeps memory across repair rounds. Exit 0 doesn't mean
-success, so we always verify ourselves.
+**The Droid Python SDK, not the CLI.** The award requires the
+[Droid SDK](https://docs.factory.ai/sdk/python) doing real work in the running product, and
+the SDK gives us the controls the criteria reward:
+- `SessionConfig(autonomy=LOW, disabled_tools=["Execute"])`: no shell.
+- **SDK MCP tools** (`validate_skill`, `simulate_skill`, ...): Droid tests its own fix in sim
+  through *our* code instead of running commands.
+- an `on_permission` handler: our policy decides every edit and tool call, in code.
+- a **JSON-schema result** (diagnosis, change, confidence, lesson) for the dashboard and the lessons file.
+- one long-lived `Session` per run: memory across repair rounds.
+- typed stream events (`ToolCall`, `ToolResult`, `AssistantMessage`), so every step is visible.
+
+Static checks, sim and safety still run in our orchestrator after Droid returns, so Droid
+cannot skip or weaken them. `droid exec` stays only as a stage-emergency fallback
+(`droid.mode: cli`). Verified against `droid-sdk` 0.5.0.
 
 **The workspace sits outside the repo.** Droid reads `AGENTS.md` from its working
 directory. Putting the runtime workspace in `~/.skillsmith/droid_ws/<run>` keeps the

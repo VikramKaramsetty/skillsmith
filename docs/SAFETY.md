@@ -6,7 +6,7 @@ story we tell the Factory judges ("controlled permissions").
 
 | # | Layer | Where | Stops |
 |---|---|---|---|
-| 1 | **Droid permissions**: `droid exec --auto low --remove-tools Execute`, workspace outside the repo, only `skill.py` read back | `repair/droid_client.py` | Droid running commands, touching our code, editing the checks |
+| 1 | **Droid permissions** (Droid SDK): autonomy LOW, `Execute` disabled, permission handler allows only `skill.py` edits + our `skillsmith` tools (refusals logged and explained to Droid), workspace outside the repo, only `skill.py` read back | `repair/droid_sdk.py`, `repair/droid_tools.py` | Droid running commands, touching our code, editing the checks |
 | 2 | **Static check**: AST allow-list (only `robot.*`/`scene.*`/`skills.call`; no imports/while/try/dunder/eval), ≤ 200 lines, bounded loops | `skills/validator.py` | escaping the API, infinite loops, swallowed errors |
 | 3 | **Restricted runtime**: `exec` with a tiny builtins table; only `Robot`/`Scene`/`SkillCaller` objects passed in | `skills/runtime.py` | anything the AST check missed (defence in depth, not a sandbox) |
 | 4 | **Cartesian guard** before every motion: workspace box, min tip height, reach ring, TCP speed cap, call budget, IK reachability | `safety.py`, `primitives.py` | out-of-workspace or too-fast targets; nothing moves on a violation |
