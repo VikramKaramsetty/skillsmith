@@ -1,5 +1,6 @@
 <!doctype html>
 <!-- Skillsmith dashboard. WS6.2: big-screen story view (DEMO.md "Big-screen layout").
+     WS6.3: task input (POST /task) and the human gate (POST /approve: Approve, or Reject with a note).
      Renders ONLY from the SSE stream (docs/INTERFACES.md §7). Open /?replay=<run_id>&speed=2
      to replay a recorded run. The reducer in <script id="story-reducer"> is pure (no DOM) so
      tests/ws6 can run it under node. -->
@@ -42,6 +43,13 @@
   #approve { font-size: 30px; font-weight: 700; padding: 14px 40px; border: 0; border-radius: 10px;
              background: #2a6; color: #fff; cursor: pointer; }
   #approve:disabled { background: #333; color: #777; cursor: default; }
+  #reject { font-size: 20px; padding: 10px 22px; border: 0; border-radius: 8px; background: #833; color: #fff; cursor: pointer; }
+  #note { font-size: 18px; padding: 8px 10px; width: 320px; background: #1a1a1a; color: #eee; border: 1px solid #444; border-radius: 6px; }
+  #task-form { display: flex; gap: 10px; margin-top: 8px; }
+  #task-input { flex: 1; font-size: 20px; padding: 8px 12px; background: #1a1a1a; color: #eee; border: 1px solid #444; border-radius: 6px; }
+  #task-form button { font-size: 20px; padding: 8px 22px; border: 0; border-radius: 6px; background: #246; color: #fff; cursor: pointer; }
+  #task-form button:disabled { background: #333; color: #777; cursor: default; }
+  #task-msg { color: #f99; font-size: 16px; }
   .hidden { display: none !important; }
   details { color: #999; }
   #log { font: 12px ui-monospace, monospace; max-height: 260px; overflow: auto; }
@@ -52,7 +60,11 @@
 <body>
 <header><strong>Skillsmith</strong><span id="mode">LIVE</span><span id="status">connecting…</span></header>
 <main>
-  <section><div class="label">Task</div><div id="task" class="empty">waiting for a task…</div></section>
+  <section><div class="label">Task</div><div id="task" class="empty">waiting for a task…</div>
+    <form id="task-form"><input id="task-input" placeholder="stack the blue cup on the red cup" autocomplete="off">
+      <button id="task-run" type="submit">Run</button></form>
+    <div id="task-msg"></div>
+  </section>
   <section id="banner" class="idle">IDLE</section>
   <section id="droid-box" class="hidden">
     <div class="label">Droid <span id="via" class="via"></span></div>
@@ -69,6 +81,8 @@
   </section>
   <section id="approval">
     <button id="approve" disabled>Approve</button>
+    <span id="reject-box" class="hidden"><input id="note" placeholder="why not? (Droid reads this)">
+      <button id="reject">Reject</button></span>
     <span id="approval-text"></span>
   </section>
   <details><summary>event log</summary><div id="log"></div></details>
@@ -81,13 +95,13 @@ const DIFF_LINES = 5;
 
 function initialState() {
   return {
-    task: null, env: null, skill: null, version: null, round: 0,
+    run_id: null, task: null, env: null, skill: null, version: null, round: 0,
     banner: { kind: "idle", text: "IDLE", sub: "" },
     attempt: null,            // {env, skill, version, classification, finished}
     droid: null,              // {round, via, diagnosis, change, confidence, message}
     diff: null,               // {old_version, new_version, lines: [{kind, text}], more}
     gates: Object.fromEntries(GATES.map((g) => [g, { state: "pending", detail: "" }])),
-    approval: null,           // {state: pending|approved|rejected, title, note}
+    approval: null,           // {state: pending|approved|rejected, kind: approval|reset, title, note}
     saved: null, lesson: null, finished: null,
   };
 }
@@ -111,11 +125,21 @@ function shortDiff(diff) {
   return { lines: changed.slice(0, DIFF_LINES), more: Math.max(changed.length - DIFF_LINES, 0) };
 }
 
+// A reset request gets no approval.decided event; the loop moving on means it was answered.
+const RESET_DONE = ["scene.observed", "repair.started", "attempt.started", "run.finished"];
+
 function reduce(s, e) {
+  if (s.approval && s.approval.kind === "reset" && s.approval.state === "pending" && RESET_DONE.includes(e.type)) {
+    s = { ...s, approval: { ...s.approval, state: "approved" } };
+  }
+  return reduceEvent(s, e);
+}
+
+function reduceEvent(s, e) {
   const d = e.data || {};
   switch (e.type) {
     case "run.started":
-      return { ...initialState(), task: (d.task && d.task.text) || null,
+      return { ...initialState(), run_id: e.run_id || null, task: (d.task && d.task.text) || null,
                banner: { kind: "run", text: "STARTING", sub: "" } };
     case "plan.selected":
       return { ...s, skill: d.skill, version: d.version };
@@ -163,9 +187,12 @@ function reduce(s, e) {
     }
     case "approval.requested": {
       const sum = d.summary || {};
-      return { ...s, approval: { state: "pending", title: sum.title || "", note: "" },
+      return { ...s, approval: { state: "pending", kind: "approval", title: sum.title || "", note: "" },
                banner: { kind: "wait", text: "WAITING FOR APPROVAL", sub: sum.title || "" } };
     }
+    case "reset.requested":
+      return { ...s, approval: { state: "pending", kind: "reset", title: "Reset the table, then press Done", note: "" },
+               banner: { kind: "wait", text: "RESET THE TABLE", sub: firstLine(d.message) } };
     case "approval.decided":
       return { ...s, approval: { ...(s.approval || {}), state: d.approved ? "approved" : "rejected", note: d.note || "" },
                banner: d.approved ? s.banner : { kind: "fail", text: "REJECTED", sub: firstLine(d.note) } };
@@ -181,7 +208,8 @@ function reduce(s, e) {
       return { ...s, finished: d, banner: { kind: "pass", text: parts.join(" · "), sub: `${d.rounds} repair round(s)` } };
     }
     case "error":
-      return { ...s, banner: { kind: "error", text: "ERROR", sub: firstLine(`${d.where}: ${d.message}`) } };
+      // dashboard.task = the run itself crashed: it is over, so the Run button comes back.
+      return { ...s, finished: d.where === "dashboard.task" ? { ok: false, rounds: s.round } : s.finished, banner: { kind: "error", text: "ERROR", sub: firstLine(`${d.where}: ${d.message}`) } };
     default:
       return s;
   }
@@ -239,7 +267,13 @@ function render(s) {
   }));
 
   const a = s.approval;
-  $("approve").disabled = !(a && a.state === "pending") || !!replay;
+  const waiting = !!(a && a.state === "pending") && !replay;
+  $("approve").disabled = !waiting;
+  $("approve").textContent = a && a.kind === "reset" ? "Done" : "Approve";
+  $("reject-box").classList.toggle("hidden", !waiting || a.kind === "reset");
+  const running = !!s.run_id && !s.finished;
+  $("task-run").disabled = !!replay || running;
+  $("task-input").disabled = !!replay;
   $("approval-text").textContent = !a ? ""
     : a.state === "pending" ? (replay ? `${a.title} (recorded run)` : a.title)
     : `${a.state}${a.note ? ": " + a.note : ""}`;
@@ -248,15 +282,44 @@ function render(s) {
 let state = initialState();
 render(state);
 
-$("approve").onclick = async () => {
+async function post(path, body) {
+  const r = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify(body) });
+  if (!r.ok) {
+    let detail = `HTTP ${r.status}`;
+    try { detail = (await r.json()).detail || detail; } catch (_) { /* not JSON */ }
+    throw new Error(detail);
+  }
+  return r.json();
+}
+
+async function decide(approved) {
   $("approve").disabled = true;
+  $("reject").disabled = true;
   try {
-    const r = await fetch("/approve", { method: "POST", headers: { "Content-Type": "application/json" },
-                                        body: JSON.stringify({ approved: true, note: "" }) });
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    await post("/approve", { approved, note: approved ? "" : $("note").value.trim(), run_id: state.run_id });
+    $("note").value = "";
   } catch (err) {
-    $("approval-text").textContent = `approve failed: ${err.message}`;
+    $("approval-text").textContent = `${approved ? "approve" : "reject"} failed: ${err.message}`;
     $("approve").disabled = false;
+  }
+  $("reject").disabled = false;
+}
+$("approve").onclick = () => decide(true);
+$("reject").onclick = () => decide(false);
+
+$("task-form").onsubmit = async (ev) => {
+  ev.preventDefault();
+  const text = $("task-input").value.trim();
+  if (!text) return;
+  $("task-run").disabled = true;
+  $("task-msg").textContent = "";
+  try {
+    await post("/task", { text });
+    $("task-input").value = "";
+  } catch (err) {
+    $("task-msg").textContent = err.message;
+    $("task-run").disabled = false;
   }
 };
 
