@@ -5,7 +5,7 @@ __pycache__/
 .ruff_cache/
 runs/
 skills/history/
-config/homography.json
+config/camera.json
 assets/so101/*.stl
 *.mp4
 uv.lock

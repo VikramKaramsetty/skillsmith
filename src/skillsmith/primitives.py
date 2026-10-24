@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any, Callable, Optional
 
 from skillsmith.events import EventBus
 from skillsmith.safety import SafetyGuard
-from skillsmith.types import PrimitiveCall, Scene, Unreachable, Vec3
+from skillsmith.types import PrimitiveCall, Scene, Unreachable, Vec3, WorldChanged
 
 if TYPE_CHECKING:
     from skillsmith.hal.base import Env
@@ -75,6 +75,24 @@ class Robot:
         self._record("note", {"text": str(text)[:200]},
                      lambda _i: self._bus.emit("note", text=str(text)[:200]))
 
+    def align_over(self, obj: str, hover: float = 0.08) -> float:
+        """Hover `hover` m above an object's top, using its LATEST position, then fine-align
+        with the wrist camera if the perception backend supports it. Returns the remaining
+        xy error estimate in metres (0.0 when no fine alignment is available)."""
+        def do(i):
+            scene = self._env.perception.observe()
+            self.last_scene = scene
+            target = scene.require(obj)
+            self._move((target.x, target.y, target.top + hover), None, i)
+            fine = getattr(self._env.perception, "align_offset", None)
+            if not callable(fine):
+                return 0.0
+            dx, dy = fine(target)  # WS3.7: wrist-camera correction in metres
+            x, y, z = self._tip()
+            self._move((x + dx, y + dy, z), None, i)
+            return round(math.hypot(dx, dy), 4)
+        return self._record("align_over", {"obj": obj, "hover": hover}, do)
+
     # ---- internals ------------------------------------------------------------------
     def _tip(self) -> Vec3:
         x, y, z = self._env.kin.fk(self._env.arm.joints())
@@ -84,6 +102,7 @@ class Robot:
         index = self._guard.count_call()
         call = PrimitiveCall(index=index, name=name, args=args, t=time.time(), ee_before=self._tip())
         try:
+            self._check_world()
             call.result = fn(index)
             return call.result
         except Exception as e:
@@ -94,6 +113,15 @@ class Robot:
             call.ee_after = self._tip()
             self.trace.append(call)
             self._bus.emit("primitive.call", **_call_dict(call))
+
+    def _check_world(self) -> None:
+        """Stop before the next motion if the live world model saw an unexpected change
+        (WS3.5 WorldModel.unexpected_motion, e.g. 'red cup moved 3.2 cm while not held')."""
+        check = getattr(self._env.perception, "unexpected_motion", None)
+        message = check() if callable(check) else None
+        if message:
+            self._bus.emit("world.bumped", message=message)
+            raise WorldChanged(message)
 
     def _move(self, target: Vec3, speed: Optional[float], index: int) -> None:
         self._guard.check_target(target, index)

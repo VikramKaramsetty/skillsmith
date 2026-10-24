@@ -132,6 +132,6 @@ scripts/ship.sh "ws3: what I did" <issue-number>
 
 ## More reading
 
-`README.md` (overview) · `docs/MULTI_MACHINE.md` (how the pipeline works) ·
+`README.md` (overview) · `docs/NORTH_STAR.md` (objective, read first) · `docs/WORKFLOW.md` (how the pipeline works) ·
 `AGENTS.md` (rules for agents) · `docs/workstreams/` (what each area builds) ·
-`docs/HACKATHON_INFRA.md` (architecture decisions and hard truths)
+`docs/DECISIONS.md` (decisions, hard truths, sources) · `docs/PLAN.md` (gates, time budget)

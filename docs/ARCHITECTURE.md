@@ -1,156 +1,159 @@
 # Architecture
 
+How Skillsmith works. *Why* each choice was made is in `docs/DECISIONS.md`; the exact
+contracts are in `docs/INTERFACES.md`; the objective is in `docs/NORTH_STAR.md`.
+
 ## Layers (code as policies)
 
-| # | Layer | Who writes it | Where it runs | Rate |
+| # | Layer | Written by | Runs on | Rate |
 |---|---|---|---|---|
-| 1 | **Perception**: objects + table positions from camera | us (WS3) | GX10 | on demand (`look()`) |
-| 2 | **Skill**: Python that sequences primitives | **Droid** | sandboxed in orchestrator | ~10–30 primitive calls |
-| 3 | **Primitives + IK**: Cartesian target → 6 joint angles | us (WS1/WS2) | GX10 | per waypoint |
-| 4 | **Motor control**: smooth motion between joint targets | Feetech firmware + our interpolator | servos | 30–50 Hz |
+| 1 | **World model**: objects, positions, held/hidden, bump events | us (WS3) | GX10 | 10–15 Hz |
+| 2 | **Skill**: Python sequencing primitives | **Droid** (and seed skills by us) | orchestrator, sandboxed | ~10–30 calls |
+| 3 | **Primitives + IK**: target → joint angles, closed-loop alignment | us (WS2, lead) | GX10 | per waypoint |
+| 4 | **Motor control**: robotd clamps + servo firmware | us (WS1) + Feetech | GX10 + servos | 30–50 Hz |
+| — | **Failure analysis**: phases, class, bucket | us (WS4), plain rules | orchestrator | after each attempt |
+| — | **Repair**: Droid via the SDK, with evidence and tools | Droid + us (WS5) | orchestrator + Factory | on failure |
 
-Droid never touches layers 1, 3 or 4. It only writes layer 2, and layer 2 can only call
-the `robot` / `scene` / `skills` objects described in `docs/INTERFACES.md`. All the
-robotics risk lives in code we write and test once.
+Droid only ever writes layer 2. The robotics risk lives in layers 1, 3 and 4, which we write and test once.
 
 ## Processes
 
 ```
-┌──────────────────────────── GX10 (gx10-3d68) ────────────────────────────┐
-│                                                                           │
-│  robotd  (sole owner of follower serial + wrist cam + front-cam reader)   │
-│    ├── HTTP/JSON on 127.0.0.1:8100: joints, move_joints, gripper, frame   │
-│    └── enforces joint limits + per-step limit + e-stop (last line)        │
-│                                                                           │
-│  orchestrator  (`skillsmith serve`)                                       │
-│    ├── task intake  ← dashboard                                           │
-│    ├── skill runtime (AST-validated, restricted globals)                  │
-│    ├── backends: sim (MuJoCo, in-process)  |  real (robotd client)        │
-│    ├── safety envelope + verify predicates                                │
-│    ├── repair loop → Droid SDK session in ~/.skillsmith/droid_ws        │
-│    ├── event bus → runs/<run_id>/events.jsonl                             │
-│    └── dashboard server :8080 (SSE events, MJPEG proxy, approve button)   │
-│                                                                           │
-│  vision model (optional, WS3 stretch): open-vocab detector on the GPU     │
-└───────────────────────────────────────────────────────────────────────────┘
-         ▲ Tailscale (125–235 ms) or USB-Ethernet link-local (≈1 ms)
-┌──────── MacBook ────────┐
-│ browser → dashboard     │
-│ cam_stream.py (front    │
-│ camera stand-in)        │
-└─────────────────────────┘
+┌───────────────────────────────── GX10 ─────────────────────────────────┐
+│ robotd (only owner of serial port + cameras)                            │
+│   HTTP 127.0.0.1:8100: state (joints, gripper pos+load), move, gripper, │
+│   stop, frames/streams (overhead + wrist, timestamped, ~15 fps)         │
+│   enforces joint limits, per-step clamp, watchdog (last safety layer)   │
+│                                                                         │
+│ orchestrator (`skillsmith serve`)                                       │
+│   WorldModel thread: frames → detector → ray-cast → tracks → events     │
+│   RepairLoop: attempt → analyse → route → Droid → gates → approve       │
+│   skill runtime (AST-checked, stripped builtins, SafetyGuard)           │
+│   sim check env (MuJoCo, built from the live scene)                     │
+│   DroidSDKAuthor: one droid_sdk.Session per run + skillsmith tools      │
+│   EventBus → runs/<id>/events.jsonl + dashboard (:8080, SSE)            │
+└─────────────────────────────────────────────────────────────────────────┘
+        ▲ USB-Ethernet link-local (demo) / Tailscale (dev)
+┌──── MacBook ────┐        Factory (cloud): Droid's model calls
+│ dashboard       │        Frontier vision API (optional, advisory)
+└─────────────────┘
 ```
 
-Why one `robotd`: only one process can hold a serial port or camera, and teleop, tests,
-streams and scripts kept colliding. `robotd` owns the hardware and everyone else is a
-client. It is also the last safety layer: it clamps per-step joint deltas and refuses
-moves outside joint limits, whatever the caller sends.
+## The loop
+
+```
+ task ──▶ PLAN: library skill, or Droid drafts one (drafts go through the gates first)
+            │
+            ▼
+        ATTEMPT on the real arm ──success──▶ SAVE skill vN+1 + lesson, count success
+            │ failure (exception, WorldChanged, safety stop, or the success check fails)
+            ▼
+        ANALYSE (plain rules, ms): phases + failure class + bucket + confidence
+            │
+   ┌────────┼───────────────────────────┐
+   ▼        ▼                           ▼
+ skill    unknown (flagged)        environment
+   │        │                           │  camera moved, out of reach, perception
+   └───┬────┘                           │  uncertain, hardware, calibration drift
+       ▼                                ▼
+   REPAIR: Droid (SDK) with evidence v2   HUMAN: fix the setup / recalibrate, then retry
+       ▼                                  (Droid is not called)
+   STATIC → SIM → SAFETY   (we re-run all of them; any failure → new evidence, same session)
+       ▼
+   APPROVE (human, dashboard) → reset scene → ATTEMPT again
+```
+
+Rounds are capped (`repair.max_rounds`; 2 on stage). If the same failure class repeats after a
+value-only change (Droid's `change_type: parameter`), the next evidence says to **change the
+approach**.
+
+## Perception and world state (WS3)
+
+1. **Camera calibration** (once, about 15 min): a printed checkerboard for the intrinsics, then
+   4+ ArUco markers taped at table points whose robot-frame positions are measured by touching
+   them with the gripper tip (FK). Saved to `config/camera.json`.
+2. **Detection**: YOLO-World / YOLO-E on the GX10 GPU (main), HSV colour blobs (backup). Each
+   detection gives a label, the pixel of the object's top centre, and a confidence.
+3. **Ray casting**: the top-centre pixel's ray is intersected with the plane at the object's
+   known top height (from the object table). Stacked objects use the height of what is below
+   them. This removes the parallax a table-plane homography would leave (about 2 cm for a cup top).
+4. **WorldModel** (10–15 Hz): stable ids by nearest-neighbour association. The **held object
+   follows the gripper** (FK) instead of being re-detected. Objects hidden behind the arm keep
+   their last position with `visible=False`. A not-held object moving more than 1 cm sets
+   `unexpected_motion()`, and the Robot raises **`WorldChanged`** before the next motion.
+5. **Confidence gate**: markers still where calibrated, detection confidence, object count
+   stable. If it fails, the classifier must use an environment class, never a skill class.
+6. **Wrist camera**: a post-grasp holding check (is the object between the fingers?) and the
+   fine x/y offset for `align_over`.
+7. **Frames for evidence**: a key frame per phase, annotated (boxes, labels, planned-target
+   crosshair, projected gripper tip, error arrow in cm), plus cropped before/after pairs.
+
+## Motion (lead + WS2)
+
+- IK: placo on `so101_new_calib.urdf`, gripper pointing down, with the same class in sim and on
+  the real arm. Joint signs and offsets are verified on the arm (WS2.7) before trusting it.
+- Vertical moves are split into 2 cm steps; joint speed is capped; the SafetyGuard checks every
+  target before motion.
+- **`robot.align_over(obj, hover)`** is closed-loop: re-read the object's latest position, hover
+  above it, apply the wrist-camera correction if available. Small x/y errors are corrected
+  *inside* the attempt, with no restart and no Droid.
+
+## Failure analysis (WS4)
+
+`analysis.analyse_attempt(attempt, cfg) -> (phases, classification)`, called by the runtime
+after every attempt.
+
+- **Phases** come from the trace: approach (moves before the first grasp) → grasp → lift (first
+  rise while holding) → carry (horizontal while holding) → place (descent while holding) →
+  release → retreat. Each gets ok/detail.
+- **Classification** uses only measured signals: the failing call and exception type, gripper
+  position/load, `holding()` results, scene before/after from the world model, the success
+  check's numbers, safety issues, `perception_ok()`, and wrist checks.
+- **Buckets** (`types.FAILURE_CLASSES`): *skill* (e.g. `SLIP_IN_CARRY`, `GRASP_MISS`,
+  `COLLISION`, `PLACE_OFF_TARGET`, `KNOCKED_ON_APPROACH`), *environment* (e.g. `CAMERA_MOVED`,
+  `OBJECT_OUT_OF_REACH`, `PERCEPTION_UNCERTAIN`, `CALIBRATION_DRIFT`, `HARDWARE_FAULT`),
+  *unknown*.
+- **Output** leads Droid's evidence and the dashboard banner, for example:
+  `SLIP_IN_CARRY at call #8 (carry): grasp at z=0.07 (88% of cup height) held, lost during a
+  16 cm sideways move. Look at: grip height.`
+- Rules fire only on unambiguous evidence; otherwise `UNKNOWN` with a lower confidence.
+
+## Droid integration (WS5)
+
+- **SDK**: `DroidSDKAuthor` keeps one `droid_sdk.Session` per run, open across rounds (memory),
+  with `cwd` set to a workspace outside the repo, autonomy LOW, `Execute` disabled, and a
+  permission handler (`droid_tools.decide`): edits only to `skill.py`, calls only to the
+  `skillsmith` tools, everything else refused with a reason.
+- **Evidence v2** (prompt + `failure.md` + images): failure class and phase → phase table →
+  annotated key frames → cropped before/after → expected-vs-actual (sim render or the last
+  successful run) → the success check's numbers → scene tables → trace with the failing line →
+  earlier rounds and reviewer notes → `LESSONS.md` → library skills.
+- **Tools**: `validate_skill`, `simulate_skill` (budgeted), `get_scene`, `list_library`,
+  `read_library_skill`. Planned: `get_frame(phase)`, `get_object_track(name)`,
+  `compare_with_success(phase)`, so Droid fetches more evidence like a human scrubbing video.
+- **Result** (JSON schema): `diagnosis`, `change`, `change_type` (parameter | strategy),
+  `sim_checked`, `confidence`, `lesson`.
+- **Lessons** go into `skills/lessons.md`, and every later prompt includes them.
+
+## Verification
+
+- **Geometry decides**: predicates (`on_top`, `inside`, `near`, ...) on world-model positions,
+  with numeric details ("blue cup is 4.1 cm from red cup, limit 3.0 cm").
+- **Vision explains, optionally**: a frontier vision API on cropped before/after returns
+  pass/fail plus one sentence. Disagreeing with a geometric pass counts as a fail and adds
+  evidence. It never overrides geometry.
 
 ## Backends
 
-All three implement the same `ArmBackend` + `Kinematics` + `Perception` protocols
-(`docs/INTERFACES.md`), so a skill runs unchanged on each.
+| Backend | Purpose |
+|---|---|
+| `fake` | Pure Python. Unit tests, CI, `make demo-fake`. Reproduces slip, collision and miss for classifier tests. |
+| `sim` | MuJoCo with the Menagerie SO101 and objects from the live scene. Gate for every Droid change; renders a video and per-phase frames from the calibrated camera pose. |
+| `real` | robotd client + PlacoKinematics + WorldModel. Human-run only. |
 
-| Backend | Purpose | Status |
-|---|---|---|
-| `fake` | Pure-Python point-object world. Unit tests, CI, `demo-fake`, dashboard development. | **done** in scaffold |
-| `sim` | MuJoCo with `robotstudio_so101` (MuJoCo Menagerie) plus a table and cups built from the latest real `Scene`. Physics, collisions, rendered replay. | WS2 |
-| `real` | Client of `robotd`; IK via placo (LeRobot `RobotKinematics`); perception from cameras. | WS1 + WS3 |
+## Persistence
 
-## The self-repair loop (state machine)
-
-```
-             ┌─────────┐
-  task ─────▶│ PLAN    │ pick a library skill, or ask Droid to draft one
-             └────┬────┘
-                  ▼
-             ┌─────────┐     success     ┌──────────┐
-             │ ATTEMPT │────────────────▶│ SAVE     │ library + registry
-             │ (real)  │                 └──────────┘
-             └────┬────┘
-           fail   │  (verify predicate false, exception, or safety stop)
-                  ▼
-             ┌─────────┐  failure report (trace, exception, scene diff, snapshot)
-             │ REPAIR  │  Droid SDK session (autonomy LOW, our tools) → edits skill.py only
-             └────┬────┘
-                  ▼
-             ┌─────────┐  fail → back to REPAIR with the reason (max N rounds)
-             │ STATIC  │  AST validator: approved calls only, no imports, bounded loops
-             └────┬────┘
-                  ▼
-             ┌─────────┐  fail → back to REPAIR with sim trace + verify result
-             │ SIM     │  MuJoCo run on a scene built from the real snapshot
-             └────┬────┘
-                  ▼
-             ┌─────────┐  fail → back to REPAIR
-             │ SAFETY  │  workspace box, speed, call budget, collisions, IK reachability
-             └────┬────┘
-                  ▼
-             ┌─────────┐  human presses Approve on the dashboard (or rejects with a note)
-             │ APPROVE │
-             └────┬────┘
-                  ▼
-               ATTEMPT (real) again
-```
-
-Repair rounds are capped (`repair.max_rounds` in config). Each round continues the same
-Droid SDK session (kept open for the run), so Droid remembers what it already tried.
-A human "reject with note" becomes the next round's failure report.
-
-## Where the Droid runs and what it sees
-
-The orchestrator creates `~/.skillsmith/droid_ws/<run_id>/` from `droid_template/`:
-
-```
-AGENTS.md            rules for writing skills (copied from droid_template)
-API.md               the primitive API (copied from droid_template)
-skill.py             the skill under repair (the ONLY file Droid may edit)
-failure.md           what went wrong: exception, trace table, verify result, safety report
-snapshot.jpg         camera frame at failure (when available)
-scene.json           detected objects
-library/*.py         read-only copies of saved skills, to call or imitate
-```
-
-Droid runs through the **Droid Python SDK** (`repair/droid_sdk.py`): one `droid_sdk.Session`
-per run with `cwd` set to the workspace, kept open across repair rounds so Droid remembers
-what it tried. The session has autonomy LOW, `Execute` disabled, and our `skillsmith` SDK
-MCP server (`validate_skill`, `simulate_skill`, `get_scene`, `list_library`,
-`read_library_skill`). A permission handler (`droid_tools.decide`) allows only edits to
-`skill.py` and calls to our tools; everything else is refused with the reason sent back.
-Each round returns a JSON-schema result (diagnosis, change, sim_checked, confidence,
-lesson). We read back `skill.py` and re-run static, sim and safety ourselves, so Droid cannot
-skip or weaken them. The workspace sits outside the repo so Droid never sees the build-time
-`AGENTS.md`. Details and the judging checklist: `docs/NORTH_STAR.md`.
-
-## Perception
-
-- **Front camera** (MacBook stand-in now; a fixed overhead USB webcam on the GX10 is
-  better): ArUco markers at 4 known table points → homography from pixels to table
-  (x, y). Objects sit on the table, so z = known object height. This is the main
-  source of object positions.
-- **Wrist camera** (Sonix, 640×480@30): optional fine alignment just before a grasp,
-  and a "did it grip" check.
-- **Detector**: HSV colour blobs first (fast, robust for coloured cups and blocks).
-  Stretch: an open-vocabulary detector on the GX10 GPU for "any object".
-- **Verify**: re-detect after the attempt and evaluate the task's success predicate,
-  e.g. `on_top("blue cup", "red cup")`: xy distance < 3 cm and z above.
-
-## Kinematics
-
-- URDF/MJCF: TheRobotStudio `so101_new_calib` (zero = middle of each joint's range,
-  which should match LeRobot's `use_degrees=True` calibrated degrees). **Verify signs
-  and offsets on the real arm in the first test** before trusting it.
-- IK: LeRobot `RobotKinematics` (placo), target frame `gripper_frame_link`, position
-  weight 1.0, small orientation weight. Primitives use a top-down grasp: the gripper
-  points down; wrist_roll is set from the object's yaw or left alone.
-- Motion: joint-space interpolation at ≤ `safety.max_joint_speed_dps`, plus straight
-  Cartesian segments in ≤ 2 cm steps for the final approach.
-- Do **not** use the hqfang pi05 joint convention here. That correction (signs
-  `[1,-1,1,1,1,1]`, offsets `[0,90,90,0,0,0]`) is for the VLA checkpoint only.
-
-## Data and persistence
-
-- `runs/<run_id>/events.jsonl`: every event, for dashboard replay and post-mortems.
-- `runs/<run_id>/attempt_<n>/`: skill version, trace, snapshot, sim video (mp4).
-- `skills/library/<name>.py` + `skills/registry.json`: saved skills with version and
-  success count. Commit them to git after the demo for history.
+- `runs/<id>/events.jsonl`: every event (the dashboard renders only from this; the replay fallback uses it).
+- `runs/<id>/attempt_<n>/`: skill version, trace, key frames, sim video.
+- `skills/library/*.py`, `skills/registry.json`, `skills/history/`, `skills/lessons.md`.
+- `config/camera.json`, `calibration/offsets.json`: per-machine, gitignored.

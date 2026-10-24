@@ -10,7 +10,7 @@ import ast
 from dataclasses import dataclass
 from typing import Dict, List
 
-ROBOT_API = {"move_to", "grasp", "release", "look", "home", "position", "holding", "note"}
+ROBOT_API = {"move_to", "grasp", "release", "look", "home", "position", "holding", "note", "align_over"}
 SCENE_API = {"find", "require", "objects"}
 SKILLS_API = {"call"}
 HANDLES: Dict[str, set] = {"robot": ROBOT_API, "scene": SCENE_API, "skills": SKILLS_API}

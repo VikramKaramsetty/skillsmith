@@ -1,72 +1,69 @@
-# Demo
+# Demo (2 minutes)
 
-## The 3-minute script
+Judges have little time and no context. The screen shows **one sentence per step**; everything
+else sits behind a click for judges who ask.
 
-| Time | On screen / table | Say |
+## The task, designed to fail honestly
+
+- The library holds a real `stack` skill **tuned for blocks**: it grips near the top (WS7.1). On
+  a cup that grip slips. Nothing is faked: it's an existing skill that doesn't generalise, which
+  is exactly the problem Skillsmith solves.
+- **Objects that don't nest:** identical cups slide into each other. Use a small blue cup on an
+  upturned red cup (or a block). Measure the cup against the jaw opening first.
+- Rehearse until the classifier says `SLIP_IN_CARRY` every time and Droid fixes it in one round.
+
+## Big-screen layout (WS6.2)
+
+Task · status banner (`FAIL · SLIP_IN_CARRY at call #8`) · Droid's one-line diagnosis · the diff
+(3–5 lines) · gate lights (static, sim, safety) · **Approve** · `PASS · stack v2 saved · lesson learned`.
+The detail drawer (WS6.4) holds the annotated key frames, phase table, tool calls and permission decisions.
+
+## Script
+
+| Time | Screen / table | Say (one line each) |
 |---|---|---|
-| 0:00 | Arm at home, cups and blocks on the table, dashboard open | "This arm knows five safe moves. It has never done what you're about to ask." |
-| 0:15 | Judge picks a task card, e.g. **"stack the blue cup on the red cup"** | "Droid writes the program; the arm never sees a neural net in its motor loop." |
-| 0:25 | Attempt runs on the real arm; camera check shows **FAIL** with the reason (e.g. "blue cup is 9.4 cm from red cup") | "It failed, and the failure is the trigger." |
-| 0:45 | Dashboard: Droid's stream (reads failure report, trace, snapshot), then the **code diff** | "Droid reads the camera snapshot and the trace and edits only this one file." |
-| 1:15 | Gates go green one by one: **static**, **sim** (MuJoCo replay video), **safety** checklist | "Before anything moves: allowed calls only, a simulation on a copy of this table, workspace and speed limits." |
-| 1:40 | Human presses **Approve** | "A person approves every real run." |
-| 1:50 | Real arm succeeds; camera check **PASS**; "skill saved: stack v2" | "Now it's a skill. The arm is permanently more capable." |
-| 2:15 | Second card: **"build a tower"**. The plan reuses `stack` from the library and runs | "New task, old skill: the library compounds." |
-| 2:45 | Close on the run timeline | "Droid wrote and repaired that code. We wrote the safety it runs inside." |
+| 0:00 | Arm, two cups, dashboard | "This arm has a block-stacking skill. It has never stacked cups." |
+| 0:10 | Judge taps "stack the blue cup on the red cup" | "Its own failure is what triggers the AI." |
+| 0:15 | The cup slips. Banner: **FAIL · SLIP_IN_CARRY at call #8** | "The camera caught it, and the system says exactly where and why." |
+| 0:30 | Droid panel: diagnosis, its own sim test passing, a refused action, the short diff | "Droid, through the Factory SDK, can only edit this one file and call our tools. It just tested its fix in simulation." |
+| 1:15 | Gates go green | "We re-check everything ourselves; we never trust the AI's word." |
+| 1:25 | Demo owner presses **Approve** | "A human approves every real move." |
+| 1:30 | The arm stacks the cup: **PASS · stack v2 saved · lesson learned** | "Fixed, saved, and remembered for next time." |
+| 1:50 | Close on the timeline | "Designed trigger, controlled permissions, every step visible: the Droid SDK doing real work." |
 
-If the first attempt succeeds outright, say so, then ask the judge for a harder variant
-(a cup on a block, an object into a cup).
+If there's time (2:00–2:30): "build a tower" reuses the new skill. If the first attempt
+succeeds outright, say so and ask the judge for a harder variant.
 
-## Demo tasks
+**Roles:** narrator, arm operator (hand on the power), demo owner on Approve.
 
-Good: stack cups; sort blocks by colour into zones; build a small tower (2–3 blocks);
-put a block inside a cup.
-Avoid: anything soft or deformable, anything needing millimetre precision, transparent
-or very shiny objects (colour detection), objects wider than ~8 cm (gripper).
+## Talking points (Best Use of the Factory Droid SDK)
 
-Prepare printed task cards for these, and keep the parser templates in `tasks.py` in
-sync with the wording.
+- *SDK in the running product:* point at README "Where and how Droid is used" and `repair/droid_sdk.py`.
+- *Designed trigger:* the classifier labels a skill failure; environment failures go to a human instead.
+- *Control:* autonomy LOW, no shell, a permission handler that refuses anything except `skill.py`
+  and our tools (show a refusal in the drawer); our gates; human approval.
+- *Visible:* failure class, Droid's messages, tool calls, permission decisions, diff, diagnosis, events log.
+- *Improvement:* the lesson line in `skills/lessons.md`; the second task reusing the skill; benchmark numbers.
+
+## Q&A prep (honest answers)
+
+- *"What if the camera is wrong?"* The confidence gate turns it into an environment failure, not a code change.
+- *"Does Droid really see?"* It gets annotated key frames, crops and numbers, and can fetch more; geometry decides success.
+- *"What if it bumps a cup?"* The live world model stops the skill with `WorldChanged`.
+- *"Is this sandboxed?"* Six layers (`docs/SAFETY.md`); Python `exec` alone isn't a sandbox, and we don't rely on it.
 
 ## Fallback ladder
 
-1. **Live, real arm** (target).
-2. **Live, sim only**: `--env sim`. Same dashboard and same Droid; MuJoCo video replaces
-   the arm. Use this if the arm, robotd or the camera misbehaves.
-3. **Replay**: the dashboard replays a recorded `runs/<id>/events.jsonl`, plus a screen
-   recording of a successful real run. Use this if the network or Droid is down.
-
-Switch rungs without apologising: "Here's the same loop from our run an hour ago."
+1. **Live, real arm.**
+2. **Live, sim only** (`--env sim`): same dashboard, same Droid, the MuJoCo video replaces the arm.
+3. **Replay**: a recorded `runs/<id>/events.jsonl` plus a screen recording, introduced as one.
 
 ## Pre-demo checklist
 
-- [ ] GX10 up, no NVIDIA errors in `sudo dmesg | tail`; robotd running; `/state` responds.
-- [ ] USB-Ethernet link between the Mac and the GX10; dashboard loads over it.
-- [ ] Droid authenticated (`droid` logged in or `FACTORY_API_KEY` set; `skillsmith demo-fake --author droid` completes) on whichever machine runs it.
-- [ ] Camera fixed, homography fresh (re-run after any bump), lighting checked; HSV
-      thresholds tested on the actual objects.
-- [ ] Objects at their taped start positions; workspace clear.
-- [ ] `max_tcp_speed` at the rehearsed value; stop button within reach of the operator.
-- [ ] Library reset to the demo state (`stack` absent or at the deliberately weak version).
-- [ ] Fallback `events.jsonl` and video ready to open in one click.
-- [ ] Arm supported by hand before any restart (torque off = limp).
-
-## Track talking points
-
-**Factory Droid**
-- *Designed trigger*: Droid runs only when the camera says a task failed (or a gate
-  rejects code). That's the event-driven trigger, not a chat window.
-- *Uses the Droid SDK in the running product*: `droid_sdk.Session` is opened by the robot's
-  failure, not by us typing. Point at `README.md` "Where and how Droid is used".
-- *Controlled permissions*: autonomy LOW, shell disabled, a permission handler that allows
-  only `skill.py` edits and our own tools (show a refused action in the Droid panel), then
-  AST, sim, safety and human gates that Droid cannot touch.
-- *Visible work*: Droid's plan text, every tool call (including its own `simulate_skill`
-  runs), every permission decision, the diff and its structured diagnosis stream to the
-  dashboard and are saved in `events.jsonl`.
-- *Constant improvement*: show `skills/lessons.md` gaining a line, and task 2 reusing task 1's skill.
-
-**Most Technically Complex**: an agent, physics simulation, vision, IK and real hardware
-in one closed loop, with a skill library that grows.
-
-**Best Hardware Hack**: the arm is the point. It writes its own skills, and the camera
-grounds every claim of success in the physical world.
+- [ ] GX10 up, `sudo dmesg | tail` clean; robotd `/state` responds; world model running at 10+ Hz.
+- [ ] Camera taped down; `config/camera.json` fresh (re-run after any bump); marker drift ≈ 0.
+- [ ] Lighting checked; detector finds both cups within 1 cm.
+- [ ] USB-Ethernet link up; dashboard loads on the Mac.
+- [ ] Droid logged in; stage profile on; **session warmed up**.
+- [ ] Library reset: `stack` is the block-tuned v1; `skills/lessons.md` in its pre-demo state.
+- [ ] Two rehearsals today; fallback recording on the desktop.

@@ -1,4 +1,4 @@
-"""Self-calibration. OWNER: WS7 (docs/workstreams/WS7_calibration_library.md).
+"""Self-calibration. OWNER: WS7 (docs/workstreams/WS7_library_calibration.md).
 
 Contract:
 - `fit_offset(commanded, measured) -> (dx, dy)`: least-squares xy offset in metres from test grabs
@@ -13,7 +13,7 @@ from __future__ import annotations
 
 
 def fit_offset(commanded, measured):
-    raise NotImplementedError("WS7.1: see docs/workstreams/WS7_calibration_library.md")
+    raise NotImplementedError("WS7.1: see docs/workstreams/WS7_library_calibration.md")
 
 
 class OffsetKinematics:

@@ -76,11 +76,39 @@ class AttemptResult:
     scene_after: Scene | None
     duration_s: float
     video_path: str | None = None   # sim replay mp4 (sim env only)
+    phases: list[PhaseCheck] = []   # filled by analysis.analyse_attempt
+    classification: Classification | None = None
+    keyframes: dict[str, str] = {}  # phase -> annotated image path
+
+PHASES = ("approach", "grasp", "lift", "carry", "place", "release", "retreat")
+
+@dataclass
+class PhaseCheck:
+    phase: str; ok: bool; detail: str; start_index: int; end_index: int
+    frame_path: str | None = None
+
+@dataclass
+class Classification:
+    cls: str            # key of FAILURE_CLASSES, e.g. "SLIP_IN_CARRY"
+    bucket: str         # "skill" (Droid) | "environment" (human/calibration) | "unknown" (Droid, flagged)
+    phase: str | None   # first failing phase
+    call_index: int | None
+    summary: str        # one line WITH numbers; leads Droid's evidence and the dashboard banner
+    hint: str = ""      # where to look
+    confidence: float = 1.0
+    escalate: bool = False   # same class after a parameter-only change → "change the approach"
+    evidence: dict = {}
+
+FAILURE_CLASSES: dict[str, bucket]   # the full list lives in types.py
 ```
+
+`SceneObject` also has `visible: bool = True` (False = hidden behind the arm; position is the
+last one seen). `AttemptResult.reason()` leads with `"<CLASS>: <summary>"` when classified.
 
 Exceptions: `SkillError` (skill-level, readable), `SafetyViolation(SkillError)`
 (raised by the guard *before* motion), `Unreachable(SafetyViolation)` (IK failed),
-`CollisionError(SkillError)` (sim/fake detected contact).
+`CollisionError(SkillError)` (sim/fake detected contact), `WorldChanged(SkillError)` (the world
+model saw a not-held object move; raised before the next motion).
 
 ---
 
@@ -103,8 +131,13 @@ class Kinematics(Protocol):
         # gripper pointing down; returns 6 joints (gripper copied from seed) or None
 
 class Perception(Protocol):
-    def observe(self) -> Scene                            # fresh detection
+    def observe(self) -> Scene                            # the LATEST world state
     def snapshot(self, path: str) -> str | None           # save a frame, return path
+    # optional (the real WorldModel, WS3; the Robot/classifier use them when present):
+    def unexpected_motion(self) -> str | None             # "red cup moved 3.2 cm while not held"
+    def perception_ok(self) -> tuple[bool, str]           # confidence gate for the classifier
+    def align_offset(self, obj: SceneObject) -> tuple[float, float]   # wrist-camera fine dx, dy (m)
+    def holding_check(self) -> tuple[bool, str]           # wrist-camera post-grasp check
 
 @dataclass
 class Env:
@@ -128,7 +161,7 @@ Rules:
 
 | Method | Path | Body / result |
 |---|---|---|
-| GET | `/state` | `{"joints":[6], "holding":bool, "torque":bool, "t":float}` |
+| GET | `/state` | `{"joints":[6], "holding":bool, "gripper_pos":float, "gripper_load":float, "torque":bool, "t":float}` |
 | POST | `/move_joints` | `{"target":[6], "speed_dps":float}` → `{"ok":true}` (blocking) |
 | POST | `/gripper` | `{"pct":float}` → `{"ok":true, "holding":bool}` |
 | POST | `/stop` | hold current position |
@@ -162,6 +195,10 @@ def run(robot, scene, skills, top, bottom):
 | `robot.position() -> (x, y, z)` | current tip position (read-only) |
 | `robot.holding() -> bool` | gripper load check (read-only) |
 | `robot.note(text)` | message to the dashboard ("lowering onto red cup") |
+| `robot.align_over(obj, hover=0.08) -> float` | hover above the object's **latest** position, fine-align with the wrist camera if available; returns the remaining xy error (m). Use before descending to grasp or place. |
+
+Before every call the Robot asks the world model for unexpected motion; if a not-held object
+moved, the skill stops with `WorldChanged` (skills must not try to catch it).
 
 `scene` (a `Scene`): `scene.find(q)`, `scene.require(q)`, `scene.objects`.
 Objects have `.x .y .z .height .width .top .label .color .kind .id`.
@@ -188,6 +225,21 @@ other than as `robot.attr` or as a call argument (no aliasing); `range()` with a
 bound > 50; files over 200 lines; a missing `def run(robot, scene, skills, ...)`.
 
 No `try` is deliberate: errors must reach the failure report, not get swallowed.
+
+---
+
+## 4b. Failure analysis (`skillsmith/analysis/`, WS4)
+
+```python
+def analyse_attempt(attempt: AttemptResult, cfg) -> tuple[list[PhaseCheck], Classification | None]
+def should_escalate(previous: Classification | None, current: Classification,
+                    last_change_type: str | None) -> bool
+```
+
+Called by `runtime.run_skill` after every attempt; the runtime emits `phase.check` and
+`attempt.classified`. Rules only, no AI, milliseconds. A failed confidence gate
+(`perception_ok()`) means an environment class, never a skill class. The `RepairLoop` sends
+only *skill* and *unknown* failures to Droid.
 
 ---
 
@@ -270,6 +322,9 @@ One JSON object per line in `runs/<run_id>/events.jsonl`, also pushed to subscri
 | `approval.requested` / `approval.decided` | `summary` / `approved`, `note` |
 | `skill.saved` | `skill`, `version` |
 | `run.finished` | `ok`, `rounds` |
+| `phase.check` | `PhaseCheck` dict |
+| `attempt.classified` | `Classification` dict |
+| `world.bumped` | `message` (raised as WorldChanged) |
 | `error` | `where`, `message` |
 
 The dashboard must render from this stream alone, so a recorded `events.jsonl` can be

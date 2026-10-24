@@ -14,15 +14,17 @@ judge task ─▶ try skill ─▶ camera verifies ─▶ FAIL ─▶ Droid edit
 
 ## Start here
 
-| You are… | Read |
+**Everyone starts with [`docs/NORTH_STAR.md`](docs/NORTH_STAR.md)**: the objective, the award
+criteria and the decision rule. It wins over every other doc.
+
+| You are… | Read next |
 |---|---|
 | Setting up a new computer | **`SETUP.md`** (10 minutes, then `scripts/agent-loop.sh all`) |
-| A human on the team | this file, then `docs/BUILD_PLAN.md`, `docs/DEMO.md` |
-| The lead agent | `docs/ORCHESTRATION.md` |
-| Running agents on another machine | `docs/MULTI_MACHINE.md` (`scripts/agent-loop.sh ws2`) |
-| A workstream agent | `AGENTS.md`, `docs/INTERFACES.md`, your `docs/workstreams/WS*.md` |
+| Anyone on the team | `docs/PLAN.md` (gates, time budget, cut list), `docs/DEMO.md` (the 2-minute demo) |
+| A workstream agent | `AGENTS.md`, `docs/ARCHITECTURE.md`, `docs/INTERFACES.md`, your `docs/workstreams/*.md` |
+| The lead | `docs/WORKFLOW.md` (shared queue, CI, contract changes) |
 | Touching hardware | `docs/RUNBOOK_GX10.md`, `docs/SAFETY.md` |
-| Curious why we chose X | `docs/HACKATHON_INFRA.md`, `docs/RESEARCH.md` |
+| Asking "why X?" | `docs/DECISIONS.md` (decisions, hard truths, sources) |
 
 ## Quick start (no hardware)
 
@@ -39,18 +41,25 @@ AGENTS.md / CLAUDE.md     rules for agents building this repo
 .claude/agents/           one subagent definition per workstream
 droid_template/           what the RUNTIME Droid sees (its own AGENTS.md)
 config/robot.yaml         ports, cameras, workspace box, speed limits
-docs/                     architecture, contracts, safety, plan, demo, research
+docs/                     north star, architecture, interfaces, plan, workflow, decisions, demo, safety, runbook
+  workstreams/            one brief per workstream (task lines become GitHub issues)
+robotd/                   WS1: the only process that owns the arm's serial port and cameras
 src/skillsmith/
-  types.py                shared dataclasses (the contract)
-  primitives.py           Robot/Scene facade: the ONLY API a skill can touch
+  types.py                shared dataclasses + failure classes (the contract)
+  primitives.py           Robot facade: the ONLY API a skill can touch (incl. align_over, bump stop)
   safety.py               workspace / speed / call-budget envelope
-  verify.py               success predicates over a Scene
+  verify.py               success predicates (geometry decides)
+  analysis/               WS4: phase checks + failure classifier (skill / environment / unknown)
   events.py               event bus → runs/<id>/events.jsonl → dashboard
   hal/                    backends: fake (done), sim (MuJoCo), real (robotd client)
-  perception/             colour detection, camera→table homography
-  skills/                 validator (AST), runtime (sandboxed exec), library/
-  repair/                 Droid client + the self-repair state machine
+  kinematics.py           WS2: placo IK/FK shared by sim and real
+  perception/             WS3: camera geometry (ray casting), detectors, live WorldModel, annotated frames
+  skills/                 validator (AST), runtime (sandboxed exec)
+  repair/                 WS5: Droid SDK author, tools + permission policy, evidence, the repair loop
+  dashboard/              WS6: big-screen view, approvals, replay
+  calibration/            WS7: offsets for repeated position errors
   cli.py                  `skillsmith ...` entry point
+skills/library/           saved skills (+ registry.json, lessons.md)
 tests/                    run with `make test`
 ```
 

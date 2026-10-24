@@ -36,12 +36,26 @@ def _trace_table(attempt: AttemptResult, limit: int = 40) -> str:
 
 def attempt_report(task: TaskSpec, attempt: AttemptResult, history: List[str]) -> str:
     stage = {"real": "the REAL arm", "sim": "simulation", "fake": "the test world"}.get(attempt.env, attempt.env)
-    parts = [
-        f"# Failure report: `{attempt.skill}` v{attempt.version} failed on {stage}\n",
+    parts = [f"# Failure report: `{attempt.skill}` v{attempt.version} failed on {stage}\n"]
+    c = attempt.classification
+    if c is not None:
+        parts.append(f"**Failure class:** `{c.cls}` ({c.bucket}, confidence {c.confidence:.2f}) in phase "
+                     f"**{c.phase or '?'}** at call #{c.call_index if c.call_index is not None else '?'}\n")
+        parts.append(f"**What happened:** {c.summary}\n")
+        if c.hint:
+            parts.append(f"**Look at:** {c.hint}\n")
+        if c.escalate:
+            parts.append("**A value-only change already failed for this class. Change the approach, "
+                         "not just a number.**\n")
+    parts += [
         f"**Task:** {task.text}\n",
         f"**Params:** `{task.params}`\n",
         f"**Why it failed:** {attempt.reason()}\n",
     ]
+    if attempt.phases:
+        rows = ["| phase | ok | detail | frame |", "|---|---|---|---|"]
+        rows += [f"| {p.phase} | {'✓' if p.ok else '✗'} | {p.detail} | {p.frame_path or ''} |" for p in attempt.phases]
+        parts.append("## Phases\n" + "\n".join(rows) + "\n")
     if attempt.verify:
         parts.append(f"**Camera check:** {'PASS' if attempt.verify.ok else 'FAIL'}: {attempt.verify.detail}\n")
     parts.append(f"**Safety:** {attempt.safety.summary()}\n")

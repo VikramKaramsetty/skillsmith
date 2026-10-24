@@ -1,0 +1,52 @@
+# WS3: perception & world state
+
+**Branch prefix:** `ws3/` · **Owns:** `src/skillsmith/perception/`, `tools/hsv_tuner.py`, `tools/calibrate_camera.py`, `tests/ws3/` · **Reads:** `docs/NORTH_STAR.md`, `docs/ARCHITECTURE.md` (perception and world state), `docs/INTERFACES.md` §1–2, `docs/DECISIONS.md` (3D positions)
+
+## Goal
+Know where every object is, live, accurately, and say when we're unsure. The WorldModel tracks
+objects at 10–15 Hz in the robot frame (~1 cm), notices when something gets bumped, checks grasps
+with the wrist camera, and produces the annotated frames Droid needs to see what went wrong.
+Serves NORTH_STAR: 1, 3, 4.
+
+## Tasks (one PR each, in order)
+- [ ] WS3.1 Frame sources (robotd client, OpenCV, MJPEG) plus recorded fixture frames
+- [ ] WS3.2 Camera calibration: checkerboard intrinsics plus ArUco pose in the robot frame, saved to config/camera.json
+- [ ] WS3.3 Ray-plane localisation: pixel to (x, y) at an object's known height, with stacked-object z inference
+- [ ] WS3.4 Detectors behind one interface: YOLO-World/YOLO-E main, HSV backup, with confidence
+- [ ] WS3.5 WorldModel: live tracking at 10-15 Hz, stable ids, held object follows the gripper, hidden objects keep last position, bump detection
+- [ ] WS3.6 Perception confidence gate: marker drift, low confidence and object-count changes reported to the classifier
+- [ ] WS3.7 Wrist camera: post-grasp holding check and fine-alignment offset for align_over
+- [ ] WS3.8 Annotated key frames and cropped before/after pairs for Droid and the dashboard
+- [ ] WS3.9 Accuracy test: cups on 5 taped marks under demo lighting, under 1 cm error (hardware)
+- [ ] WS3.10 Stretch: frontier-API vision second opinion on cropped before/after (advisory)
+
+## Design notes
+- Contract stubs exist: `perception/geometry.py` (CameraModel, calibrate), `color.py` (detectors),
+  `world.py` (WorldModel), `annotate.py` (key frames, crops). Fill them in; don't rename.
+- **Why ray casting, not a homography:** a homography is exact only on the table plane. An
+  overhead camera sees a cup's top rim (8 cm up); with the camera 80 cm high and the cup 20 cm
+  off-centre that's ~2 cm of parallax (~4 cm for a stacked cup). Intersect each pixel's ray with
+  the plane at the object's known top height instead. Mount the camera high and centred.
+- Marker positions are measured by touching them with the gripper tip (FK), not with a ruler.
+- Detections give the TOP-centre pixel; sizes come from a known-object table, never from pixels.
+- WorldModel rules: a held object follows the FK tip; an object hidden behind the arm keeps its
+  last position with `visible=False` (never "moved"); a not-held object moving more than
+  `world.bump_threshold` (1 cm) → `unexpected_motion()` message → Robot raises WorldChanged.
+- Confidence gate (`perception_ok()`): calibration markers moved, detection confidence below
+  `world.min_confidence`, or object count changed → the classifier labels it an environment
+  problem, never a skill bug.
+- **Geometry decides pass/fail; vision only explains.** Crops of the task's objects make any
+  vision judge better (and Droid too). WS3.10 API keys come from env vars, never committed.
+- Optional robustness trick: ArUco stickers on objects (blocks, upturned cup bottoms) make
+  detection nearly free and give orientation, so a tipped object becomes visible.
+- Read frames only through robotd (it owns the cameras). Import cv2/numpy/ultralytics lazily.
+
+## Acceptance (in `make check`, heavy job for cv2 tests)
+- On fixture frames: every expected object found with the right label; position error < 1.5 cm
+  against `tests/ws3/fixtures/truth.json`; ray casting beats the plain homography on stacked cups.
+- WorldModel unit tests with synthetic detections: held-follows-gripper, hidden keeps position,
+  bump fires once with a readable message. `WorldModel` satisfies `Perception`.
+
+## Hardware test (arm operator, WS3.9)
+Cups on 5 taped marks under the demo lighting; run `python tools/calibrate_camera.py --check`;
+report error per mark (target < 1 cm), including one stacked pair.

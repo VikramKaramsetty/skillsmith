@@ -14,8 +14,12 @@ Everything a skill can use. Anything else is rejected by the static check.
 | `robot.position() -> (x, y, z)` | Current tip position (read-only). |
 | `robot.holding() -> bool` | Gripper load check (read-only). |
 | `robot.note(text)` | Show a short message on the dashboard. |
+| `robot.align_over(obj, hover=0.08) -> float` | Hover `hover` m above the object's top at its **latest** position, then fine-align with the wrist camera if available. Returns the remaining xy error in metres. Use it right before descending to grasp or place. |
 
 Every call is recorded in the trace you see in `failure.md`.
+
+If something on the table gets bumped while the skill runs, the skill stops with
+`WorldChanged` before the next move. Don't try to catch it; the failure report explains it.
 
 ## `scene`
 

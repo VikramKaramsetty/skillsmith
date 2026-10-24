@@ -73,11 +73,15 @@ ssh -t asus@100.103.96.17 '~/robot/.venv/bin/lerobot-teleoperate --robot.type=so
    it's worse, fix step 1 before going further.
 3. **Workspace box.** Jog to the edges you are comfortable with and update
    `workspace` and `home_xyz` in config.
-4. **Homography.** Place 4 ArUco markers at known (x, y) on the table (touch each with the
-   gripper tip and read FK, which beats a ruler). Run the WS3 calibration command to write
-   `config/homography.json`. Check: detected marker positions within 1 cm.
-5. **Detection.** Tune HSV for the demo objects under the demo lighting; `look()` must
-   report each object within 1.5 cm of its true position.
+4. **Camera calibration** (WS3.2, about 15 min). Mount the overhead camera high and centred
+   over the workspace and tape it down. Show the printed checkerboard in ~15 poses (intrinsics).
+   Tape 4+ ArUco markers at table points and touch each with the gripper tip to read its
+   robot-frame (x, y) from FK. Run `python tools/calibrate_camera.py` to write
+   `config/camera.json`. Check: re-detected marker positions within 1 cm. Redo after any bump.
+5. **Detection + world model.** Tune HSV (backup) and check YOLO-World under the demo lighting;
+   the world model must report each cup within 1 cm (WS3.9), and nudging a cup by hand must
+   raise `WorldChanged` within ~0.2 s. Also run the full signal checklist in `docs/PLAN.md`
+   (gripper holding vs empty, slip visible, placement error).
 6. **Fake → sim → real.** `pick_place` on `--env fake`, then `--env sim`, then
    `--env real` with `max_tcp_speed: 0.05`, operator's hand near the stop. Move a block to
    a taped target; repeat 3×. Pass = within 2 cm every time.
