@@ -102,10 +102,20 @@ while true; do
   fi
 
   log "working #$NUM ($WS) $TITLE"
+  started=$SECONDS
   set +e
   scripts/agent-run.sh "$WS" "$TITLE" --issue "$NUM"
   rc=$?
   set -e
+  # A run that dies within FAST_FAIL_S seconds never got going (stale branch/worktree, uv, agent CLI
+  # logged out or rate-limited): that is this machine's problem, not the task's. Hand the task back
+  # and stop, instead of blocking one workstream after another.
+  if [[ $rc -ne 0 && $rc -ne 3 && $(( SECONDS - started )) -lt ${FAST_FAIL_S:-90} ]]; then
+    release "$NUM" || true
+    gh issue comment "$NUM" --body "agent-loop on $HOST: the run failed after $(( SECONDS - started )) s (exit $rc), before the agent did any work. Released back to \`ready\`; this machine's loop stopped. Log: ../skillsmith-logs/" >/dev/null || true
+    log "run failed in $(( SECONDS - started ))s (exit $rc): machine problem; released #$NUM and stopping. Check the log, then restart."
+    exit 1
+  fi
   if [[ $rc -eq 0 ]]; then
     gh issue edit "$NUM" --remove-label in-progress >/dev/null || true
   else
