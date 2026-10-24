@@ -15,16 +15,11 @@ from typing import Any, Dict, Optional
 from skillsmith.events import EventBus
 from skillsmith.primitives import Robot, SkillCaller
 from skillsmith.safety import SafetyGuard, audit_trace
-from skillsmith.skills.validator import validate
+from skillsmith.skills.validator import ALLOWED_BUILTINS, validate
 from skillsmith.types import AttemptResult, Scene, SkillError
 from skillsmith.verify import evaluate
 
-SAFE_BUILTINS: Dict[str, Any] = {
-    name: getattr(builtins, name)
-    for name in ("abs", "min", "max", "round", "len", "range", "float", "int", "str", "bool",
-                 "list", "dict", "tuple", "enumerate", "zip", "sorted", "sum", "any", "all",
-                 "ValueError", "RuntimeError")
-}
+SAFE_BUILTINS: Dict[str, Any] = {name: getattr(builtins, name) for name in ALLOWED_BUILTINS}
 SAFE_BUILTINS["SkillError"] = SkillError
 
 
