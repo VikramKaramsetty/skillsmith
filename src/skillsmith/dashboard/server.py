@@ -14,6 +14,9 @@ at a time; 400 if the text doesn't parse, 409 while a run is going) and `/approv
 nothing waits; an optional `run_id` must match the waiting run so a stale page can't approve).
 `GET /approval` shows what waits. WS6.4 adds `GET /frame?path=` so the detail drawer can show the
 annotated key frames the events point at (images inside the runs dir only).
+WS6.5 adds `GET /camera/{cam}` (robotd's MJPEG `/stream/{cam}` passed through, so the browser
+only talks to the dashboard and only robotd holds the camera; 503 if robotd isn't reachable)
+and `GET /video?path=` for the sim replay mp4 that `sim.video` points at (runs dir only).
 FastAPI is imported lazily so this module imports with core deps only.
 Replayed events carry `"replay": true` so the UI can label the fallback as a recording.
 No `from __future__ import annotations` here: FastAPI must resolve the locally imported `Request`.
@@ -40,6 +43,10 @@ HISTORY = 2000  # live events kept so a page opened mid-run still sees the whole
 INDEX_HTML = Path(__file__).with_name("index.html")
 _RUN_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]*$")
 IMAGE_TYPES = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png"}
+VIDEO_TYPES = {".mp4": "video/mp4", ".webm": "video/webm"}
+CAMERAS = ("front", "wrist")
+CAMERA_TIMEOUT_S = 5.0  # connect/read timeout on robotd's stream, so a dead robotd frees the worker
+CAMERA_CHUNK = 64 * 1024
 
 
 class EventHub:
@@ -184,15 +191,33 @@ def run_path(runs_dir: Path, run_id: str) -> Optional[Path]:
     return path if path.is_file() else None
 
 
-def frame_path(runs_dir: Path, path: str) -> Optional[Path]:
-    """An image the events point at (key frames, snapshots), only if it lies inside runs_dir."""
+def frame_path(runs_dir: Path, path: str, types: dict[str, str] = IMAGE_TYPES) -> Optional[Path]:
+    """A file the events point at (key frames, snapshots, sim videos), only if it lies inside runs_dir."""
     root = Path(runs_dir).resolve()
     candidate = Path(path)
     resolved = (candidate if candidate.is_absolute() else Path.cwd() / candidate).resolve()
     if not resolved.is_relative_to(root):
         resolved = (root / candidate).resolve()  # also accept paths relative to runs_dir
-    ok = resolved.is_relative_to(root) and resolved.suffix.lower() in IMAGE_TYPES and resolved.is_file()
+    ok = resolved.is_relative_to(root) and resolved.suffix.lower() in types and resolved.is_file()
     return resolved if ok else None
+
+
+def open_camera(base_url: str, cam: str, timeout_s: float = CAMERA_TIMEOUT_S):
+    """Open robotd's MJPEG stream. Returns (content_type, chunk iterator); OSError if unreachable."""
+    import urllib.request
+
+    upstream = urllib.request.urlopen(f"{base_url.rstrip('/')}/stream/{cam}", timeout=timeout_s)
+    content_type = upstream.headers.get("Content-Type", "multipart/x-mixed-replace; boundary=frame")
+
+    def chunks() -> Iterator[bytes]:
+        try:
+            while chunk := upstream.read1(CAMERA_CHUNK):
+                yield chunk
+        except OSError:  # robotd went away mid-stream; the page shows "camera offline" and retries
+            pass
+        finally:
+            upstream.close()
+    return content_type, chunks()
 
 
 def list_runs(runs_dir: Path) -> list[dict]:
@@ -241,8 +266,10 @@ async def _json_body(request) -> dict:
 
 
 def create_app(runs_dir: Path, hub: Optional[EventHub] = None,
-               approver: Optional[DashboardApprover] = None, run_fn: Optional[RunFn] = None):
-    """`run_fn` is None when the server only replays (then `POST /task` answers 503)."""
+               approver: Optional[DashboardApprover] = None, run_fn: Optional[RunFn] = None,
+               camera_url: Optional[str] = None):
+    """`run_fn` is None when the server only replays (then `POST /task` answers 503).
+    `camera_url` is robotd's base URL; None means no live camera (`/camera/*` answers 503)."""
     from fastapi import FastAPI, HTTPException, Request
     from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 
@@ -267,6 +294,25 @@ def create_app(runs_dir: Path, hub: Optional[EventHub] = None,
         if found is None:
             raise HTTPException(404, f"no image {path!r} under the runs dir")
         return FileResponse(found, media_type=IMAGE_TYPES[found.suffix.lower()])
+
+    @app.get("/video")
+    def video(path: str):
+        found = frame_path(app.state.runs_dir, path, VIDEO_TYPES)
+        if found is None:
+            raise HTTPException(404, f"no video {path!r} under the runs dir")
+        return FileResponse(found, media_type=VIDEO_TYPES[found.suffix.lower()])
+
+    @app.get("/camera/{cam}")
+    def camera(cam: str):
+        if cam not in CAMERAS:
+            raise HTTPException(404, f"no camera {cam!r}; one of {', '.join(CAMERAS)}")
+        if not camera_url:
+            raise HTTPException(503, "no live camera: this dashboard has no robotd URL")
+        try:
+            content_type, chunks = open_camera(camera_url, cam)
+        except (OSError, ValueError) as e:  # URLError is an OSError
+            raise HTTPException(503, f"camera {cam} offline: robotd not reachable ({e})") from e
+        return StreamingResponse(chunks, media_type=content_type, headers=headers)
 
     @app.get("/events")
     async def events(request: Request, replay: Optional[str] = None, speed: float = 1.0):
@@ -322,8 +368,9 @@ def main(cfg) -> int:
     env_name, author_name = opts.get("env", "fake"), opts.get("author", "droid")
     approver = DashboardApprover(timeout_s=float(opts.get("approval_timeout_s", 600.0)))
     run_fn = loop_run_fn(cfg, approver, env_name, author_name)
-    app = create_app(cfg.path(cfg.repair.runs_dir), approver=approver, run_fn=run_fn)
-    print(f"dashboard on http://0.0.0.0:{PORT}  env={env_name} author={author_name}"
+    camera_url = opts.get("camera_url", (cfg.get("robot") or {}).get("robotd_url"))
+    app = create_app(cfg.path(cfg.repair.runs_dir), approver=approver, run_fn=run_fn, camera_url=camera_url)
+    print(f"dashboard on http://0.0.0.0:{PORT}  env={env_name} author={author_name} camera={camera_url}"
           "  (replay: /?replay=<run_id>&speed=2)")
     try:
         uvicorn.run(app, host="0.0.0.0", port=PORT, log_level="warning")
