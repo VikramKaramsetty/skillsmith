@@ -19,6 +19,7 @@ from __future__ import annotations
 import functools
 import json
 import math
+import re
 import sys
 import threading
 import time
@@ -30,6 +31,7 @@ from pathlib import Path
 from typing import Callable, Iterator, List, Optional, Sequence, Tuple, Type
 
 import pytest
+from qa_extras import built, require
 
 from skillsmith.config import load_config
 from skillsmith.hal.base import Env, make_env
@@ -55,16 +57,14 @@ UNREACHABLE = (2.0, 0.0, 0.10)
 # ---- what each backend needs to be built ----------------------------------------------------
 
 @functools.cache
-def _sim_status() -> str:
-    """'' if make_sim_env builds an Env, else the skip reason."""
+def _sim_error() -> Optional[Exception]:
+    """None if make_sim_env builds an Env, else why not."""
     try:
         env = make_env("sim", load_config(), _scene())
-    except NotImplementedError:
-        return "waiting on WS2.4 (make_sim_env)"
-    except ImportError as e:
-        return f"sim extra not installed ({e.name}): uv pip install -e '.[sim]'"
+    except (NotImplementedError, ImportError) as e:
+        return e
     env.close()
-    return ""
+    return None
 
 
 def _placo():
@@ -72,10 +72,8 @@ def _placo():
 
     try:
         return make_kinematics(load_config())
-    except NotImplementedError:
-        pytest.skip("waiting on WS2.2 (PlacoKinematics)")
-    except ImportError as e:
-        pytest.skip(f"kin extra not installed ({e.name}): uv pip install -e '.[kin]'")
+    except (NotImplementedError, ImportError) as e:
+        built(e, "kin", "waiting on WS2.2 (PlacoKinematics)")
 
 
 @functools.cache
@@ -85,8 +83,8 @@ def _scene() -> Scene:
 
 
 def _scene_env(name: str) -> Env:
-    if name == "sim" and _sim_status():
-        pytest.skip(_sim_status())
+    if name == "sim":
+        built(_sim_error(), "sim", "waiting on WS2.4 (make_sim_env)")
     return make_env(name, load_config(), _scene())
 
 
@@ -107,13 +105,14 @@ class _TableBus(MockBus):
 
 
 @contextmanager
-def _robotd_server() -> Iterator[str]:
+def _robotd_server(max_step_deg: float = 30, max_lag_deg: Optional[float] = None) -> Iterator[str]:
     """robotd's own FastAPI app under uvicorn on a free loopback port; yields the base URL."""
-    pytest.importorskip("fastapi")
-    uvicorn = pytest.importorskip("uvicorn")
+    require("fastapi", "robotd")
+    uvicorn = require("uvicorn", "robotd")
     from robotd.server import create_app
 
-    ctl = ArmController(_TableBus(), max_step_deg=30, max_speed_dps=10_000, settle_timeout_s=0.3)
+    ctl = ArmController(_TableBus(), max_step_deg=max_step_deg, max_speed_dps=10_000, settle_timeout_s=0.3,
+                        max_lag_deg=max_lag_deg)
     app = create_app(ctl, {"front": MockCamera("front"), "wrist": MockCamera("wrist")})
     server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=0, log_level="warning"))
     thread = threading.Thread(target=server.run, daemon=True)
@@ -132,7 +131,13 @@ def _robotd_server() -> Iterator[str]:
 
 
 class RobotdHttpError(RuntimeError):
-    pass
+    def __init__(self, method: str, path: str, status: int, body: str):
+        super().__init__(f"{method} {path} -> {status}: {body}")
+        self.status = status
+        try:
+            self.body = json.loads(body)
+        except ValueError:
+            self.body = {"raw": body}
 
 
 class _RobotdHttpArm:
@@ -151,7 +156,7 @@ class _RobotdHttpArm:
             with urllib.request.urlopen(req, timeout=10) as resp:
                 return json.loads(resp.read())
         except urllib.error.HTTPError as e:
-            raise RobotdHttpError(f"{method} {path} -> {e.code}: {e.read().decode()}") from e
+            raise RobotdHttpError(method, path, e.code, e.read().decode()) from e
 
     def joints(self) -> List[float]:
         return [float(v) for v in self._call("GET", "/state")["joints"]]
@@ -321,6 +326,45 @@ def test_stop_holds_position_and_the_arm_still_moves_after(arm_case):
     assert _close_to(arm_case.arm.joints()[:5], arm_case.reachable[:5], arm_case.joint_tol)
 
 
+def _status(err: BaseException) -> Optional[int]:
+    """The HTTP status a robotd client exception reports (attribute or "-> 409" in the message)."""
+    status = getattr(err, "status", None) or getattr(err, "status_code", None)
+    if isinstance(status, int):
+        return status
+    found = re.search(r"\b([1-5]\d\d)\b", str(err))
+    return int(found.group(1)) if found else None
+
+
+STALLS = {
+    # robot.yaml's step and lag (10/10): the elbow falls a whole step behind, the watchdog halts the move
+    "watchdog": ({"max_step_deg": 10, "max_lag_deg": 10}, "lag"),
+    # big steps never lag past the watchdog, so the arm times out short of the target instead
+    "not-settled": ({"max_step_deg": 30}, "errors"),
+}
+
+
+@pytest.mark.parametrize("stall", sorted(STALLS))
+@pytest.mark.parametrize("client", ["robotd", "robotd-client"])
+def test_robotd_stall_is_a_409_naming_the_joint(stall, client):
+    """INTERFACES §2: a stalled move is refused with 409 (not 400 = bad request, not 503 = bus error,
+    and never a 200 that leaves the arm short), says which joint stalled, and holds the arm there."""
+    ctl_kwargs, detail = STALLS[stall]
+    make_arm = _RobotdHttpArm if client == "robotd" else _robotd_client
+    with _robotd_server(**ctl_kwargs) as url:
+        arm = make_arm(url)
+        try:
+            with pytest.raises(Exception) as info:
+                arm.move_joints([0.0, 0.0, HARD_STOP_ELBOW + 20, 0.0, 0.0, 100.0], 60)
+            assert _status(info.value) == 409, f"stall answered {info.value!r}"
+            if isinstance(info.value, RobotdHttpError):
+                assert info.value.body["ok"] is False and "elbow_flex" in info.value.body[detail], info.value.body
+            assert abs(arm.joints()[2] - HARD_STOP_ELBOW) <= 1.5, arm.joints()
+        finally:
+            close = getattr(arm, "close", None)
+            if callable(close):
+                close()
+
+
 # ---- Kinematics -----------------------------------------------------------------------------
 
 KIN_BACKENDS = {
@@ -372,10 +416,8 @@ def _worldmodel():
         from skillsmith.perception.world import WorldModel
 
         return WorldModel(load_config(), frame_source=MockCamera("front"))
-    except NotImplementedError:
-        pytest.skip("waiting on WS3.5 (WorldModel)")
-    except ImportError as e:
-        pytest.skip(f"vision extra not installed ({e.name}): uv pip install -e '.[vision]'")
+    except (NotImplementedError, ImportError) as e:
+        built(e, "vision", "waiting on WS3.5 (WorldModel)")
 
 
 PERCEPTION_BACKENDS = {

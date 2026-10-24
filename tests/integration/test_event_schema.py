@@ -7,7 +7,8 @@ Three sources of events are checked:
 - a real `make demo-fake` run (`cmd_demo_fake`, scripted author), read back from events.jsonl;
 - the same repair loop driven by `DroidSDKAuthor` on the fake Droid SDK from tests/ws5, so the
   droid.* events (the award's "visible" criterion) are covered without the real SDK;
-- every `.emit("<type>"` call site in src/, so types on paths neither run reaches are listed too.
+- every `.emit(<type>, ...)` call site in src/ (read from the AST), so types and fields on paths
+  neither run reaches (the CLI fallback, error paths, calibration) are checked too (QA.6).
 
 Known mismatches live in KNOWN_GAPS with the owning workstream. Each one has an xfail test that
 turns into a skip naming the stale entry once the gap is fixed. Fixes and new §7 rows from other
@@ -16,6 +17,7 @@ lanes never fail this file, because only the qa lane may edit it.
 
 from __future__ import annotations
 
+import ast
 import copy
 import dataclasses
 import functools
@@ -24,6 +26,7 @@ import re
 import sys
 from argparse import Namespace
 from pathlib import Path
+from typing import Optional
 
 import pytest
 
@@ -95,6 +98,13 @@ KNOWN_GAPS: dict[str, str] = {
     "attempt.finished: missing data keys ['perception', 'safety', 'scene_after', 'scene_before']":
         "ws4: runtime.run_skill emits attempt.finished without scene_before/scene_after/safety/perception "
         "(added to §7 from PR #150's contract change request)",
+    "src/skillsmith/skills/runtime.py attempt.finished: missing data keys "
+    "['perception', 'safety', 'scene_after', 'scene_before']":
+        "ws4: the same gap, seen at the emit site in runtime.run_skill",
+    "src/skillsmith/repair/droid_client.py droid.started: missing data keys "
+    "['autonomy', 'disabled_tools', 'via', 'workspace']":
+        "ws5: the CLI fallback (DroidAuthor) emits droid.started with `cmd` instead of §7's "
+        "via (the cli cmd), workspace, autonomy, disabled_tools",
 }
 
 
@@ -209,13 +219,81 @@ def _documented() -> set[str]:
     return set(SPEC) | _doc_types()
 
 
-def _emitted_types() -> dict[str, list[str]]:
-    """Every literal event type passed to `.emit(` in src/, with where it is emitted."""
-    found: dict[str, list[str]] = {}
+@dataclasses.dataclass(frozen=True)
+class EmitSite:
+    """One `<bus>.emit(<type>, key=value, ...)` call in src/."""
+
+    file: str  # repo-relative path
+    line: int
+    kind: Optional[str]  # None: the type is not a literal or a module-level string constant
+    keys: frozenset[str]  # the keyword names passed
+    spread: bool  # a `**mapping` is passed too, so the keys are not all known statically
+    values: tuple[tuple[str, object], ...]  # keyword -> literal value, for the keywords passed a literal
+
+    @property
+    def where(self) -> str:
+        return f"{self.file}:{self.line}"
+
+
+def _module_strings(tree: ast.Module) -> dict[str, str]:
+    """Module-level `NAME = "literal"` assignments (e.g. calibration's APPLIED_EVENT)."""
+    out: dict[str, str] = {}
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
+            out.update({t.id: node.value.value for t in node.targets if isinstance(t, ast.Name)})
+    return out
+
+
+@functools.cache
+def _emit_sites() -> tuple[EmitSite, ...]:
+    """Every `.emit(...)` call in src/ with a positional event type, read from the AST so multi-line
+    calls and constant names count. `def emit` itself and wrappers like `self._emit(event)` don't match."""
+    sites = []
     for path in sorted(SRC.rglob("*.py")):
-        for n, line in enumerate(path.read_text().splitlines(), 1):
-            for kind in re.findall(r"\.emit\(\s*\"([a-z_.]+)\"", line):
-                found.setdefault(kind, []).append(f"{path.relative_to(REPO)}:{n}")
+        tree = ast.parse(path.read_text(), str(path))
+        consts = _module_strings(tree)
+        for node in ast.walk(tree):
+            if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                    and node.func.attr == "emit" and node.args):
+                continue
+            first = node.args[0]
+            kind = (first.value if isinstance(first, ast.Constant) and isinstance(first.value, str)
+                    else consts.get(first.id) if isinstance(first, ast.Name) else None)
+            sites.append(EmitSite(
+                str(path.relative_to(REPO)), node.lineno, kind,
+                frozenset(k.arg for k in node.keywords if k.arg),
+                any(k.arg is None for k in node.keywords),
+                tuple((k.arg, k.value.value) for k in node.keywords if k.arg and isinstance(k.value, ast.Constant))))
+    return tuple(sites)
+
+
+def _site_violations(site: EmitSite) -> set[str]:
+    """How one emit site departs from §7, keyed by file (not line, so KNOWN_GAPS survives edits)."""
+    if site.kind is None:
+        return {f"{site.file}: event type is not a literal or a module-level constant"}
+    if site.kind not in _documented():
+        return {f"{site.kind}: type not in INTERFACES §7"}
+    out = set()
+    missing = SPEC.get(site.kind, set()) - site.keys
+    if missing and not site.spread:
+        out.add(f"{site.file} {site.kind}: missing data keys {sorted(missing)}")
+    for key, value in site.values:
+        allowed = ENUMS.get((site.kind, key))
+        if allowed is not None and value not in allowed:
+            out.add(f"{site.file} {site.kind}.{key}: {value!r} not in {sorted(allowed)}")
+    return out
+
+
+def _all_site_violations() -> set[str]:
+    return set().union(*map(_site_violations, _emit_sites()))
+
+
+def _emitted_types() -> dict[str, list[str]]:
+    """Every event type passed to `.emit(` in src/, with where it is emitted."""
+    found: dict[str, list[str]] = {}
+    for site in _emit_sites():
+        if site.kind:
+            found.setdefault(site.kind, []).append(site.where)
     return found
 
 
@@ -282,6 +360,49 @@ def test_every_emitted_type_is_documented(kind):
     assert kind in _documented(), f"{kind} emitted at {_emitted_types()[kind]} but not in INTERFACES §7"
 
 
+@pytest.mark.parametrize("site", _emit_sites(), ids=lambda s: s.where)
+def test_every_emit_site_passes_the_documented_fields(site):
+    """Field-level check at the call site, so emits neither run reaches (the CLI fallback, error
+    paths, calibration) are held to §7 too. A `**mapping` spread is checked only by the runs."""
+    gaps = [KNOWN_GAPS[v] for v in _site_violations(site) if v in KNOWN_GAPS]
+    if gaps:
+        pytest.xfail("; ".join(gaps))
+    assert _unexpected(_site_violations(site)) == [], site.where
+
+
+def test_emit_sites_are_all_found():
+    """The AST scan sees at least every `.emit("` the plain text search sees (a scan that silently
+    finds nothing would pass every site check)."""
+    text = sum(len(re.findall(r"\.emit\(\s*\"", p.read_text())) for p in SRC.rglob("*.py"))
+    literal = [s for s in _emit_sites() if s.kind]
+    assert text > 0 and len(literal) >= text
+
+
+def test_site_checker_catches_drift(tmp_path, monkeypatch):
+    src = tmp_path / "src" / "skillsmith"
+    src.mkdir(parents=True)
+    (src / "bad.py").write_text(
+        'KIND = "gate.result"\n'
+        'def f(bus, x):\n'
+        '    bus.emit("verify.result", ok=True)\n'
+        '    bus.emit(KIND, gate="vision", ok=True, detail="")\n'
+        '    bus.emit("made.up", a=1)\n'
+        '    bus.emit(x, a=1)\n'
+        '    bus.emit("phase.check", **x)\n')
+    monkeypatch.setitem(globals(), "SRC", src)
+    monkeypatch.setitem(globals(), "REPO", tmp_path)
+    _emit_sites.cache_clear()
+    try:
+        assert _all_site_violations() == {
+            "src/skillsmith/bad.py verify.result: missing data keys ['detail']",
+            "src/skillsmith/bad.py gate.result.gate: 'vision' not in ['safety', 'sim', 'static']",
+            "made.up: type not in INTERFACES §7",
+            "src/skillsmith/bad.py: event type is not a literal or a module-level constant",
+        }
+    finally:
+        _emit_sites.cache_clear()
+
+
 def test_checker_catches_drift():
     good = {"t": 1.0, "run_id": "r", "type": "verify.result", "data": {"ok": True, "detail": "ok"}}
     assert _violations([good]) == set()
@@ -297,7 +418,6 @@ def test_checker_catches_drift():
 @pytest.mark.parametrize("gap", sorted(KNOWN_GAPS))
 def test_known_gap_is_still_open(gap, tmp_path, monkeypatch):
     events = _droid_sdk_events(tmp_path, monkeypatch)
-    undocumented = {f"{k}: type not in INTERFACES §7" for k in _emitted_types() if k not in _documented()}
-    if gap in _violations(events) | undocumented:
+    if gap in _violations(events) | _all_site_violations():
         pytest.xfail(KNOWN_GAPS[gap])
     pytest.skip(f"fixed upstream; qa: delete from KNOWN_GAPS: {gap}")

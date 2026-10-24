@@ -21,11 +21,12 @@ import sys
 from pathlib import Path
 
 import pytest
+from qa_extras import require
 
 from skillsmith.config import Config, load_config
 
-pytest.importorskip("fastapi")
-pytest.importorskip("httpx")
+require("fastapi", "dashboard")
+require("httpx", "dashboard")
 from fastapi.testclient import TestClient  # noqa: E402
 
 from skillsmith.dashboard import server  # noqa: E402
