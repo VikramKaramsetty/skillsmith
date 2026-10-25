@@ -162,7 +162,7 @@ def loop_run_fn(cfg, approver: DashboardApprover, env_name: str, author_name: st
     from skillsmith.skills.library import SkillLibrary
 
     def run(task: TaskSpec, bus: EventBus) -> int:
-        target = make_env(env_name, cfg)
+        target = make_env(env_name, cfg, bus=bus)
         make_check_env = _check_env_factory("fake" if env_name == "fake" else "sim", cfg)
         library = SkillLibrary(cfg.path(cfg.repair.library_dir))
         author = _author(author_name, cfg, bus, make_check_env)

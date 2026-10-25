@@ -62,8 +62,9 @@ class Env:
                 close()
 
 
-def make_env(name: str, cfg: Config, scene: Optional[Scene] = None) -> Env:
-    """Build an Env. 'fake' and 'sim' take an optional Scene to build the world from."""
+def make_env(name: str, cfg: Config, scene: Optional[Scene] = None, bus=None) -> Env:
+    """Build an Env. 'fake' and 'sim' take an optional Scene to build the world from; 'real' passes `bus`
+    to its WorldModel so bumps, drift and camera errors reach the run's events and the dashboard."""
     if name == "fake":
         from skillsmith.hal.fake import FakeWorld
 
@@ -76,5 +77,5 @@ def make_env(name: str, cfg: Config, scene: Optional[Scene] = None) -> Env:
     if name == "real":
         from skillsmith.hal.real import make_real_env
 
-        return make_real_env(cfg)
+        return make_real_env(cfg, bus)
     raise ValueError(f"unknown env '{name}' (expected fake | sim | real)")
