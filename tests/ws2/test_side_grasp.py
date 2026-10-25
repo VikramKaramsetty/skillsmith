@@ -65,7 +65,7 @@ def test_side_ik_is_level_with_jaws_sideways(kin, target):
 
 def test_side_ik_refuses_near_the_base(kin):
     assert kin.ik((0.15, 0.0, 0.06), SEED, approach="side") is None
-    assert kin.ik((0.24, 0.0, 0.06), SEED, approach="side") is None  # wrist_flex would sit on its stop
+    assert kin.ik((0.17, 0.0, 0.06), SEED, approach="side") is None  # wrist_flex/elbow out of range
 
 
 def test_wrist_camera_sits_above_a_level_gripper(kin):
@@ -110,4 +110,4 @@ def test_approach_side_too_near_the_base_is_unreachable_before_moving():
     finally:
         env.close()
     assert not result.ok
-    assert "Unreachable" in result.error and "m out" in result.error
+    assert "Unreachable" in result.error and "Move it outward" in result.error

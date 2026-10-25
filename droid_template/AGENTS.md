@@ -119,7 +119,7 @@ pointing straight down, or LEVEL (parallel to the table) after `robot.approach_s
 (7.6 cm on the table, 5.1 cm at the top), 9.5 cm tall. Top-down grips miss it. Use:
 
 ```python
-robot.approach_side(obj)        # wrist-camera fix, level open jaws lowered around the cup, 2 cm under its top
+robot.approach_side(obj)        # reach in from the side at 1.5 cm under its top, jaws open
 if not robot.grasp():
     raise SkillError("side grasp missed")
 held_z = robot.position()[2]
@@ -131,9 +131,9 @@ robot.move_to(x, y, cup.top + 0.03)
 robot.home()                          # home points down again
 ```
 
-- A level gripper only reaches about **0.26–0.33 m from the base** for this cup (grip 2 cm under
-  its top; higher grips reach a little nearer). Nearer is `Unreachable` before moving: report it,
-  don't tune heights. Keep level moves at ≥ 0.23 m too.
+- A side grasp reaches cups about **0.22–0.33 m from the base** (it reaches in from ~4 cm short of
+  the cup, so it needs room behind it). Nearer is `Unreachable` before moving: report it, don't tune
+  heights. Keep level moves at ≥ 0.18 m.
 - While holding a cup level, travel at `cup.top + 0.03`, not 0.18 (too high to stay level).
 
 Blocks and other small objects (top-down):

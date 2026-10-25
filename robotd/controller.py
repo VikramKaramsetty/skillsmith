@@ -6,7 +6,9 @@ It owns one `Bus` (MockBus, or FeetechBus on the real arm) and turns API calls i
   in front of the servos' own calibrated position limits.
 - It then moves the 5 arm joints from where they actually are, in steps of at most `max_step_deg`,
   paced by `speed_dps` (capped at `max_speed_dps`), and waits until every joint is within
-  `settle_tol_deg` of the target, else 409 with how far each joint still is.
+  `settle_tol_deg` of the target (or its `joint_tol_deg` entry, e.g. a looser wrist_roll, which
+  sags ~5 deg under the gripper's weight when the gripper is level), else 409 with how far each
+  joint still is.
   The gripper value in the target is ignored: only `set_gripper` moves the jaws, so a seed copied
   before a grasp can never loosen the grip mid-carry.
 - Watchdog: after each step, a joint more than `max_lag_deg` behind its goal is blocked or stalled;
@@ -108,11 +110,13 @@ class RobotdError(Exception):
 class ArmController:
     def __init__(self, bus: Bus, max_step_deg: float = 10.0, max_speed_dps: float = 60.0,
                  settle_tol_deg: float = 1.5, settle_timeout_s: float = 2.0, gripper_timeout_s: float = 1.5,
-                 limit_margin_deg: float = 2.0, max_lag_deg: Optional[float] = None):
+                 limit_margin_deg: float = 2.0, max_lag_deg: Optional[float] = None,
+                 joint_tol_deg: Optional[Dict[str, float]] = None):
         self.bus = bus
         self.max_step_deg = max_step_deg
         self.max_speed_dps = max_speed_dps
         self.settle_tol_deg = settle_tol_deg
+        self._tol = [float((joint_tol_deg or {}).get(n, settle_tol_deg)) for n in JOINT_NAMES[:ARM]]
         self.settle_timeout_s = settle_timeout_s
         self.gripper_timeout_s = gripper_timeout_s
         # a joint that is free keeps up with paced steps; one a whole step behind is not moving
@@ -257,7 +261,7 @@ class ArmController:
         """Joints still further than settle_tol_deg from the target: name -> target - present (deg)."""
         present = self._read()
         return {JOINT_NAMES[i]: round(g - present[i], 2)
-                for i, g in enumerate(goal) if abs(g - present[i]) > self.settle_tol_deg}
+                for i, g in enumerate(goal[:ARM]) if abs(g - present[i]) > self._tol[i]}
 
     def _wait_gripper(self) -> None:
         """Until the jaws reach the goal or stop moving (closed on an object), up to gripper_timeout_s."""
