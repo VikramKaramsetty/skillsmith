@@ -32,7 +32,7 @@
   #replay-pos { color: #ccc; font-variant-numeric: tabular-nums; font-size: 14px; }
   main { padding: 20px 28px; display: grid; gap: 24px; grid-template-columns: minmax(0, 1fr) minmax(360px, 40%);
          align-items: start; max-width: 1900px; }
-  #story { display: grid; gap: 18px; min-width: 0; }
+  #story { display: grid; gap: 18px; min-width: 0; grid-template-columns: minmax(0, 1fr); }
   @media (max-width: 1100px) { main { grid-template-columns: minmax(0, 1fr); } }
   #world-box { display: grid; gap: 10px; }
   #cam-wrap { position: relative; background: #000; border-radius: 10px; overflow: hidden; min-height: 120px; }
@@ -118,6 +118,33 @@
   .step .kind { display: inline-block; min-width: 56px; color: #6cf; }
   .step pre { margin: 2px 0 0 56px; font: 12px ui-monospace, monospace; color: #999; white-space: pre-wrap; word-break: break-all; }
   .perm .why { color: #bbb; }
+  #iters { display: flex; gap: 12px; overflow-x: auto; padding-bottom: 6px; scroll-snap-type: x proximity; }
+  .iter { flex: 0 0 340px; scroll-snap-align: end; background: #1a1a1a; border-radius: 10px; overflow: hidden;
+          border-top: 6px solid #444; display: flex; flex-direction: column; }
+  .iter.ok { border-top-color: #2d2; } .iter.bad { border-top-color: #e33; } .iter.run { border-top-color: #48f; }
+  .iter-head { display: flex; align-items: baseline; gap: 8px; padding: 8px 12px 4px; }
+  .iter-head .ver { font-size: 26px; font-weight: 800; }
+  .iter-head .env { font-size: 13px; font-weight: 700; padding: 1px 7px; border-radius: 4px; background: #333; letter-spacing: .06em; }
+  .iter-head .env.real { background: #a50; color: #fff; }
+  .iter-head .result { margin-left: auto; font-size: 15px; font-weight: 800; }
+  .iter-head .result.ok { color: #6e6; } .iter-head .result.bad { color: #f77; } .iter-head .result.run { color: #8af; }
+  .iter-who { margin: 0 12px 6px; font-size: 14px; color: #bbb; height: 60px; overflow: hidden;
+              display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; }
+  .iter-who .model { display: inline-block; font-weight: 700; color: #111; background: #9c9; border-radius: 4px; padding: 0 6px; margin-right: 6px; }
+  .iter-who .model.Sonnet { background: #8bd; } .iter-who .model.Opus { background: #c9e; } .iter-who .model.Haiku { background: #9d9; }
+  .iter-media { background: #000; position: relative; aspect-ratio: 8 / 3; cursor: zoom-in; }
+  .iter-media video, .iter-media img.main { width: 100%; height: 100%; object-fit: contain; display: block; }
+  .iter-media .none { color: #555; font-size: 14px; padding: 40px 12px; text-align: center; cursor: default; }
+  .iter-media .tag { position: absolute; left: 6px; top: 6px; font-size: 11px; color: #ddd; background: #000a; padding: 1px 6px; border-radius: 3px; }
+  .iter-thumbs { display: flex; gap: 4px; padding: 4px; background: #111; }
+  .iter-thumbs img { flex: 1; min-width: 0; height: 46px; object-fit: cover; border: 2px solid #2a6; border-radius: 3px; cursor: zoom-in; }
+  .iter-thumbs img.bad { border-color: #e33; } .iter-thumbs img.on { outline: 2px solid #fff; }
+  .iter-why { padding: 6px 12px 10px; font-size: 13px; color: #f99; }
+  .iter-why .note { color: #888; }
+  #lightbox { position: fixed; inset: 0; background: #000e; display: flex; flex-direction: column; align-items: center;
+              justify-content: center; gap: 10px; z-index: 10; cursor: zoom-out; padding: 20px; }
+  #lightbox img, #lightbox video { max-width: 96vw; max-height: 84vh; }
+  #lightbox-cap { color: #ddd; font-size: 18px; max-width: 1200px; text-align: center; }
   details { color: #999; }
   #log { font: 12px ui-monospace, monospace; max-height: 260px; overflow: auto; }
   .ev { padding: 1px 0; border-bottom: 1px solid #222; white-space: pre-wrap; word-break: break-all; }
@@ -156,6 +183,10 @@
     <div class="label">The change <span id="diff-versions"></span></div>
     <pre id="diff"></pre>
   </section>
+  <section id="iter-box" class="hidden">
+    <div class="label">Iterations <span id="iter-note"></span></div>
+    <div id="iters"></div>
+  </section>
   <section>
     <div class="label">Gates</div>
     <div id="gates"></div>
@@ -168,6 +199,7 @@
   </section>
   <details><summary>event log</summary><div id="log"></div></details>
  </div>
+  <div id="lightbox" class="hidden"><div id="lightbox-media"></div><div id="lightbox-cap"></div></div>
   <aside id="world-box">
     <div class="label"><span id="cam-label">Live camera</span> <span id="cams"></span></div>
     <div id="cam-wrap" class="solo"><img id="camera" class="hidden" alt="camera"><div id="cam-msg"></div>
@@ -391,6 +423,8 @@ function initialDrawer() {
     session: null,            // {round, via, autonomy, disabled_tools, workspace, tools}
     steps: [],                // [{kind: call|result|check, round, name, ok, text}]
     permissions: [],          // [{round, action, target, allowed, reason}]
+    versions: {},             // version -> {model, round, change}: who wrote it and what Droid said it changed
+    next: null,               // the Droid session writing the next version, until its skill.diff
   };
 }
 
@@ -408,6 +442,31 @@ function keyframes(drawer) {
     if (p.frame_path) out.push({ attempt: i + 1, version: a.version, phase: p.phase, ok: p.ok, detail: p.detail, path: p.frame_path });
   }));
   return out;
+}
+
+// "claude-haiku-5-5" -> "Haiku": the escalation rung, short enough for a card.
+function modelName(model) {
+  const m = /(haiku|sonnet|opus|fable)/i.exec(String(model || ""));
+  return m ? m[1][0].toUpperCase() + m[1].slice(1).toLowerCase() : model || null;
+}
+
+// The Iterations strip: one card per attempt, oldest first. `renders` maps a version to the
+// sim rendering rebuilt from the recording (GET /renders/<run_id>); a live sim.video wins.
+function iterations(drawer, renders = {}) {
+  return drawer.attempts.map((a, i) => {
+    const who = (drawer.versions || {})[a.version] || {};
+    const c = a.classification;
+    const r = a.env === "sim" ? renders[a.version] : null;
+    return {
+      n: i + 1, env: a.env, version: a.version, ok: a.ok,
+      cls: a.ok === false ? (c ? c.cls : "FAIL") : null,
+      summary: a.ok === false && c ? firstLine(c.summary, 140) : "",
+      model: modelName(who.model), change: who.change ? firstLine(who.change, 400) : who.unchanged ? "same code, run again" : "",
+      frames: a.phases.filter((p) => p.frame_path).map((p) => ({ phase: p.phase, ok: p.ok, detail: p.detail, path: p.frame_path })),
+      video: a.video || (r && r.video) || null, poster: (r && r.poster) || null,
+      rerun: r && r.rerun && a.ok != null && r.rerun.ok !== a.ok ? (r.rerun.ok ? "PASS" : "FAIL") : null,
+    };
+  });
 }
 
 function onLastAttempt(drawer, update) {
@@ -430,8 +489,16 @@ function reduceDrawer(drawer, e) {
     case "attempt.finished":
       return onLastAttempt(drawer, (a) => ({ ...a, ok: !!d.ok }));
     case "droid.started":
-      return { ...drawer, session: { tools: (drawer.session && drawer.session.tools) || [], round: d.round, via: d.via,
-                                     autonomy: d.autonomy, disabled_tools: d.disabled_tools || [], workspace: d.workspace } };
+      return { ...drawer, next: { model: d.model || null, round: d.round, change: null },
+               session: { tools: (drawer.session && drawer.session.tools) || [], round: d.round, via: d.via,
+                          autonomy: d.autonomy, disabled_tools: d.disabled_tools || [], workspace: d.workspace } };
+    case "droid.result":
+      return { ...drawer, next: { ...(drawer.next || { model: null, round: d.round }), change: (d.result || {}).change || null } };
+    case "skill.diff":
+      return { ...drawer, next: null, versions: { ...(drawer.versions || {}),
+        [d.new_version]: { ...(drawer.next || { model: null, round: null, change: null }), unchanged: !String(d.diff || "").trim() } } };
+    case "sim.video":
+      return onLastAttempt(drawer, (a) => ({ ...a, video: d.path || null }));
     case "droid.tools":
       return { ...drawer, session: { ...(drawer.session || {}), tools: d.tools || [] } };
     case "droid.tool_call":
@@ -595,7 +662,7 @@ function replayUrl(runId, speed, from) {
   return `/events?${q}`;
 }
 
-if (typeof module !== "undefined") module.exports = { initialState, reduce, shortDiff, keyframes, tableMap, worldLine,
+if (typeof module !== "undefined") module.exports = { initialState, reduce, shortDiff, keyframes, iterations, modelName, tableMap, worldLine,
                                                          reduceImprove, panelRuns, improvementTotals, runTag,
                                                          reduceRecorded, approvalLabels, SPEEDS, parseSpeed, speedLabel, replayUrl };
 </script>
@@ -668,6 +735,7 @@ function render(s) {
     : `${decided}${a.note ? ": " + a.note : ""}`;
 
   renderDrawer(s.drawer);
+  renderIterations(s);
   renderWorld(s.world);
   renderImprove(improve);
 }
@@ -875,6 +943,98 @@ function renderDrawer(d) {
     ["tools Droid can use", (ss.tools || []).join(", ") || "(not reported)"], ["workspace", ss.workspace],
   ].map(([k, v]) => { const r = el("div"); r.append(el("span", "caption", `${k}: `), String(v ?? "")); return r; })
     : [el("div", "empty", "Droid has not started")]));
+}
+
+// ---- Iterations strip: every attempt side by side, sim renders and annotated real key frames ----
+let renders = {}, rendersFor = null, iterKey = "";
+
+async function loadRenders(runId) {
+  rendersFor = runId;
+  renders = {};
+  try {
+    const r = await fetch(`/renders/${encodeURIComponent(runId)}`);
+    if (!r.ok) return;  // no renders for this run (live, or not rebuilt yet): cards show key frames only
+    const m = await r.json();
+    if (rendersFor !== runId) return;
+    renders = Object.fromEntries((m.renders || []).map((x) => [x.version, x]));
+    iterKey = "";
+    render(state);
+  } catch (_) { /* the strip works without renders */ }
+}
+
+function openLightbox(kind, src, caption) {
+  const media = el(kind);
+  media.src = src;
+  if (kind === "video") Object.assign(media, { autoplay: true, loop: true, muted: true, controls: true, playsInline: true });
+  $("lightbox-media").replaceChildren(media);
+  $("lightbox-cap").textContent = caption;
+  $("lightbox").classList.remove("hidden");
+}
+$("lightbox").onclick = () => { $("lightbox").classList.add("hidden"); $("lightbox-media").replaceChildren(); };
+
+function iterCard(it) {
+  const state = it.ok == null ? "run" : it.ok ? "ok" : "bad";
+  const card = el("div", `iter ${state}`);
+  const head = el("div", "iter-head");
+  head.append(el("span", "ver", it.version != null ? `v${it.version}` : "v?"), el("span", `env ${it.env}`, String(it.env || "?").toUpperCase()),
+              el("span", `result ${state}`, it.ok == null ? "RUNNING" : it.ok ? "PASS" : it.cls));
+  const who = el("div", "iter-who");
+  if (it.model) who.append(el("span", `model ${it.model}`, it.model));
+  who.append(it.change || (it.version === 0 ? "first draft" : ""));
+  who.title = it.change || "";
+  const title = `#${it.n} · v${it.version} on ${it.env} · ${it.ok == null ? "running" : it.ok ? "PASS" : it.cls}`;
+
+  const media = el("div", "iter-media");
+  const thumbs = el("div", "iter-thumbs");
+  if (it.video) {
+    const v = el("video");
+    Object.assign(v, { muted: true, autoplay: true, loop: true, playsInline: true });
+    v.src = `/video?path=${encodeURIComponent(it.video)}`;
+    if (it.poster) v.poster = frameUrl(it.poster);
+    media.append(v, el("span", "tag", "sim"));
+    media.onclick = () => openLightbox("video", v.src, title);
+  } else if (it.frames.length) {
+    // The failing phase's frame first: that is where a judge should look.
+    const lead = it.frames.find((f) => !f.ok) || it.frames[it.frames.length - 1];
+    const img = el("img", "main");
+    const show = (f) => {
+      img.src = frameUrl(f.path);
+      media.onclick = () => openLightbox("img", img.src, `${title} · ${f.phase} ${f.ok ? "✓" : "✗"} · ${f.detail}`);
+      thumbs.querySelectorAll("img").forEach((t) => t.classList.toggle("on", t.dataset.path === f.path));
+    };
+    media.append(img, el("span", "tag", "real · annotated"));
+    it.frames.forEach((f) => {
+      const t = el("img", f.ok ? null : "bad");
+      t.src = frameUrl(f.path);
+      t.dataset.path = f.path;
+      t.title = `${f.phase} ${f.ok ? "✓" : "✗"}: ${f.detail}`;
+      t.onclick = () => show(f);
+      thumbs.append(t);
+    });
+    show(lead);
+  } else {
+    media.append(el("div", "none", it.env === "sim" ? "no sim render (tools/render_runs.py rebuilds them)" : "no key frames recorded"));
+  }
+  card.append(head, who, media);
+  if (it.frames.length > 1) card.append(thumbs);
+  const why = el("div", "iter-why", it.summary);
+  if (it.rerun) why.append(el("div", "note", `render from today's sim: ${it.rerun}`));
+  if (it.summary || it.rerun) card.append(why);
+  return card;
+}
+
+function renderIterations(s) {
+  if (s.run_id && s.run_id !== rendersFor) loadRenders(s.run_id);
+  const its = iterations(s.drawer, renders);
+  $("iter-box").classList.toggle("hidden", !its.length);
+  // Rebuild only when something changed, so videos keep playing between events.
+  const key = JSON.stringify(its);
+  if (key === iterKey) return;
+  iterKey = key;
+  const versions = new Set(its.map((it) => it.version)).size;
+  $("iter-note").textContent = its.length ? `· ${its.length} attempt(s), ${versions} version(s)` : "";
+  $("iters").replaceChildren(...its.map(iterCard));
+  $("iters").scrollLeft = $("iters").scrollWidth;  // newest in view
 }
 
 $("drawer-toggle").onclick = () => $("drawer").classList.toggle("hidden");

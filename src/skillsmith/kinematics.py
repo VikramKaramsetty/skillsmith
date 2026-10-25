@@ -150,7 +150,7 @@ class PlacoKinematics:
         return (float(x), float(y), float(z))
 
     def ik(self, target: Vec3, seed: Sequence[float], approach: str = "down",
-           keep_tilt: bool = False) -> Optional[List[float]]:
+           keep_tilt: bool = False, side_max_tilt: Optional[float] = None) -> Optional[List[float]]:
         if approach not in APPROACHES:
             raise ValueError(f"approach must be one of {APPROACHES}, got {approach!r}")
         if approach == "side" and self.side_z_offset:  # aim the model lower so the real tip lands on target
@@ -171,7 +171,8 @@ class PlacoKinematics:
                 cand = self._solve(target_arr, start, seed)
                 if cand is not None and (best is None or cand[:2] < best[:2]):
                     best = cand
-                if best is not None and best[0] < (SIDE_MAX_TILT_DEG if approach == "side" else VERTICAL_DEG):
+                cap = SIDE_MAX_TILT_DEG if side_max_tilt is None else float(side_max_tilt)
+                if best is not None and best[0] < (cap if approach == "side" else VERTICAL_DEG):
                     break  # side: the first level-enough start wins (usually the seed), no extra solves
         finally:
             self._solver_limits(0.0)
@@ -180,7 +181,8 @@ class PlacoKinematics:
             level = float(self._tip_pose()[:3, 1] @ self._approach_axis("side")[1])
             best = (round(math.degrees(math.acos(max(-1.0, min(1.0, level)))), 3), best[1], best[2])
         self.last_tilt_deg = None if best is None else best[0]
-        max_tilt = SIDE_MAX_TILT_DEG if approach == "side" else self.max_tilt_deg
+        side_cap = SIDE_MAX_TILT_DEG if side_max_tilt is None else float(side_max_tilt)
+        max_tilt = side_cap if approach == "side" else self.max_tilt_deg
         if best is None or (max_tilt is not None and best[0] > max_tilt):
             return None
         return best[2] + [float(seed[5])]

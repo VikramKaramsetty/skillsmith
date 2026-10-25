@@ -17,6 +17,8 @@ annotated key frames the events point at (images inside the runs dir only).
 WS6.5 adds `GET /camera/{cam}` (robotd's MJPEG `/stream/{cam}` passed through, so the browser
 only talks to the dashboard and only robotd holds the camera; 503 if robotd isn't reachable)
 and `GET /video?path=` for the sim replay mp4 that `sim.video` points at (runs dir only).
+`GET /renders/<run_id>` lists the sim renderings tools/render_runs.py rebuilt for a recorded run
+(runs/<id>/sim/manifest.json), for the page's Iterations strip; 404 when there are none.
 WS6.6 adds `GET /improvement`: one summary per recorded run (dashboard/improvement.py), so the
 improvement panel shows earlier runs; the page folds the live run itself.
 WS6.7 adds speed control to replay: `GET /events?replay=<run_id>&speed=4&from=<n>` starts at the
@@ -203,6 +205,21 @@ def run_path(runs_dir: Path, run_id: str) -> Optional[Path]:
     return path if path.is_file() else None
 
 
+def run_renders(runs_dir: Path, run_id: str) -> Optional[dict]:
+    """runs/<run_id>/sim/manifest.json (written by tools/render_runs.py), keeping only renders whose
+    video and poster are still on disk inside the runs dir. None if the run has no renders."""
+    if not _RUN_ID.match(run_id):
+        return None
+    path = Path(runs_dir) / run_id / "sim" / "manifest.json"
+    try:
+        manifest = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return None
+    keep = [r for r in manifest.get("renders") or []
+            if frame_path(runs_dir, str(r.get("video", "")), VIDEO_TYPES) and frame_path(runs_dir, str(r.get("poster", "")))]
+    return {**manifest, "renders": keep}
+
+
 def frame_path(runs_dir: Path, path: str, types: dict[str, str] = IMAGE_TYPES) -> Optional[Path]:
     """A file the events point at (key frames, snapshots, sim videos), only if it lies inside runs_dir."""
     root = Path(runs_dir).resolve()
@@ -370,6 +387,13 @@ def create_app(runs_dir: Path, hub: Optional[EventHub] = None,
     def improvement() -> list[dict]:
         from skillsmith.dashboard.improvement import improvement as summaries
         return summaries(app.state.runs_dir)
+
+    @app.get("/renders/{run_id}")
+    def renders(run_id: str) -> dict:
+        found = run_renders(app.state.runs_dir, run_id)
+        if found is None:
+            raise HTTPException(404, f"no sim renders for run {run_id!r} (tools/render_runs.py makes them)")
+        return found
 
     @app.get("/frame")
     def frame(path: str):

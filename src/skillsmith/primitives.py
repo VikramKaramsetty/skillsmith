@@ -25,6 +25,7 @@ SIDE_GRASP_DEPTH = 0.025    # m; the grasp point (fingertips) ends this far PAST
 #                             on a cup at the fingertips squeezed it out forward on the real arm (the sim
 #                             attaches on contact, so it never showed)
 SIDE_GRASP_DEPTH_MIN = 0.015  # m; shallower near the reach limit, never less than this
+SIDE_TILTS = (10.0, 20.0, 35.0)  # deg below level approach_side allows, tried in order (35 = cups near the base)
 SIDE_STANDOFF = 0.06        # m; the level jaws start this far short of the object, then slide in
 SIDE_STANDOFF_MARGIN = 0.02  # m; ...and never closer than its radius + this (1 cm let the descent clip the cup)
 SIDE_HOVER = 0.03           # m; open jaws come in level this far above the object's top, then go down
@@ -53,6 +54,7 @@ class Robot:
         self.trace: list[PrimitiveCall] = []
         self.last_scene: Optional[Scene] = None
         self._side = False  # gripper level instead of pointing down; read from the arm when kin can (_is_level)
+        self._tilt_cap = SIDE_TILTS[0]  # deg the fingers may point below level in side moves (approach_side sets it)
         self.captures: dict = {}  # call index -> (front BGR, wrist BGR, tip): phase keyframes for Droid
 
     # ---- public API (what skills call) ----------------------------------------------
@@ -149,15 +151,27 @@ class Robot:
             x, y = target.x, target.y
             gz = target.top - SIDE_GRIP_BELOW_TOP if grip_z is None else float(grip_z)
             gz = min(max(gz, target.z + 0.01), target.top - 0.005)
-            q = None if math.hypot(x, y) < SIDE_MIN_REACH else self._ik((x, y, gz), self._env.arm.joints(), side=True)
-            if q is None:  # one solve: reach check + gripper axes at the grasp
-                raise Unreachable(f"no level (side) grasp of {target.label} at ({x:.3f}, {y:.3f}, z={gz:.3f}), "
-                                  f"{math.hypot(x, y):.3f} m from the base: a side grasp reaches about "
-                                  "0.29..0.30 m out with the gripper horizontal. Move it outward")
-            (jx, jy, _), (ax, ay) = self._jaw_axis(q, x, y), self._reach_dir(q, x, y)
-            shift = (JAW_CENTRE_SHIFT * jx, JAW_CENTRE_SHIFT * jy)  # object mid-gap while the jaws come in
             turn_zs = [target.top + c for c in (max(hover, SWING_CLEARANCE), 0.045) if c <= max(hover, SWING_CLEARANCE)]
-            pts, qs = self._side_plan(target, x, y, gz, turn_zs, shift, (ax, ay), q)
+            plan, why = None, ""
+            for cap in SIDE_TILTS:  # level if the arm can, fingers tilted down further only when it must
+                self._tilt_cap = cap
+                q = None if math.hypot(x, y) < SIDE_MIN_REACH else self._ik((x, y, gz), self._env.arm.joints(), side=True)
+                if q is None:
+                    why = f"no side grasp pose within {cap:.0f} deg of level"
+                    continue
+                (jx, jy, _), (ax, ay) = self._jaw_axis(q, x, y), self._reach_dir(q, x, y)
+                shift = (JAW_CENTRE_SHIFT * jx, JAW_CENTRE_SHIFT * jy)  # object mid-gap while the jaws come in
+                try:
+                    plan = self._side_plan(target, x, y, gz, turn_zs, shift, (ax, ay), q)
+                    break
+                except Unreachable as e:
+                    why = str(e)
+            if plan is None:  # right in front of the base: the gripper can only point down there
+                return self._approach_down(target, x, y, gz, speed, i, why)
+            pts, qs = plan
+            if self._tilt_cap > SIDE_TILTS[0]:
+                self._bus.emit("note", text=f"side grasp of {target.label} with the fingers up to {self._tilt_cap:.0f} "
+                               "deg below level (too near the base for level)", where="robot.approach_side")
             self._play(pts[:1], qs[:1], i, SWING_DPS)      # turn level behind it (lower turns clip its top)
             fix = 0.0
             located = self._wrist_locate(target)            # from up here the camera sees all of its top
@@ -220,9 +234,9 @@ class Robot:
         # only pass `approach` when it matters, so simple Kinematics doubles keep working
         if not side:
             return self._env.kin.ik(p, seed)
-        if hold and getattr(self._env.kin, "tool_axis", None) is not None:  # placo: keep the finger tilt
-            return self._env.kin.ik(p, seed, approach="side", keep_tilt=True)
-        return self._env.kin.ik(p, seed, approach="side")
+        if getattr(self._env.kin, "tool_axis", None) is None:  # fake world / doubles: plain side solve
+            return self._env.kin.ik(p, seed, approach="side")
+        return self._env.kin.ik(p, seed, approach="side", keep_tilt=hold, side_max_tilt=self._tilt_cap)
 
     def _axis_or(self, q, name: str, fallback: Vec3) -> Vec3:
         axis = getattr(self._env.kin, "tool_axis", None)
@@ -262,6 +276,26 @@ class Robot:
         pts.append((x + dx, y + dy, gz))
         return pts
 
+    def _approach_down(self, target: SceneObject, x: float, y: float, gz: float, speed, i: int, why: str) -> float:
+        """Fallback for objects right in front of the base, where a sideways gripper cannot reach: point
+        the gripper straight down, come down over the object with the open jaws straddling its top (object
+        mid-gap), then close the gap to the fixed jaw. Same speed cap and push checks as the side approach."""
+        q = self._ik((x, y, gz), self._env.arm.joints(), side=False)
+        if q is None:
+            raise Unreachable(f"no grasp of {target.label} at ({x:.3f}, {y:.3f}): no side approach ({why}) and "
+                              "no top-down one either")
+        jx, jy, _ = self._jaw_axis(q, x, y)
+        sx, sy = x + JAW_CENTRE_SHIFT * jx, y + JAW_CENTRE_SHIFT * jy
+        near_dps = NEAR_DPS if speed is None else max(2.0, min(NEAR_DPS, float(speed)))
+        self._bus.emit("note", text=f"{target.label} is right in front of the base: grasping it from above, gripper "
+                       "pointing down, jaws straddling its top", where="robot.approach_side")
+        self._move((sx, sy, target.top + SWING_CLEARANCE), None, i, side=False, max_dps=SWING_DPS)
+        self._move((sx, sy, gz), None, i, max_dps=near_dps)
+        self._check_not_pushed(target, near_dps, "lowering the open jaws over it")
+        self._move((x, y, gz), None, i, max_dps=near_dps)
+        self._check_not_pushed(target, near_dps, "closing the gap to the fixed jaw")
+        return 0.0
+
     def _grasp_depth(self, x: float, y: float, shift) -> float:
         """SIDE_GRASP_DEPTH, or less (not below SIDE_GRASP_DEPTH_MIN) so the fingertips stay inside
         workspace.max_reach with a few mm to spare."""
@@ -299,9 +333,21 @@ class Robot:
                     self._back = back
                     return pts, qs
             back -= 0.005
-        raise Unreachable(f"{target.label} at ({x:.3f}, {y:.3f}) is too near the base to reach in from the side: "
-                          f"a horizontal gripper cannot start {least * 100:.0f} cm short of it on a smooth path "
-                          "(it needs ~0.29 m or more). Move it outward")
+        # no room to start behind it (nearer than ~0.29 m): come straight down with the open jaws straddling
+        # its narrow top, already at the grasp depth (the slide-in has length 0)
+        back = -self._grasp_depth(x, y, shift)
+        for turn_z in turn_zs:
+            pts = self._side_points(x, y, gz, turn_z, shift, a, back)
+            if min(math.hypot(p[0], p[1]) for p in pts) < SIDE_MIN_REACH:
+                continue
+            pts, qs = self._side_path(pts, self._env.arm.joints(), grasp_q)
+            if qs is not None:
+                self._back = back
+                self._bus.emit("note", text=f"{target.label}: no room to reach in from the side; coming down over it "
+                               "with the jaws straddling its top", where="robot.approach_side")
+                return pts, qs
+        raise Unreachable(f"{target.label} at ({x:.3f}, {y:.3f}): no smooth side approach, neither reaching in "
+                          f"(needs {least * 100:.0f} cm behind it) nor straddling it from above")
 
     def _play(self, pts: list, qs: list, index: int, max_dps: float) -> None:
         """Execute planned joint poses: safety-check each tip point, cap the joint speed, stay level."""
