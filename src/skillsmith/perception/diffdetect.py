@@ -13,7 +13,7 @@ For objects HSV cannot see (a white or printed cup on a white mat) when YOLO is 
   model ray-casts. On the rig (2026-10-25): T1-T5 worst 0.52 cm, mean 0.27 cm, ~40 ms per frame.
 
 Config (all optional): detect: {backend: diff, labels: ["white cup"], diff: {background: runs/background.png,
-diff_threshold: 28, min_radius: 0.02, max_radius: 0.05, top_height: 0.08}}.
+diff_threshold: 36, min_radius: 0.02, max_radius: 0.05, top_height: 0.08}}.
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ from typing import Any, List, Optional, Sequence
 from skillsmith.perception.color import Detection, _section, split_label
 
 WORK_SCALE = 2  # the difference image is computed at half resolution
-DEFAULT_DIFF = {"background": "runs/background.png", "diff_threshold": 28, "min_radius": 0.02,
+DEFAULT_DIFF = {"background": "runs/background.png", "diff_threshold": 36, "min_radius": 0.02,
                 "max_radius": 0.05, "top_height": 0.08,  # radii: of the base rim (a cup's mouth when upside down)
                 "inlier_tol": 0.004}
 
@@ -60,7 +60,11 @@ class DiffDetector:
 
         if frame_bgr.shape[:2] != self.background.shape[:2]:
             return []
-        diff = np.linalg.norm(self._lab(frame_bgr) - self._bg_lab, axis=2)
+        lab = self._lab(frame_bgr)
+        # The iPhone auto-exposes: match overall brightness (L) to the background before comparing, or a
+        # small exposure change lights up every high-contrast edge (the markers) as a "cup".
+        lab[..., 0] *= float(np.median(self._bg_lab[..., 0])) / max(1.0, float(np.median(lab[..., 0])))
+        diff = np.linalg.norm(lab - self._bg_lab, axis=2)
         mask = (diff > float(self.params["diff_threshold"])).astype("uint8") * 255
         mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8))
         mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
