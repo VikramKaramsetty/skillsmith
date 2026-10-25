@@ -15,7 +15,7 @@ Contract:
   is older than `max_age_s` (default 1.0; None turns the check off), so a dead camera never looks like a
   frozen table. A frame's age uses its `X-Frame-Time` (robotd's capture time) when present, else the
   receipt time. Given a `bus`, each failing episode also emits one `error` event (where "perception.frames").
-- `OpenCVFrames(device)`: a local camera or image sequence via cv2.VideoCapture. On the GX10 only robotd
+- `OpenCVFrames(device)`: a local camera or image sequence via cv2.VideoCapture. On the robot machine only robotd
   may use it (it owns /dev/video*); elsewhere it is for a laptop webcam or recorded files.
 - `FixtureFrames(manifest)`: recorded frames listed in a JSON manifest {"frames": [{"file", "t"}, ...]},
   e.g. tests/ws3/fixtures/truth.json or what `record()` writes.

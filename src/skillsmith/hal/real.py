@@ -44,7 +44,7 @@ from skillsmith.perception.frames import TOKEN_ENV, TOKEN_HEADER
 
 N_JOINTS = 6
 FRONT_CAM = "front"
-START_HINT = "a human starts it on the GX10: python -m robotd --port 8100 (docs/RUNBOOK_GX10.md)"
+START_HINT = "a human starts it: ~/robot/.venv/bin/python -m robotd --port 8100 (docs/RUNBOOK.md)"
 
 # robotd is on localhost or a link-local cable: never route it through an HTTP proxy from the environment
 _OPENER = urllib.request.build_opener(urllib.request.ProxyHandler({}))

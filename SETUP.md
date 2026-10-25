@@ -105,31 +105,26 @@ Or watch the PRs and issues on https://github.com/VikramKaramsetty/skillsmith.
 - **Right now:** reattach and press `Ctrl-C`. The task it was on stays `in-progress`; free it with
   `gh issue edit <number> --remove-label in-progress --add-label ready`.
 
-## Arm on a Mac (instead of the GX10)
+## The arm on the Mac
 
-Everything runs on a Mac (Apple silicon): the arm, both cameras, robotd, sim, dashboard and Droid.
-Profile: `config/mac.yaml` (`--profile mac`, or `--profile mac,stage` for the demo).
+Everything runs on the lead's Mac (Apple silicon): the arm, both cameras, robotd, sim, dashboard and Droid.
+It's the default config (`config/robot.yaml`); `--profile stage` adds demo speed. Full detail: `docs/RUNBOOK.md`.
 
-1. **LeRobot venv for robotd** (once; robotd uses LeRobot's Feetech driver, kept out of the project):
+1. **LeRobot venv for robotd** (once; LeRobot's Feetech driver stays out of the project):
    ```bash
    uv venv --python 3.12 ~/robot/.venv
-   uv pip install --python ~/robot/.venv/bin/python "lerobot[feetech]==0.6.2" fastapi uvicorn opencv-python pyyaml
+   uv pip install --python ~/robot/.venv/bin/python "lerobot[feetech]==0.6.1" fastapi uvicorn opencv-python pyyaml imageio-ffmpeg
    ```
-2. **Serial ports.** Plug in the follower (12 V arm) and run `ls /dev/cu.*`; then the leader and run it again.
-   Each arm is a new `/dev/cu.usbmodem…` (or `cu.wchusbserial…`) entry. Put them in `config/mac.yaml`.
-3. **Cameras.** Stop robotd, then `uv run --extra vision python tools/list_cameras.py` saves one frame per
-   camera to `runs/camera-probe/`. Allow camera access for your terminal app when macOS asks. Put the
-   overhead and wrist indices in `config/mac.yaml` (`cameras.front`, `cameras.wrist`).
-4. **Arm calibration.** Copy LeRobot's calibration from the GX10 (same folder layout):
-   ```bash
-   scp -r asus@100.103.96.17:.cache/huggingface/lerobot/calibration ~/.cache/huggingface/lerobot/
-   ```
-   No GX10? Recalibrate (about 10 min, per arm):
-   `~/robot/.venv/bin/lerobot-calibrate --robot.type=so101_follower --robot.port=<follower port> --robot.id=follower`
-   and `--teleop.type=so101_leader --teleop.port=<leader port> --teleop.id=leader`.
-5. **Run.** `~/robot/.venv/bin/python -m robotd --profile mac --cameras-only` first (cameras, no arm), then
-   without `--cameras-only`. In another terminal: `skillsmith --profile mac,stage serve`, or the
-   `--env real` commands in `docs/RUNBOOK_GX10.md` with `--profile mac` added.
+2. **Arm.** Plug in the follower (12 V arm); `ls /dev/cu.*` shows `/dev/cu.usbmodem5AE60575661`
+   (the config already uses it). The leader is only for teleop and calibration.
+3. **Cameras.** Overhead: the iPhone through Continuity Camera (same Apple ID, Wi-Fi and Bluetooth on,
+   iPhone locked and mounted; turn video effects such as Center Stage OFF). Wrist: the USB camera.
+   `~/robot/.venv/bin/python tools/list_cameras.py` prints each camera's name and saves a frame to
+   `runs/camera-probe/`; robotd finds them by name (`name:iPhone`, `name:USB2.0`).
+4. **Arm calibration** (once per arm, about 10 min):
+   `~/robot/.venv/bin/lerobot-calibrate --robot.type=so101_follower --robot.port=/dev/cu.usbmodem5AE60575661 --robot.id=follower`
+5. **Run.** `~/robot/.venv/bin/python -m robotd --cameras-only` first (cameras, no arm), then without
+   `--cameras-only`. In another terminal: `skillsmith --profile stage serve`.
 
 ## Rules
 

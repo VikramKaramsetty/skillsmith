@@ -2,7 +2,7 @@
 
 Brief: docs/workstreams/WS1_hardware.md. HTTP API: docs/INTERFACES.md §2.
 
-Run on the GX10:  ~/robot/.venv/bin/python -m robotd --port 8100 [--mock] [--host 127.0.0.1]
+Run on the Mac:   ~/robot/.venv/bin/python -m robotd --port 8100 [--mock] [--host 127.0.0.1]
 
 Last line of defence (docs/SAFETY.md layer 7): joint limits from the LeRobot calibration,
 per-command delta clamp (safety.max_step_deg), Goal=Present before torque-on, /stop.
@@ -12,5 +12,5 @@ Modules: `controller` (ArmController over a servo `Bus`: joint limits, stepping,
 watchdog, settle, stop, torque),
 `server` (FastAPI app), `mock` (MockBus + MockCamera), `feetech` (FeetechBus over LeRobot's SO101
 follower, connected without moving the arm), `__main__` (CLI, config, token check).
-Standalone: imports nothing from skillsmith, so it runs in the GX10's LeRobot venv.
+Standalone: imports nothing from skillsmith, so it runs in its own LeRobot venv (~/robot/.venv).
 """

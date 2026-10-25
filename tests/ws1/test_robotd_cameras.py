@@ -167,3 +167,36 @@ def test_stream_ends_when_the_camera_goes_stale():
         assert r.status_code == 200 and MjpegParser().feed(r.content) == []
     finally:
         cam.close()
+
+
+LISTING = """[AVFoundation indev @ 0x1] AVFoundation video devices:
+[AVFoundation indev @ 0x1] [0] MacBook Pro Camera
+[AVFoundation indev @ 0x1] [1] Vikram’s iPhone Camera
+[AVFoundation indev @ 0x1] [2] USB2.0_CAM1
+[AVFoundation indev @ 0x1] [3] Capture screen 0
+[AVFoundation indev @ 0x1] AVFoundation audio devices:
+[AVFoundation indev @ 0x1] [0] Vikram’s iPhone Microphone
+"""
+
+
+def test_camera_names_resolve_to_avfoundation_indices():
+    from robotd.cameras import parse_avfoundation_devices, resolve_source
+
+    devices = parse_avfoundation_devices(LISTING)
+    assert devices == [(0, "MacBook Pro Camera"), (1, "Vikram’s iPhone Camera"), (2, "USB2.0_CAM1"),
+                       (3, "Capture screen 0")]
+    listed = lambda: devices  # noqa: E731
+    assert resolve_source("name:iPhone", listed) == 1
+    assert resolve_source("name:vikram's iphone", listed) == 1  # straight quote matches the curly one
+    assert resolve_source("name:USB2.0", listed) == 2
+    assert resolve_source(0, listed) == 0 and resolve_source("http://x/stream", listed) == "http://x/stream"
+
+
+def test_an_unknown_camera_name_lists_what_is_there():
+    import pytest
+
+    from robotd.cameras import parse_avfoundation_devices, resolve_source
+
+    devices = parse_avfoundation_devices(LISTING)
+    with pytest.raises(OSError, match=r"no camera named like 'name:Capture'.*\[1\] Vikram"):
+        resolve_source("name:Capture", lambda: devices)  # screens are never cameras

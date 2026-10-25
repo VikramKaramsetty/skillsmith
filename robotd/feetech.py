@@ -1,6 +1,6 @@
 """Feetech backend: robotd's `Bus` over LeRobot's SO101 follower. OWNER: WS1.
 
-Runs only on the GX10, inside the LeRobot venv (`~/robot/.venv`, docs/RUNBOOK_GX10.md). LeRobot is
+Runs only inside robotd's LeRobot venv (`~/robot/.venv`, docs/RUNBOOK.md). LeRobot is
 imported lazily, so this module imports anywhere and the tests use a fake follower.
 
 Positions are LeRobot's calibrated units (`use_degrees=True`): degrees centred on each joint's
@@ -96,5 +96,5 @@ def _lerobot_follower(port: str, calibration_id: str) -> Any:
     except ImportError as e:
         raise ImportError(
             "LeRobot is not installed in this Python: run robotd with ~/robot/.venv/bin/python "
-            f"(docs/RUNBOOK_GX10.md), or use --mock ({e})") from e
+            f"(docs/RUNBOOK.md), or use --mock ({e})") from e
     return SO101Follower(SO101FollowerConfig(port=port, id=calibration_id, use_degrees=True))
