@@ -381,7 +381,8 @@ def _too_near(f: _Facts) -> Optional[Classification]:
     if f.kind not in ("Unreachable", "SkillError"):
         return None
     m = f.message.lower()
-    if "outward" not in m or ("from the base" not in m and "too near" not in m):
+    near = "from the base" in m or "too near the base" in m
+    if not near or not any(w in m for w in ("outward", "inward", "needs", "move it", "move the")):
         return None
     return _label(f, "OBJECT_OUT_OF_REACH", f.stop, f.message,
                   "move the object farther from the base (side grasps need about 0.28 m)")

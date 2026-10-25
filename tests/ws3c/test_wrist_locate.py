@@ -72,6 +72,7 @@ def test_approach_side_moves_the_grasp_to_the_wrist_fix_and_ignores_wild_ones():
     from skillsmith.primitives import SIDE_HOVER, SWING_CLEARANCE
     WRIST_DEPTH = max(SIDE_HOVER, SWING_CLEARANCE)  # camera at the turn pose's tip, this far above the top
     fix, at = run(0.01)
-    assert fix == pytest.approx(0.01, abs=0.001) and at[0] == pytest.approx(0.27, abs=0.001)
+    from skillsmith.primitives import SIDE_GRASP_DEPTH
+    assert fix == pytest.approx(0.01, abs=0.001) and at[0] == pytest.approx(0.27 + SIDE_GRASP_DEPTH, abs=0.002)
     fix, at = run(0.05)  # 5 cm "fix" = a wrong camera model: ignored, overhead position used
-    assert fix == 0.0 and at[0] == pytest.approx(0.26, abs=0.001)
+    assert fix == 0.0 and at[0] == pytest.approx(0.26 + SIDE_GRASP_DEPTH, abs=0.002)

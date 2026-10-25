@@ -21,6 +21,9 @@ if TYPE_CHECKING:
 
 # approach_side (side grasp, gripper level). Measured in the MuJoCo sim on the tapered demo cup.
 SIDE_GRIP_BELOW_TOP = 0.025  # m; default grip height under the object's top (deep enough to hold it)
+SIDE_GRASP_DEPTH = 0.025    # m; the grasp point (fingertips) ends this far PAST the object's centre: closing
+#                             on a cup at the fingertips squeezed it out forward on the real arm (the sim
+#                             attaches on contact, so it never showed)
 SIDE_STANDOFF = 0.06        # m; the level jaws start this far short of the object, then slide in
 SIDE_STANDOFF_MARGIN = 0.01  # m; ...and never closer than its radius + this
 SIDE_HOVER = 0.03           # m; open jaws come in level this far above the object's top, then go down
@@ -28,6 +31,10 @@ JAW_CENTRE_SHIFT = 0.03     # m; descend this far along +tool x, then slide back
 SIDE_MIN_REACH = 0.18       # m from the base axis; nearer, a side pose folds the arm into itself (sim)
 WRIST_MAX_FIX = 0.03        # m; a wrist-camera fix larger than this is ignored (wrong camera model)
 SWING_CLEARANCE = 0.06      # m; the gripper turns between down and level at least this far above the object
+NEAR_DPS = 12.0             # deg/s; joint speed cap for approach_side's moves next to the object (descent,
+#                             slide, close-up): a 1.7 cm tip step swung shoulder+wrist 19 deg at 57 deg/s and
+#                             shoved the cup on the real arm
+MAX_STEP_JUMP_DEG = 25.0    # a non-turning waypoint moving any joint more than this = IK branch flip, refused
 SWING_DPS = 25.0            # deg/s; joint speed cap while the gripper turns (no straight-line tip path then)
 
 
@@ -129,22 +136,23 @@ class Robot:
             if q is None:  # one solve: reach check + gripper axes at the grasp
                 raise Unreachable(f"no level (side) grasp of {target.label} at ({x:.3f}, {y:.3f}, z={gz:.3f}), "
                                   f"{math.hypot(x, y):.3f} m from the base: a side grasp reaches about "
-                                  "0.28..0.33 m out with the gripper horizontal. Move it outward")
+                                  "0.29..0.30 m out with the gripper horizontal. Move it outward")
             (jx, jy, _), (ax, ay) = self._jaw_axis(q, x, y), self._reach_dir(q, x, y)
             shift = (JAW_CENTRE_SHIFT * jx, JAW_CENTRE_SHIFT * jy)  # object mid-gap while the jaws come in
-            turn_z = target.top + max(hover, SWING_CLEARANCE)
-            back = self._standoff(target, x, y, (gz, turn_z), shift, (ax, ay), q)
-            bx, by = x + shift[0] - back * ax, y + shift[1] - back * ay
-            self._move((bx, by, target.top + max(hover, SWING_CLEARANCE)), None, i, side=True)  # turn up high
+            turn_zs = [target.top + c for c in (max(hover, SWING_CLEARANCE), 0.045) if c <= max(hover, SWING_CLEARANCE)]
+            pts, qs = self._side_plan(target, x, y, gz, turn_zs, shift, (ax, ay), q)
+            self._play(pts[:1], qs[:1], i, SWING_DPS)      # turn level behind it (lower turns clip its top)
             fix = 0.0
-            located = self._wrist_locate(target)                  # from up here the camera sees all of its top
+            located = self._wrist_locate(target)            # from up here the camera sees all of its top
             if located is not None:
-                fix = math.hypot(located[0] - x, located[1] - y)
-                x, y = located
-                bx, by = x + shift[0] - back * ax, y + shift[1] - back * ay
-            self._move((bx, by, gz), None, i)                     # down behind the object, jaws short of it
-            self._move((x + shift[0], y + shift[1], gz), None, i)  # slide in: jaws either side of it
-            self._move((x, y, gz), None, i)                       # fixed jaw up to it
+                new = self._side_path(self._side_points(located[0], located[1], gz, pts[0][2], shift, (ax, ay),
+                                                        self._back), self._env.arm.joints(), q)
+                if new[1] is not None:
+                    fix = math.hypot(located[0] - x, located[1] - y)
+                    pts, qs = new
+                else:  # no smooth path to the corrected spot: keep the checked plan
+                    self._bus.emit("note", text="wrist fix ignored: no smooth path to it", where="robot.approach_side")
+            self._play(pts[1:], qs[1:], i, NEAR_DPS)        # down behind it, slide in, fixed jaw up to it
             return round(fix, 4)
         return self._record("approach_side", {"obj": obj, "grip_z": grip_z, "hover": hover}, do)
 
@@ -178,31 +186,66 @@ class Robot:
         n = math.hypot(zx, zy) or 1.0
         return zx / n, zy / n
 
-    def _standoff(self, target: SceneObject, x: float, y: float, zs, shift, a, seed) -> float:
-        """How far back (m, along the reach direction) the jaws start: SIDE_STANDOFF, or less where
-        a level gripper cannot reach that near the base (never below the object's radius + 1 cm)."""
-        least = target.width_at(zs[0]) / 2 + SIDE_STANDOFF_MARGIN  # zs: (grip z, turn z), both must be reachable
+    def _side_points(self, x: float, y: float, gz: float, turn_z: float, shift, a, back: float) -> list:
+        """Tip points of a side approach in execution order: turn pose behind the object, approach_step
+        steps down to grip height, a straight slide in until the fingertips are SIDE_GRASP_DEPTH past the
+        object's centre (jaws either side of it), then the fixed jaw over to it."""
+        step = self._cfg.safety.approach_step
+        bx, by = x + shift[0] - back * a[0], y + shift[1] - back * a[1]
+        dx, dy = SIDE_GRASP_DEPTH * a[0], SIDE_GRASP_DEPTH * a[1]
+        sx, sy = x + shift[0] + dx, y + shift[1] + dy
+        n_down = max(1, math.ceil((turn_z - gz) / step))
+        n_in = max(1, math.ceil(math.hypot(sx - bx, sy - by) / step))
+        pts = [(bx, by, turn_z)]
+        pts += [(bx, by, turn_z + (gz - turn_z) * k / n_down) for k in range(1, n_down + 1)]
+        pts += [(bx + (sx - bx) * k / n_in, by + (sy - by) * k / n_in, gz) for k in range(1, n_in + 1)]
+        pts.append((x + dx, y + dy, gz))
+        return pts
+
+    def _side_path(self, pts: list, start, grasp_q):
+        """Joint poses for `pts`, solved BACKWARD from the grasp pose (each from the next one), so the whole
+        approach stays on the grasp's arm configuration; then checked forward for joint jumps, including
+        from `start` (where the arm is) to the first pose only for the non-turning case. (pts, qs) or
+        (pts, None) when some step is unreachable or would swing more than MAX_STEP_JUMP_DEG."""
+        qs = [None] * len(pts)
+        seed = grasp_q
+        for k in range(len(pts) - 1, -1, -1):
+            qk = self._ik(pts[k], seed, side=True)
+            if qk is None:
+                return pts, None
+            if k < len(pts) - 1 and max(abs(a - b) for a, b in zip(qk[:5], qs[k + 1][:5])) > MAX_STEP_JUMP_DEG:
+                return pts, None
+            qs[k], seed = qk, qk
+        return pts, qs
+
+    def _side_plan(self, target: SceneObject, x: float, y: float, gz: float, turn_zs, shift, a, grasp_q):
+        """The longest standoff (SIDE_STANDOFF down to radius + margin) and highest turn height with a
+        smooth joint path; Unreachable when there is none."""
+        least = target.width_at(gz) / 2 + SIDE_STANDOFF_MARGIN
         back = SIDE_STANDOFF
         while back >= least:
-            p = (x + shift[0] - back * a[0], y + shift[1] - back * a[1])
-            if math.hypot(*p) >= SIDE_MIN_REACH and self._descent_ok(p, zs, seed):
-                return back
+            for turn_z in turn_zs:
+                pts = self._side_points(x, y, gz, turn_z, shift, a, back)
+                if min(math.hypot(p[0], p[1]) for p in pts) < SIDE_MIN_REACH:
+                    continue
+                pts, qs = self._side_path(pts, self._env.arm.joints(), grasp_q)
+                if qs is not None:
+                    self._back = back
+                    return pts, qs
             back -= 0.01
         raise Unreachable(f"{target.label} at ({x:.3f}, {y:.3f}) is too near the base to reach in from the side: "
-                          f"a horizontal gripper cannot start {least * 100:.0f} cm short of it "
-                          "(it needs ~0.28 m or more). Move it outward")
+                          f"a horizontal gripper cannot start {least * 100:.0f} cm short of it on a smooth path "
+                          "(it needs ~0.29 m or more). Move it outward")
 
-    def _descent_ok(self, p, zs, seed) -> bool:
-        """Can a level gripper go down at p from zs[1] (turn height) to zs[0] (grip height) in approach_step
-        steps, each solved from the one before, exactly as _move will?"""
-        grip_z, turn_z = zs
-        q = self._ik((p[0], p[1], turn_z), seed, side=True)
-        n = max(1, math.ceil((turn_z - grip_z) / self._cfg.safety.approach_step))
-        for k in range(1, n + 1):
-            if q is None:
-                return False
-            q = self._ik((p[0], p[1], turn_z + (grip_z - turn_z) * k / n), q, side=True)
-        return q is not None
+    def _play(self, pts: list, qs: list, index: int, max_dps: float) -> None:
+        """Execute planned joint poses: safety-check each tip point, cap the joint speed, stay level."""
+        v = self._guard.clamp_speed(None)
+        for p, q in zip(pts, qs):
+            self._guard.check_target(p, index)
+            q = list(q[:5]) + [self._env.arm.joints()[5]]
+            dps = min(self._joint_speed(self._env.arm.joints(), q, p, v), max_dps)
+            self._env.arm.move_joints(q, dps)
+            self._side = True
 
     def _wrist_locate(self, target: SceneObject) -> Optional[tuple[float, float]]:
         """Locate `target`'s top with the wrist camera from the current pose. None (overhead position
@@ -271,7 +314,8 @@ class Robot:
             self._bus.emit("world.bumped", message=message)
             raise WorldChanged(message)
 
-    def _move(self, target: Vec3, speed: Optional[float], index: int, side: Optional[bool] = None) -> None:
+    def _move(self, target: Vec3, speed: Optional[float], index: int, side: Optional[bool] = None,
+              max_dps: Optional[float] = None, seed: Optional[list] = None) -> None:
         """side=None keeps the gripper's current orientation; the flag only changes once a step succeeds."""
         level = self._is_level()
         want = level if side is None else bool(side)
@@ -285,14 +329,25 @@ class Robot:
                               f"from the base: with the gripper level it must stay {SIDE_MIN_REACH:.2f} m or more out")
         turning = want != level
         hold = want and not turning and self._env.arm.gripper_holding()
-        for wp in self._waypoints(self._tip(), target, straight=want and not turning):
-            seed = self._env.arm.joints()
+        prev = seed  # each waypoint is solved from the previous solution (like _descent_ok), not the measured
+        for wp in self._waypoints(self._tip(), target, straight=want and not turning):  # joints: near a limit,
+            seed = prev if prev is not None else self._env.arm.joints()                  # sag can flip the branch
             q = self._ik(wp, seed, want, hold)
+            prev = q
             if q is None:
                 how = " with the gripper level" if want else ""
                 raise Unreachable(f"no IK solution for ({wp[0]:.3f}, {wp[1]:.3f}, {wp[2]:.3f}){how}")
-            dps = self._joint_speed(seed, q, wp, v)
-            self._env.arm.move_joints(q, min(dps, SWING_DPS) if turning else dps)
+            jump = max(abs(a - b) for a, b in zip(q[:5], self._env.arm.joints()[:5]))
+            short = math.dist(self._tip(), wp) <= self._cfg.safety.approach_step * 1.05
+            if want and not turning and short and jump > MAX_STEP_JUMP_DEG:  # IK switched configuration: a swing
+                raise Unreachable(f"no smooth path to ({wp[0]:.3f}, {wp[1]:.3f}, {wp[2]:.3f}): the arm would "
+                                  f"swing {jump:.0f} deg to another configuration on a short step")
+            dps = self._joint_speed(self._env.arm.joints(), q, wp, v)
+            if turning:
+                dps = min(dps, SWING_DPS)
+            if max_dps is not None:
+                dps = min(dps, max_dps)
+            self._env.arm.move_joints(q, dps)
             turning = False
             self._side = want
 

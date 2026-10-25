@@ -18,5 +18,7 @@ def test_side_grasp_refusal_and_skill_raise_are_out_of_reach(monkeypatch):
                                        "... Move it outward")) == "OBJECT_OUT_OF_REACH"
     assert _too_near(_F("SkillError", "pink cup is 0.196 m from the base; a side grasp needs 0.28 m. "
                                       "Move the cup outward before running move_cup")) == "OBJECT_OUT_OF_REACH"
+    assert _too_near(_F("SkillError", "pink cup is 0.333 m from the base; side grasp needs 0.28 to 0.31 m")) \
+        == "OBJECT_OUT_OF_REACH"
     assert _too_near(_F("SkillError", "side grasp missed pink cup")) is None
-    assert _too_near(_F("ValueError", "too near the base, move it outward")) is None
+    assert _too_near(_F("ValueError", "0.2 m from the base, move it outward")) is None

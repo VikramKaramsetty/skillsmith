@@ -87,7 +87,7 @@ def test_tapered_cup_is_stacked_cylinders_narrowing_upward():
     assert 0.0254 < radii[-1] < 0.030 and 0.035 < radii[0] < 0.0381
 
 
-@pytest.mark.parametrize("start, goal", [((0.27, 0.05), (0.28, -0.10)), ((0.28, -0.05), (0.30, 0.08))])
+@pytest.mark.parametrize("start, goal", [((0.29, 0.02), (0.28, -0.10)), ((0.30, -0.03), (0.28, 0.08))])
 def test_move_cup_with_a_side_grasp_in_sim(start, goal):
     env = make_env("sim", CFG, Scene((_cup(*start),), 0.0, "test"))
     try:
