@@ -111,6 +111,9 @@ class FakeSession:
     async def __aenter__(self):
         return self
 
+    async def update_settings(self, **settings):  # the model ladder steps up after a failed draft
+        self.kwargs.update(settings)
+
     async def __aexit__(self, *exc):
         self.closed = True
 
