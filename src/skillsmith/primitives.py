@@ -262,7 +262,7 @@ class Robot:
                 if qs is not None:
                     self._back = back
                     return pts, qs
-            back -= 0.01
+            back -= 0.005
         raise Unreachable(f"{target.label} at ({x:.3f}, {y:.3f}) is too near the base to reach in from the side: "
                           f"a horizontal gripper cannot start {least * 100:.0f} cm short of it on a smooth path "
                           "(it needs ~0.29 m or more). Move it outward")

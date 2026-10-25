@@ -75,7 +75,8 @@ def build_controller(cfg: dict, bus: Bus) -> ArmController:
                          limit_margin_deg=float(safety.get("joint_limit_margin_deg", 2.0)),
                          max_lag_deg=float(safety.get("max_lag_deg", safety["max_step_deg"])),
                          settle_tol_deg=float(safety.get("settle_tol_deg", 1.5)),
-                         joint_tol_deg=safety.get("joint_tol_deg"))
+                         joint_tol_deg=safety.get("joint_tol_deg"),
+                         grip_squeeze_pct=float(safety.get("grip_squeeze_pct", 5.0)))
 
 
 def open_bus(mock: bool, cfg: dict) -> Bus:

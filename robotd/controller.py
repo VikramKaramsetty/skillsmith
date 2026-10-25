@@ -35,8 +35,8 @@ POLL_S = 0.01
 MOTION_DT = 0.03  # s between goal updates: the servo tracks a smooth ramp instead of snapping max_step_deg at
 #                   full servo speed and waiting (that made every "slow" move a series of lurches)
 GRIP_CONTACT_LAG = 6.0  # gripper %: the jaws this far behind the closing ramp = they are on the object
-GRIP_SQUEEZE_PCT = 5.0  # ...then hold the goal only this far past where they stopped: a gentle squeeze
-#                         (driving to 0 % pushed at the servo's torque limit and crushed a paper cup)
+# ...then the goal is held `grip_squeeze_pct` (config safety.grip_squeeze_pct) past where they stopped:
+# 0 % = the servo's torque limit crushed a paper cup; 5 % let the closing jaw squeeze it out forward
 GRIPPER_PCT_S = 60.0  # gripper goal ramp speed (0..100 per s): closing at once slammed the moving jaw into cups
 STILL_PCT = 0.5  # gripper moved less than this between polls = not moving
 # MEASURE (WS1.7): replace with the thresholds from the gripper signal test on our real cups.
@@ -118,11 +118,12 @@ class ArmController:
     def __init__(self, bus: Bus, max_step_deg: float = 10.0, max_speed_dps: float = 60.0,
                  settle_tol_deg: float = 1.5, settle_timeout_s: float = 2.0, gripper_timeout_s: float = 1.5,
                  limit_margin_deg: float = 2.0, max_lag_deg: Optional[float] = None,
-                 joint_tol_deg: Optional[Dict[str, float]] = None):
+                 joint_tol_deg: Optional[Dict[str, float]] = None, grip_squeeze_pct: float = 5.0):
         self.bus = bus
         self.max_step_deg = max_step_deg
         self.max_speed_dps = max_speed_dps
         self.settle_tol_deg = settle_tol_deg
+        self.grip_squeeze_pct = float(grip_squeeze_pct)
         self._tol = [float((joint_tol_deg or {}).get(n, settle_tol_deg)) for n in JOINT_NAMES[:ARM]]
         self.settle_timeout_s = settle_timeout_s
         self.gripper_timeout_s = gripper_timeout_s
@@ -177,7 +178,7 @@ class ArmController:
                 if pct < start:  # closing: stop squeezing harder once the jaws stall on something
                     present = self._read()[ARM]
                     if present - goal >= GRIP_CONTACT_LAG:
-                        self._write(gripper=max(pct, present - GRIP_SQUEEZE_PCT))
+                        self._write(gripper=max(pct, present - self.grip_squeeze_pct))
                         break
             self._wait_gripper()
         return self.holding()
