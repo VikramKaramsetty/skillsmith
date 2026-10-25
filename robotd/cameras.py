@@ -6,16 +6,22 @@ gives them (~15 fps) and keeps only the newest JPEG plus its capture time (unix 
 so a dead camera never hands the world model an old frame. A capture that keeps failing is closed
 and reopened every `reopen_s`.
 
-`OpenCVCapture(source, size)` reads a V4L device path/index or an http MJPEG URL through
-cv2.VideoCapture (imported lazily) and returns JPEG bytes. Tests replace it; agents never open a camera.
+`OpenCVCapture(source, size)` reads a device index, a device path, an http MJPEG URL or `name:<text>`
+through cv2.VideoCapture (imported lazily) and returns JPEG bytes. Tests replace it; agents never open a
+camera. `name:iPhone` picks the macOS camera whose name contains "iPhone" (Continuity Camera): indices
+shift as Continuity and USB cameras come and go, names don't. The name -> index map comes from ffmpeg's
+AVFoundation device list (the same order OpenCV's AVFoundation backend uses); robotd logs it at start.
 """
 
 from __future__ import annotations
 
 import logging
+import re
+import shutil
+import subprocess
 import threading
 import time
-from typing import Callable, Optional, Protocol, Tuple, Union
+from typing import Callable, List, Optional, Protocol, Tuple, Union
 
 from robotd.controller import RobotdError
 
@@ -33,13 +39,68 @@ class Capture(Protocol):
     def close(self) -> None: ...
 
 
+_DEVICE_LINE = re.compile(r"\[(\d+)\] (.+)$")
+
+
+def _ffmpeg() -> Optional[str]:
+    try:
+        import imageio_ffmpeg
+
+        return imageio_ffmpeg.get_ffmpeg_exe()
+    except ImportError:
+        return shutil.which("ffmpeg")
+
+
+def parse_avfoundation_devices(listing: str) -> List[Tuple[int, str]]:
+    """The video devices from `ffmpeg -f avfoundation -list_devices true -i ""` stderr, in index order."""
+    devices, video = [], False
+    for line in listing.splitlines():
+        if "AVFoundation video devices" in line:
+            video = True
+        elif "AVFoundation audio devices" in line:
+            break
+        elif video and (m := _DEVICE_LINE.search(line)):
+            devices.append((int(m.group(1)), m.group(2).strip()))
+    return devices
+
+
+def avfoundation_devices() -> List[Tuple[int, str]]:
+    """macOS camera indices and names (lists devices only; opens nothing)."""
+    exe = _ffmpeg()
+    if not exe:
+        raise OSError("camera names need ffmpeg: pip install imageio-ffmpeg in robotd's venv")
+    out = subprocess.run([exe, "-hide_banner", "-f", "avfoundation", "-list_devices", "true", "-i", ""],
+                         capture_output=True, text=True, timeout=15)
+    return parse_avfoundation_devices(out.stderr)
+
+
+def _norm(text: str) -> str:
+    return text.replace("\u2019", "'").casefold()
+
+
+def resolve_source(source: Union[int, str],
+                   devices: Optional[Callable[[], List[Tuple[int, str]]]] = None) -> Union[int, str]:
+    """`name:<text>` -> the index of the first camera whose name contains <text> (case-insensitive);
+    anything else is returned as it is."""
+    if not (isinstance(source, str) and source.startswith("name:")):
+        return source
+    want = _norm(source[5:].strip())
+    found = (devices or avfoundation_devices)()
+    for index, name in found:
+        if want in _norm(name) and not name.startswith("Capture screen"):
+            log.info("camera %r is index %d (%s)", source, index, name)
+            return index
+    names = ", ".join(f"[{i}] {n}" for i, n in found) or "none"
+    raise OSError(f"no camera named like {source!r}; cameras: {names}")
+
+
 class OpenCVCapture:
     def __init__(self, source: Union[int, str], size: Optional[Tuple[int, int]] = None):
         import cv2
 
         self._cv2 = cv2
         self.source = source
-        self._capture = cv2.VideoCapture(source)
+        self._capture = cv2.VideoCapture(resolve_source(source))
         if size:
             self._capture.set(cv2.CAP_PROP_FRAME_WIDTH, size[0])
             self._capture.set(cv2.CAP_PROP_FRAME_HEIGHT, size[1])

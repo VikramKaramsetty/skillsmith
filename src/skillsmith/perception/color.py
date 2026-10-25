@@ -7,7 +7,7 @@ Contract (one interface, two implementations):
 - `HsvDetector(cfg, labels).detect(frame_bgr) -> list[Detection]`: colour blobs; the backup, fast
   and robust for saturated matte objects. Needs only opencv + numpy (the `vision` extra).
 - `YoloWorldDetector(cfg, labels).detect(frame_bgr) -> list[Detection]`: YOLO-World / YOLO-E
-  open-vocabulary on the GX10 GPU; the main detector. Needs `ultralytics` (not a declared extra).
+  open-vocabulary (Apple-silicon GPU via MPS); the main detector. Needs `ultralytics` (not a declared extra).
 - `FallbackDetector(primary, backup)`: the main detector, with the backup covering a crash or a
   missed label. `make_detector(cfg, labels)` builds the best one available.
 - Object sizes come from a known-object table (cup 0.08/0.065 m, block 0.03 m; measure yours),
@@ -235,7 +235,7 @@ def _load_yolo(path: str):
     try:
         import ultralytics
     except ImportError as e:
-        raise ImportError("YoloWorldDetector needs `ultralytics` (pip install ultralytics on the GX10)") from e
+        raise ImportError("YoloWorldDetector needs `ultralytics` (pip install ultralytics)") from e
     if "yoloe" in str(path).lower():
         return ultralytics.YOLOE(path)
     return ultralytics.YOLOWorld(path)

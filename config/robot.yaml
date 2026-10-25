@@ -1,9 +1,10 @@
 # Skillsmith configuration. Owned by the lead. Numbers marked MEASURE are placeholders
 # until the first hardware session (see docs/PLAN.md, gate G3 and its signal checklist).
 
+# Everything runs on the lead's Mac (docs/DECISIONS.md): robotd from ~/robot/.venv, cameras through macOS.
 robot:
-  follower_port: /dev/serial/by-id/usb-1a86_USB_Single_Serial_5AE6057566-if00
-  leader_port: /dev/serial/by-id/usb-1a86_USB_Single_Serial_5AE6055440-if00
+  follower_port: /dev/cu.usbmodem5AE60575661   # follower (12 V arm), CH343 serial 5AE6057566: `ls /dev/cu.*`
+  leader_port: /dev/cu.usbmodem5AE60554401     # leader (~5.5 V arm), CH343 serial 5AE6055440; teleop/calibration only
   calibration_id: follower          # ~/.cache/huggingface/lerobot/calibration/robots/so_follower/follower.json
   robotd_url: http://127.0.0.1:8100
   joint_names: [shoulder_pan, shoulder_lift, elbow_flex, wrist_flex, wrist_roll, gripper]
@@ -14,14 +15,21 @@ robot:
   gripper_open: 100
   gripper_closed: 0
 
-cameras:
-  wrist: /dev/v4l/by-id/usb-Sonix_Technology_Co.__Ltd._USB2.0_CAM1_USB2.0_CAM1-video-index0
+cameras:                            # robotd opens these; `name:` = the macOS camera whose name contains it
+  front: "name:iPhone"              # overhead: the iPhone via Continuity Camera (video effects OFF, docs/RUNBOOK.md)
+  front_size: [1280, 720]
+  wrist: "name:USB2.0"              # wrist: the USB Sonix camera (USB2.0_CAM1); check with tools/list_cameras.py
   wrist_size: [640, 480]
-  front: http://100.67.242.86:8001/stream    # MacBook stand-in; replace with a fixed overhead webcam
   calibration: config/camera.json             # intrinsics + pose, written by tools/calibrate_camera.py (WS3.2)
 
 analysis:
   classifier: true                  # WS4.5 rule-based failure classifier (class, bucket, phase, hint)
+
+wrist:                              # wrist-camera checks (perception/wrist.py, WS3.7)
+  # Fine alignment OFF until its numbers are measured on this arm (roi, center, px_per_m, axis signs,
+  # roll_sign, cam_height): a wrong sign moves the gripper up to 2 cm the wrong way. align_over then hovers
+  # on the overhead camera's position only. Set 0.3 after the wrist check in PR #204 gives sensible offsets.
+  min_align_confidence: 1.1
 
 world:                              # live world model (WS3.5)
   rate_hz: 12

@@ -1,6 +1,6 @@
 """Entry point: `python -m robotd [--mock] [--port 8100] [--host 127.0.0.1] [--config PATH]`. OWNER: WS1.
 
-robotd is standalone: it runs in the GX10's LeRobot venv, so it imports nothing from skillsmith and
+robotd is standalone: it runs in its own LeRobot venv (~/robot/.venv), so it imports nothing from skillsmith and
 reads config/robot.yaml itself, plus config/<profile>.yaml overlays (--profile or $SKILLSMITH_PROFILE,
 comma-separated, same merge as skillsmith.config: `--profile mac` runs the arm on a Mac).
 It binds 127.0.0.1 by default; any other host needs a shared token in $ROBOTD_TOKEN, which clients
