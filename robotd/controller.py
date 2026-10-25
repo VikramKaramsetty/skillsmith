@@ -42,6 +42,7 @@ STILL_PCT = 0.5  # gripper moved less than this between polls = not moving
 # MEASURE (WS1.7): replace with the thresholds from the gripper signal test on our real cups.
 HOLD_MIN_GAP = 5.0  # jaws stopped at least this far (0..100) short of the commanded position
 HOLD_MIN_LOAD = 200.0  # while the gripper servo pushes at least this hard (raw load)
+HOLD_PUSH_LOAD = 150.0  # ...or stopped short at all while pushing this hard
 HOLD_WIDE_GAP = 4.0  # ...or the jaws stopped this far short of a close: something is between them (empty: ~1.6)
 
 log = logging.getLogger("robotd")
@@ -303,7 +304,9 @@ def _holding(pos: float, goal: float, load: float) -> bool:
     """Jaws short of the goal AND pushing, or jaws far short of a close (empty jaws close to ~0-2 %):
     a gently ramped close on a paper cup stays under HOLD_MIN_LOAD."""
     gap = pos - goal
-    return gap >= HOLD_MIN_GAP and (abs(load) >= HOLD_MIN_LOAD or (goal < 50 and gap >= HOLD_WIDE_GAP))
+    if goal < 50 and (gap >= HOLD_WIDE_GAP or (gap >= 1.0 and abs(load) >= HOLD_PUSH_LOAD)):
+        return True  # a taught partial close: stopped short and pushing
+    return gap >= HOLD_MIN_GAP and abs(load) >= HOLD_MIN_LOAD
 
 
 def _number(value: Any, name: str) -> float:

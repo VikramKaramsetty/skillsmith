@@ -44,6 +44,7 @@ from skillsmith.perception.frames import TOKEN_ENV, TOKEN_HEADER
 
 N_JOINTS = 6
 FRONT_CAM = "front"
+HOLD_PUSH_LOAD = 150.0  # gripper load: jaws stopped short of the command AND pushing this hard = on the object
 HOLD_WIDE_GAP = 4.0  # gripper %; jaws this far short of a commanded close hold something (empty closes to ~1.6)
 START_HINT = "a human starts it: ~/robot/.venv/bin/python -m robotd --port 8100 (docs/RUNBOOK.md)"
 
@@ -103,7 +104,10 @@ class RobotdArm:
         if bool(self._field(st, "holding", "GET /state")):
             return True
         goal = getattr(self, "_gripper_goal", None)
-        return goal is not None and goal < 50 and float(st.get("gripper_pos", 0.0)) - goal >= HOLD_WIDE_GAP
+        if goal is None or goal >= 50:
+            return False
+        gap = float(st.get("gripper_pos", 0.0)) - goal
+        return gap >= HOLD_WIDE_GAP or (gap >= 1.0 and abs(float(st.get("gripper_load", 0.0))) >= HOLD_PUSH_LOAD)
 
     def stop(self) -> None:
         self._call("POST", "/stop", {})
