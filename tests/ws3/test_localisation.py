@@ -10,7 +10,7 @@ import math
 import pytest
 from ws3_fakes import FIXTURES
 
-from skillsmith.config import load_config
+from skillsmith.config import Config, load_config
 from skillsmith.perception.frames import FixtureFrames
 from skillsmith.perception.geometry import calibrate_pose
 
@@ -22,7 +22,15 @@ from skillsmith.perception.world import WorldModel  # noqa: E402
 LIMIT_M = 0.015  # WS3 acceptance: position error under 1.5 cm
 TRUTH = json.loads((FIXTURES / "truth.json").read_text())
 SCENES = {f["file"]: f for f in TRUTH["frames"]}
-CFG = load_config()
+def _fixture_config():
+    """robot.yaml without the rig's measured objects and detector: the recorded fixtures use 8 cm cups."""
+    data = load_config().raw()
+    data = {**data, "world": {k: v for k, v in (data.get("world") or {}).items() if k != "objects"}}
+    data.pop("detect", None)
+    return Config(data)
+
+
+CFG = _fixture_config()
 
 
 class Sequence:

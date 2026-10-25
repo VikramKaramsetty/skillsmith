@@ -6,7 +6,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import List, Optional, Sequence, Tuple
 
-from skillsmith.config import load_config
+from skillsmith.config import Config, load_config
 from skillsmith.perception.frames import Frame, FrameError
 from skillsmith.perception.world import WorldModel
 
@@ -92,9 +92,17 @@ class FakeKin:
 
 
 def make_world(dets=(), arm=None, bus=None, cfg=None, **kw):
-    cfg = cfg or load_config()
+    cfg = cfg or _fixture_config()
     detector = kw.pop("detector", None) or FakeDetector(dets)
     frames = kw.pop("frames", None) or FakeFrames()
     camera = kw.pop("camera", None) or PassCamera()
     return WorldModel(cfg, frames, kinematics=FakeKin() if arm else None, arm=arm, detector=detector,
                       camera=camera, bus=bus, decode=lambda f: f, **kw)
+
+
+def _fixture_config():
+    """robot.yaml without the rig's measured objects and detector: the recorded fixtures use 8 cm cups."""
+    data = load_config().raw()
+    data = {**data, "world": {k: v for k, v in (data.get("world") or {}).items() if k != "objects"}}
+    data.pop("detect", None)
+    return Config(data)

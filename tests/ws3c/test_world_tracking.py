@@ -3,9 +3,9 @@
 import time
 
 import pytest
-from ws3c_fakes import Det, FakeArm, FakeDetector, FakeFrames, PassCamera, cup, make_world
+from ws3c_fakes import Det, FakeArm, FakeDetector, FakeFrames, PassCamera, _fixture_config, cup, make_world
 
-from skillsmith.config import Config, load_config
+from skillsmith.config import Config
 from skillsmith.events import NullBus
 from skillsmith.hal.base import Env
 from skillsmith.hal.fake import FakeWorld
@@ -167,7 +167,7 @@ def test_snapshot_writes_latest_frame(tmp_path):
 
 
 def test_object_sizes_from_config():
-    cfg = load_config()
+    cfg = _fixture_config()
     data = dict(cfg.raw())
     data["world"] = {**data["world"], "objects": {"cup": {"height": 0.1, "width": 0.07}}}
     world = make_world([cup("red", 0.22, 0.08)], cfg=Config(data))
@@ -189,7 +189,7 @@ def test_background_loop_runs_at_configured_rate():
 
 def test_drops_into_fake_env_and_robot_raises_world_changed():
     """WorldModel as the Perception of a fake Env; detections come from the fake world's truth."""
-    cfg = load_config()
+    cfg = _fixture_config()
     truth = FakeWorld.demo(cfg)
 
     def detections():
