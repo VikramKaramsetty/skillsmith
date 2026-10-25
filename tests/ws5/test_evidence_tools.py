@@ -155,6 +155,7 @@ def test_compare_marks_phases_the_failed_run_never_reached(runs, tmp_path):
 def test_compare_without_phases_uses_the_whole_trace(tmp_path):
     cfg = load_config()
     expected, attempt = _run(cfg, rim_slip=False), _run(cfg, rim_slip=True)
+    expected.phases, attempt.phases, attempt.classification = [], [], None  # as before WS4.5
     out = et.compare_with_success(attempt, expected, "sim gate", "", tmp_path, 1)
     assert "# whole run:" in out and "comparing the whole trace" in out
     assert "| 8 | #7 move_to(0.220, 0.080, 0.155) |" in out and out.count("| — | — | — |") == 4
