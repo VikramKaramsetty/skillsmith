@@ -74,8 +74,16 @@ repair:
 
 droid:                              # see docs/NORTH_STAR.md
   mode: sdk                         # sdk = Droid Python SDK (the product) | cli = droid exec fallback
-  model: null                       # null = Droid default
-  reasoning: null
+  # Model ladder (Factory mentor's advice): start small and fast, step up only when a fix didn't hold.
+  # Round 1 uses model/reasoning; each later round of the same task takes the next `escalate` entry
+  # (staying on the last), switched inside the same Droid session so it keeps the conversation.
+  # IDs: `list_models` in droid-sdk (Haiku/Sonnet/Opus 5.5, GPT-6 ...); efforts off|low|medium|high|xhigh|max.
+  model: claude-haiku-5-5
+  reasoning: medium
+  escalate:
+    - {model: claude-haiku-5-5, reasoning: high}
+    - {model: claude-sonnet-5-5, reasoning: medium}
+    - {model: claude-opus-5-5, reasoning: medium}
   timeout_s: 240
   # SDK controls
   # Control = an explicit ALLOWLIST. Droid's only capabilities are these harness tools plus our

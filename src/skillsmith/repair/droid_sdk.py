@@ -95,6 +95,8 @@ class DroidSDKAuthor:
         self._loop = asyncio.new_event_loop()
         self._sessions: Dict[str, object] = {}
         self._tools: Dict[str, RepairTools] = {}
+        self._steps: Dict[str, int] = {}  # Droid rounds spent per task: picks the model ladder rung
+        self._on: Dict[str, tuple] = {}  # (model, reasoning) each open session is running
         self.last_result: Optional[dict] = None
 
     # ---- SkillAuthor -------------------------------------------------------------------
@@ -127,8 +129,12 @@ class DroidSDKAuthor:
         tools.update(ctx.scene, ctx.round, ctx.library,  # RepairContext fields, if the loop sent them
                      attempt=getattr(ctx, "attempt", None), expected=getattr(ctx, "expected", None))
 
+        step = self._steps.get(ctx.run_id, 0)  # Droid rounds already spent on this task
+        model, reasoning = self.rung(step)
         self.bus.emit("droid.started", round=ctx.round, via="droid-sdk", workspace=str(ws),
-                      autonomy=self.d.autonomy, disabled_tools=list(self.d.disabled_tools or []))
+                      autonomy=self.d.autonomy, disabled_tools=list(self.d.disabled_tools or []),
+                      model=model, reasoning=reasoning, rung=min(step, len(self.ladder()) - 1))
+        self._steps[ctx.run_id] = step + 1
         self.last_result = None
         try:
             result = self._loop.run_until_complete(self._stream(ws, report_md, ctx, tools))
@@ -160,6 +166,7 @@ class DroidSDKAuthor:
         from droid_sdk import JsonSchema
 
         session = await self._session(ctx.run_id, ws, tools)
+        await self._climb(ctx.run_id, session, max(self._steps.get(ctx.run_id, 1) - 1, 0))
         kwargs = {"output": JsonSchema(REPAIR_RESULT_SCHEMA), "timeout": self.d.timeout_s}
         images = self._images(ctx)
         if images:
@@ -185,11 +192,13 @@ class DroidSDKAuthor:
             return self._sessions[run_id]
         from droid_sdk import Runtime, Session
 
-        session = Session(cwd=ws, model=self.d.model or None, reasoning_effort=self._reasoning(),
+        model, reasoning = self.rung(max(self._steps.get(run_id, 1) - 1, 0))
+        session = Session(cwd=ws, model=model, reasoning_effort=self._reasoning(reasoning),
                           config=self.build_config(tools), interactions=self.build_interactions(ws, tools),
                           runtime=Runtime(executable=self._executable()))
         await session.__aenter__()
         self._sessions[run_id] = session
+        self._on[run_id] = (model, reasoning)
         try:  # show judges exactly which tools Droid has
             listed = await session.list_tools()
             self.bus.emit("droid.tools", tools=[getattr(t, "id", None) or getattr(t, "name", str(t)) for t in listed])
@@ -197,7 +206,32 @@ class DroidSDKAuthor:
             self.bus.emit("error", where="droid.list_tools", message=repr(e))
         return session
 
+    # ---- model ladder ---------------------------------------------------------------------
+    # Start cheap and fast; step up only when a round's fix didn't work (Factory mentor's advice).
+    # Rung 0 = droid.model / droid.reasoning; then each droid.escalate entry, staying on the last one.
+    def ladder(self) -> list:
+        first = {"model": self.d.get("model"), "reasoning": self.d.get("reasoning")}
+        return [first] + [dict(r) for r in (self.d.get("escalate") or [])]
+
+    def rung(self, step: int) -> tuple:
+        ladder = self.ladder()
+        r = ladder[min(step, len(ladder) - 1)]
+        return (r.get("model") or None, r.get("reasoning") or None)
+
+    async def _climb(self, run_id: str, session, step: int) -> None:
+        """Move a warm session to this round's rung, keeping the conversation (update_settings)."""
+        want = self.rung(step)
+        if self._on.get(run_id) == want:
+            return
+        model, reasoning = want
+        await session.update_settings(model=model, reasoning_effort=self._reasoning(reasoning))
+        self._on[run_id] = want
+        self.bus.emit("note", where="droid.escalate", model=model, reasoning=reasoning,
+                      text=f"previous fix didn't hold: Droid steps up to {model or 'default'} / "
+                              f"{reasoning or 'default'} reasoning")
+
     def _drop_session(self, run_id: str) -> None:
+        self._on.pop(run_id, None)
         session = self._sessions.pop(run_id, None)
         if session is None:
             return
@@ -216,12 +250,12 @@ class DroidSDKAuthor:
                                "to log in or set FACTORY_API_KEY.")
         return found
 
-    def _reasoning(self):
-        if not self.d.get("reasoning"):
+    def _reasoning(self, level=None):
+        if not level:
             return None
         from droid_sdk import ReasoningEffort
 
-        return ReasoningEffort(str(self.d.reasoning).lower())
+        return ReasoningEffort(str(level).lower())
 
     # ---- control -------------------------------------------------------------------------
     def build_config(self, tools: RepairTools):

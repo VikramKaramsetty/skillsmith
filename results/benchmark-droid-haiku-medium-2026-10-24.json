@@ -1,0 +1,176 @@
+{
+  "author": "droid",
+  "max_rounds": 2,
+  "cases": [
+    {
+      "case": "rim_grip",
+      "cls": "SLIP_IN_CARRY",
+      "evidence": "v2",
+      "repeat": 0,
+      "fixed": true,
+      "rounds": 1,
+      "seconds": 15.675,
+      "seeded_failed": true,
+      "labels": "classifier",
+      "observed_cls": "SLIP_IN_CARRY",
+      "error": null
+    },
+    {
+      "case": "grip_above_top",
+      "cls": "GRASP_MISS",
+      "evidence": "v2",
+      "repeat": 0,
+      "fixed": true,
+      "rounds": 1,
+      "seconds": 19.152,
+      "seeded_failed": true,
+      "labels": "classifier",
+      "observed_cls": "GRASP_MISS",
+      "error": null
+    },
+    {
+      "case": "never_grasps",
+      "cls": "NO_PICK",
+      "evidence": "v2",
+      "repeat": 0,
+      "fixed": true,
+      "rounds": 1,
+      "seconds": 13.383,
+      "seeded_failed": true,
+      "labels": "classifier",
+      "observed_cls": "NO_PICK",
+      "error": null
+    },
+    {
+      "case": "low_travel",
+      "cls": "COLLISION",
+      "evidence": "v2",
+      "repeat": 0,
+      "fixed": true,
+      "rounds": 1,
+      "seconds": 12.941,
+      "seeded_failed": true,
+      "labels": "classifier",
+      "observed_cls": "COLLISION",
+      "error": null
+    },
+    {
+      "case": "place_ignores_height",
+      "cls": "COLLISION",
+      "evidence": "v2",
+      "repeat": 0,
+      "fixed": true,
+      "rounds": 1,
+      "seconds": 13.767,
+      "seeded_failed": true,
+      "labels": "classifier",
+      "observed_cls": "COLLISION",
+      "error": null
+    },
+    {
+      "case": "place_wrong_axis",
+      "cls": "PLACE_OFF_TARGET",
+      "evidence": "v2",
+      "repeat": 0,
+      "fixed": true,
+      "rounds": 1,
+      "seconds": 14.748,
+      "seeded_failed": true,
+      "labels": "classifier",
+      "observed_cls": "PLACE_OFF_TARGET",
+      "error": null
+    },
+    {
+      "case": "travel_above_workspace",
+      "cls": "UNSAFE_TARGET",
+      "evidence": "v2",
+      "repeat": 0,
+      "fixed": true,
+      "rounds": 1,
+      "seconds": 17.244,
+      "seeded_failed": true,
+      "labels": "classifier",
+      "observed_cls": "UNSAFE_TARGET",
+      "error": null
+    },
+    {
+      "case": "label_typo",
+      "cls": "SKILL_ERROR",
+      "evidence": "v2",
+      "repeat": 0,
+      "fixed": true,
+      "rounds": 1,
+      "seconds": 11.792,
+      "seeded_failed": true,
+      "labels": "classifier",
+      "observed_cls": "SKILL_ERROR",
+      "error": null
+    }
+  ],
+  "summary": [
+    {
+      "cls": "SLIP_IN_CARRY",
+      "evidence": "v2",
+      "n": 1,
+      "fix_rate": 1.0,
+      "one_round_rate": 1.0,
+      "median_seconds": 15.68
+    },
+    {
+      "cls": "GRASP_MISS",
+      "evidence": "v2",
+      "n": 1,
+      "fix_rate": 1.0,
+      "one_round_rate": 1.0,
+      "median_seconds": 19.15
+    },
+    {
+      "cls": "NO_PICK",
+      "evidence": "v2",
+      "n": 1,
+      "fix_rate": 1.0,
+      "one_round_rate": 1.0,
+      "median_seconds": 13.38
+    },
+    {
+      "cls": "COLLISION",
+      "evidence": "v2",
+      "n": 2,
+      "fix_rate": 1.0,
+      "one_round_rate": 1.0,
+      "median_seconds": 13.35
+    },
+    {
+      "cls": "PLACE_OFF_TARGET",
+      "evidence": "v2",
+      "n": 1,
+      "fix_rate": 1.0,
+      "one_round_rate": 1.0,
+      "median_seconds": 14.75
+    },
+    {
+      "cls": "UNSAFE_TARGET",
+      "evidence": "v2",
+      "n": 1,
+      "fix_rate": 1.0,
+      "one_round_rate": 1.0,
+      "median_seconds": 17.24
+    },
+    {
+      "cls": "SKILL_ERROR",
+      "evidence": "v2",
+      "n": 1,
+      "fix_rate": 1.0,
+      "one_round_rate": 1.0,
+      "median_seconds": 11.79
+    },
+    {
+      "cls": "all",
+      "evidence": "v2",
+      "n": 8,
+      "fix_rate": 1.0,
+      "one_round_rate": 1.0,
+      "median_seconds": 14.26
+    }
+  ]
+}

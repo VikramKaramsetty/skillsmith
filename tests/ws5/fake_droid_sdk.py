@@ -250,7 +250,12 @@ class Session:
         self.tool_results: List[tuple] = []  # (tool name, MCP content) exactly as the model receives it
         self.responses: list = []  # every permission/question reply the author gave
         self.opened = self.closed = False
+        self.settings_updates: List[tuple] = []  # (model, reasoning_effort) per update_settings call
         CONTROLLER.sessions.append(self)
+
+    async def update_settings(self, *, model=None, reasoning_effort=None, **_):
+        self.settings_updates.append((model, reasoning_effort))
+        self.model, self.reasoning_effort = model or self.model, reasoning_effort or self.reasoning_effort
 
     async def __aenter__(self):
         self.opened = True

@@ -231,3 +231,35 @@ def test_failure_snapshot_rides_along_as_an_image(tmp_path, droid):
     (image,) = droid.sessions[0].prompts[0][1]["images"]
     assert image.source.media_type == "image/jpeg" and image.source.data == "/9hqcGVn"
     assert "images" not in droid.sessions[1].prompts[0][1]
+
+
+def test_model_ladder_starts_small_and_steps_up_in_the_same_session(tmp_path, droid):
+    cfg = tmp_cfg(tmp_path, model="small", reasoning="medium",
+                  escalate=[{"model": "small", "reasoning": "high"}, {"model": "big", "reasoning": "medium"}])
+    droid.turns = [fake.Turn(skill=V2, output=fake.output()) for _ in range(4)]
+    bus = NullBus()
+    author = make_author(cfg, bus)
+    try:
+        for rnd in (1, 2, 3, 4):
+            author.repair(TASK, V1, "FAIL: lost blue cup", ctx(cfg, rnd))
+    finally:
+        author.close()
+
+    (s,) = droid.sessions  # one conversation: stepping up never drops Droid's context
+    assert (s.model, s.reasoning_effort) == ("big", fake.ReasoningEffort.MEDIUM)
+    assert s.settings_updates == [("small", fake.ReasoningEffort.HIGH), ("big", fake.ReasoningEffort.MEDIUM)]
+    started = events(bus, "droid.started")
+    assert [(e["model"], e["reasoning"], e["rung"]) for e in started] == [
+        ("small", "medium", 0), ("small", "high", 1), ("big", "medium", 2), ("big", "medium", 2)]
+    steps = [e for e in events(bus, "note") if e.get("where") == "droid.escalate"]
+    assert [(e["model"], e["reasoning"]) for e in steps] == [("small", "high"), ("big", "medium")]
+    assert all(e["text"].startswith("previous fix didn't hold") for e in steps)
+
+
+def test_the_shipped_ladder_starts_on_haiku_medium():
+    from skillsmith.config import load_config as load
+
+    for profile in (None, "stage"):
+        d = load(profile=profile).droid
+        assert (d.model, d.reasoning) == ("claude-haiku-5-5", "medium"), profile
+        assert d.escalate[0] == {"model": "claude-haiku-5-5", "reasoning": "high"}, profile

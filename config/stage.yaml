@@ -5,7 +5,6 @@ repair:
 droid:
   sim_tool_budget: 1       # Droid may test its fix in sim once per round; our gates re-check anyway
   timeout_s: 90            # a round that takes longer is cut off; switch to the fallback (docs/DEMO.md)
-  reasoning: null          # set to the fastest effort that still fixes the demo failure (measure with WS5.6)
-  model: null              # set a fast model id once measured; null = Droid's default
+  # model ladder: robot.yaml's (Haiku medium -> Haiku high for the 2 stage rounds); override here if needed
 safety:
   max_tcp_speed: 0.12      # fast through open air (the guard still checks every target)
