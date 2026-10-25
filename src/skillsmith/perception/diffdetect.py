@@ -1,13 +1,16 @@
-"""Model-free cup detector for a fixed overhead camera: background difference + top-rim circle fit.
+"""Model-free cup detector for a fixed overhead camera: background difference + base-rim circle fit.
 
 For objects HSV cannot see (a white or printed cup on a white mat) when YOLO is not available:
-- A reference image of the EMPTY table (`tools/capture_background.py`) is compared with each frame;
-  pixels that differ enough (LAB distance > `diff_threshold`) form blobs.
-- Each blob's outline is back-projected (calibrated camera) onto the plane of the object's TOP and onto
-  the table, and RANSAC finds one centre where every outline point lies on the top rim or the bottom rim:
-  a cup is two circles on one vertical axis, so the camera's tilt is undone. Rims outside the workspace box (+3 cm) are dropped too. Blobs whose rim is not a circle of a plausible radius (hands, the arm, cables) are dropped.
-- `point_uv` is the rim centre projected back into the image, which is what the world model ray-casts
-  at the same top height.
+- A reference image of the EMPTY table (`tools/capture_background.py`) is compared with each frame
+  (at half resolution); pixels that differ enough (LAB distance > `diff_threshold`) form blobs.
+- Each blob's outline is back-projected (calibrated camera) onto the table plane, and RANSAC fits the
+  circle where the object meets the table. That height is known exactly, so (x, y) needs no height guess
+  and the camera's tilt is undone. The top rim is not used: a white top barely differs from a white mat,
+  and the edge of a cup's print looks like a rim at the wrong height (it put a cup 3 cm off).
+- A blob is dropped when its rim is not a circle of a plausible radius covering 150+ degrees (labels,
+  cables, hands), when it touches the frame edge, or when its centre is off the workspace box (+3 cm).
+- `point_uv` is the base centre projected to the object's nominal top height, which is what the world
+  model ray-casts. On the rig (2026-10-25): T1-T5 worst 0.52 cm, mean 0.27 cm, ~40 ms per frame.
 
 Config (all optional): detect: {backend: diff, labels: ["white cup"], diff: {background: runs/background.png,
 diff_threshold: 28, min_radius: 0.02, max_radius: 0.05, top_height: 0.08}}.
@@ -15,14 +18,14 @@ diff_threshold: 28, min_radius: 0.02, max_radius: 0.05, top_height: 0.08}}.
 
 from __future__ import annotations
 
-from typing import Any, List, Optional, Sequence, Tuple
+from typing import Any, List, Optional, Sequence
 
 from skillsmith.perception.color import Detection, _section, split_label
 
 WORK_SCALE = 2  # the difference image is computed at half resolution
 DEFAULT_DIFF = {"background": "runs/background.png", "diff_threshold": 28, "min_radius": 0.02,
                 "max_radius": 0.05, "top_height": 0.08,  # radii: of the base rim (a cup's mouth when upside down)
-                "min_height": 0.04, "max_height": 0.30, "height_step": 0.01, "inlier_tol": 0.004, "min_inliers": 0.35}
+                "inlier_tol": 0.004}
 
 
 class DiffDetector:
@@ -145,50 +148,6 @@ class DiffDetector:
         if sectors < min_sectors or n < 12:
             return None
         return (float(c[0]), float(c[1])), float(r), float(min(1.0, sectors / 8))
-
-
-    def _rim(self, pts_uv, h: float, iterations: int = 400):
-        """One vertical axis through both rims: ((x, y), top radius, confidence).
-
-        The outline of a cup seen from an angle is part top rim (at z = top_height) and part bottom rim
-        (on the table), and a white top on a white mat may barely show. So each outline point is
-        back-projected to both planes, and RANSAC looks for one centre where every point lies on the top
-        circle (top plane) or on the bottom circle (table plane)."""
-        import numpy as np
-
-        step = max(1, len(pts_uv) // 300)
-        uv = pts_uv[::step]
-        if len(uv) < 12:
-            return None
-        top, bot = self._to_planes(uv, (h, 0.0))
-        rmin, rmax, tol = (float(self.params[k]) for k in ("min_radius", "max_radius", "inlier_tol"))
-        rng = np.random.default_rng(0)
-        best = None
-        for _ in range(iterations):
-            plane = top if rng.random() < 0.5 else bot
-            circle = _circle3(*plane[rng.choice(len(plane), 3, replace=False)])
-            if circle is None or not rmin <= circle[1] <= rmax:
-                continue
-            c = np.array(circle[0])
-            dt, db = np.hypot(*(top - c).T), np.hypot(*(bot - c).T)
-            rt = circle[1] if plane is top else float(np.median(dt))
-            rb = circle[1] if plane is bot else float(np.median(db))
-            on_top, on_bot = np.abs(dt - rt) < tol, np.abs(db - rb) < tol
-            n = int((on_top | on_bot).sum())
-            if best is None or n > best[0]:
-                best = (n, c, rt, rb, on_top, on_bot)
-        if best is None:
-            return None
-        n, c, rt, rb, on_top, on_bot = best
-        score = n / len(uv)
-        if score < float(self.params["min_inliers"]) or not rmin <= rt <= rmax:
-            return None
-        # A real cup's rims go most of the way round together; a short edge (label text, a cable) fits a
-        # big circle with all its points on one side. Require inliers in >= 7 of 12 sectors (210 degrees).
-        ang = np.concatenate([np.arctan2(*(top[on_top] - c).T[::-1]), np.arctan2(*(bot[on_bot] - c).T[::-1])])
-        if len(np.unique(((ang + np.pi) / (2 * np.pi) * 12).astype(int) % 12)) < 7:
-            return None
-        return (float(c[0]), float(c[1])), float(rt), float(min(1.0, score / 0.6)), score
 
 
 def _rays(camera, uv):

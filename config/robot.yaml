@@ -39,11 +39,14 @@ world:                              # live world model (WS3.5)
   rate_hz: 12
   bump_threshold: 0.01              # m; a not-held object moving more than this = WorldChanged
   min_confidence: 0.5               # below this a detection is 'uncertain' (confidence gate)
+  objects:                          # measured: the demo's paper cup, used upside down (mouth on the table)
+    cup: {height: 0.0953, width: 0.0762}   # 3.75 in tall; 3 in mouth (the widest part); 2 in base on top
 
 detect:                             # object detector for the world model (perception/color.py make_detector)
-  backend: diff                     # model-free: empty-table difference + rim fit with measured height
+  backend: diff                     # model-free: empty-table difference + base-rim circle fit
   labels: ["white cup"]             # the demo's white printed cup (HSV can't see it; YOLO not installed)
-  diff: {background: runs/background.png}   # tools/capture_background.py with the mat EMPTY
+  diff: {background: runs/background.png,   # tools/capture_background.py with the mat EMPTY
+         top_height: 0.0953, min_radius: 0.030, max_radius: 0.045}   # the cup's 3.81 cm mouth radius
 
 workspace:                          # tip must stay inside this box (robot frame, metres). MEASURE
   x: [0.08, 0.34]

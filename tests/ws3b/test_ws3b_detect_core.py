@@ -154,7 +154,13 @@ def test_make_detector_backends(monkeypatch):
 
 
 def test_make_detector_reads_a_config_object():
-    from skillsmith.config import load_config
+    from skillsmith.config import Config, load_config
 
-    d = make_detector(load_config(), [])  # robot.yaml has no detect section yet: defaults apply
+    raw = {k: v for k, v in load_config().raw().items() if k != "detect"}
+    d = make_detector(Config(raw), [])  # no detect section: defaults apply
     assert isinstance(d, HsvDetector) and d.params == color.DEFAULT_HSV
+
+
+def test_diff_backend_without_a_background_falls_back_to_hsv(tmp_path):
+    cfg = {"detect": {"backend": "diff", "diff": {"background": str(tmp_path / "missing.png")}}}
+    assert isinstance(make_detector(cfg, ["white cup"]), HsvDetector)

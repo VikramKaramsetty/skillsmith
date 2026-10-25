@@ -288,10 +288,14 @@ def make_detector(cfg: Any, labels: Optional[Sequence[str]] = None, bus: Any = N
     backend = _section(cfg).get("backend", "auto")
     if backend not in ("auto", "yolo", "hsv", "diff"):
         raise ValueError(f"detect.backend must be auto, yolo, hsv or diff, not '{backend}'")
-    if backend == "diff":  # model-free: empty-table difference + top-rim circle fit (perception/diffdetect.py)
+    if backend == "diff":  # model-free: empty-table difference + base-rim circle fit (perception/diffdetect.py)
         from skillsmith.perception.diffdetect import DiffDetector
 
-        return DiffDetector(cfg, labels)
+        try:
+            return DiffDetector(cfg, labels)
+        except OSError as e:  # no background image (CI, a fresh checkout): say so, keep running on HSV
+            _emit(bus, f"diff detector unavailable, using HSV only: {e}")
+            return HsvDetector(cfg, labels)
     hsv = HsvDetector(cfg, labels)
     if backend == "hsv" or (backend == "auto" and not labels):
         return hsv
