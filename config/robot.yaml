@@ -24,7 +24,7 @@ robot:
   gripper_open: 100
   gripper_closed: 0
   gripper_open_by_kind: {cup: 100}  # approach opening per kind (narrower made the moving jaw clip the target cup in sim)
-  gripper_closed_by_kind: {cup: 30}  # taught on the demo cup 2026-10-25: the jaws meet it at 31 %; 0 crushed it,
+  gripper_closed_by_kind: {cup: 29}  # taught on the demo cup 2026-10-25: the jaws meet it at 31 %; 0 crushed it,
   #                                    25 stopped at 27 % (too close to the command to read as holding)
 
 cameras:                            # robotd opens these; `name:` = the macOS camera whose name contains it
