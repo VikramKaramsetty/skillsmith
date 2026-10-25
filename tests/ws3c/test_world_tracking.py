@@ -219,3 +219,13 @@ def test_drops_into_fake_env_and_robot_raises_world_changed():
     with pytest.raises(WorldChanged, match="red cup moved 3.0 cm toward \\+y while not held"):
         robot.move_to(0.2, 0.0, 0.12)
     env.close()
+
+
+def test_default_detector_prompts_yolo_with_the_configured_labels(monkeypatch):
+    from skillsmith.perception import color, world
+
+    built = []
+    monkeypatch.setattr(color, "make_detector", lambda cfg, labels=None, bus=None: built.append(labels) or "det")
+    assert world._default_detector({"detect": {"labels": ["white cup", "red cup"]}}) == "det"
+    assert world._default_detector({}) == "det"
+    assert built == [["white cup", "red cup"], None]  # no labels: make_detector falls back to HSV

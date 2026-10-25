@@ -606,9 +606,14 @@ def _why(e: BaseException) -> str:
 
 
 def _default_detector(cfg):
-    from skillsmith.perception.color import HsvDetector
+    """`make_detector` with config `detect.labels` (the objects to prompt YOLO-World with): YOLO with the
+    HSV backup when labels are set and ultralytics loads, HSV alone otherwise. It always built HSV
+    alone before, so YOLO never ran even when installed, and HSV cannot see a white or printed cup."""
+    from skillsmith.perception.color import make_detector
 
-    return HsvDetector(cfg)
+    raw = cfg.raw() if hasattr(cfg, "raw") else (cfg or {})
+    labels = (raw.get("detect") or {}).get("labels") or None
+    return make_detector(cfg, labels)
 
 
 def _default_camera(cfg):
