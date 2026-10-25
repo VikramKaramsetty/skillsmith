@@ -147,7 +147,7 @@ class Env:
     perception: Perception
     def close(self) -> None
 
-def make_env(name: str, cfg: Config, scene: Scene | None = None) -> Env
+def make_env(name: str, cfg: Config, scene: Scene | None = None, bus: EventBus | None = None) -> Env
     # "sim" and "fake" accept a Scene to build the world from (sim mirrors the real table)
 ```
 

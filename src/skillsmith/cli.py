@@ -84,7 +84,7 @@ def _run(task: TaskSpec, target, make_check_env, library, author, approver, cfg,
 def cmd_run(args, cfg) -> int:
     task = _task(args)
     bus = EventBus(new_run_id(), cfg.path(cfg.repair.runs_dir), echo=True)
-    target = make_env(args.env, cfg)
+    target = make_env(args.env, cfg, bus=bus)
     make_check_env = _check_env_factory("fake" if args.env == "fake" else "sim", cfg)
     library = SkillLibrary(cfg.path(cfg.repair.library_dir))
     return _run(task, target, make_check_env, library, _author(args.author, cfg, bus, make_check_env),

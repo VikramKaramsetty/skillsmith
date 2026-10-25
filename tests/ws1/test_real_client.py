@@ -232,6 +232,13 @@ class NoDetections:
         return []
 
 
+class SteadyCamera:
+    """A calibrated camera whose markers never move (the WS3.6 confidence gate asks)."""
+
+    def marker_drift(self, frame) -> float:
+        return 0.0
+
+
 def test_make_real_env_runs_the_real_world_model_loop_over_robotd(monkeypatch):
     """WS3's actual WorldModel: its loop reads robotd's front camera and the arm's FK tip."""
     import skillsmith.kinematics
@@ -240,7 +247,7 @@ def test_make_real_env_runs_the_real_world_model_loop_over_robotd(monkeypatch):
 
     kin = FakeKin()
     monkeypatch.setattr(skillsmith.kinematics, "make_kinematics", lambda cfg: kin)
-    monkeypatch.setattr(skillsmith.perception.world, "_default_camera", lambda cfg: object())
+    monkeypatch.setattr(skillsmith.perception.world, "_default_camera", lambda cfg: SteadyCamera())
     monkeypatch.setattr(skillsmith.perception.world, "_default_detector", lambda cfg: NoDetections())
     monkeypatch.setattr(skillsmith.perception.frames.Frame, "bgr", lambda self: self.jpeg)  # no opencv
     bus = NullBus()
