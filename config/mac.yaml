@@ -10,3 +10,8 @@ cameras:
   front: 0                                     # VERIFY: overhead camera's OpenCV index
   front_size: [1280, 720]
   wrist: 1                                     # VERIFY: wrist camera's OpenCV index
+wrist:
+  # Fine wrist-camera alignment OFF until its numbers are measured on this arm (roi, center, px_per_m, axis
+  # signs, roll_sign, cam_height in perception/wrist.py): a wrong sign moves the gripper up to 2 cm the wrong
+  # way. align_over then hovers using the overhead camera only (coarse). Set 0.3 after the wrist check in #204.
+  min_align_confidence: 1.1
