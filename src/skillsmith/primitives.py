@@ -143,11 +143,11 @@ class Robot:
         horizontally until the open jaws are around it and the fixed jaw touches it. Call grasp()
         next; later move_to calls stay level. Returns the wrist-camera correction in metres."""
         def do(i):
-            self._env.arm.set_gripper(self._cfg.robot.gripper_open)
             scene = self._env.perception.observe()
             self.last_scene = scene
             target = scene.require(obj)
             self._grasp_kind = target.kind
+            self._env.arm.set_gripper(self._open_pct())  # only as wide as the object needs: neighbours stay clear
             x, y = target.x, target.y
             gz = target.top - SIDE_GRIP_BELOW_TOP if grip_z is None else float(grip_z)
             gz = min(max(gz, target.z + 0.01), target.top - 0.005)
@@ -206,6 +206,13 @@ class Robot:
             except Exception:
                 grip = None
             self.captures[index] = (front, wrist, tip, grip)
+
+    def _open_pct(self) -> float:
+        """How far approach_side opens the jaws: robot.gripper_open_by_kind for the target's kind (wide open
+        jaws, 13 cm, swept into a neighbouring cup), else gripper_open."""
+        by_kind = self._cfg.robot.get("gripper_open_by_kind")
+        kinds = by_kind.raw() if by_kind is not None else {}
+        return float(kinds.get(getattr(self, "_grasp_kind", None), self._cfg.robot.gripper_open))
 
     def _close_pct(self) -> float:
         """Where grasp() closes the jaws: robot.gripper_closed_by_kind for the object the last approach
