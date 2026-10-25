@@ -180,8 +180,16 @@ class FakeKin:
 class RecordingWorld:
     """Stands in for WS3's WorldModel; records what make_real_env handed it."""
 
-    def __init__(self, cfg, frame_source=None, kinematics=None, arm=None):
-        self.frame_source, self.kinematics, self.arm = frame_source, kinematics, arm
+    def __init__(self, cfg, frame_source=None, kinematics=None, arm=None, bus=None):
+        self.frame_source, self.kinematics, self.arm, self.bus = frame_source, kinematics, arm, bus
+        self.started = self.closed = False
+
+    def start(self):
+        self.started = True
+        return self
+
+    def close(self):
+        self.closed = True
 
 
 class Closable:
@@ -208,6 +216,7 @@ def test_make_real_env_wires_robotd_placo_and_the_world_model(monkeypatch):
             assert env.arm.url == url and env.arm.token == "s3cret"
             world = env.perception
             assert world.arm is env.arm and world.kinematics is kin
+            assert world.started  # the live loop runs from the start
             assert isinstance(world.frame_source, RobotdFrames)
             assert world.frame_source.url == f"{url}/frame/front"
             assert world.frame_source.read().jpeg  # the world model sees robotd's front camera
@@ -215,6 +224,58 @@ def test_make_real_env_wires_robotd_placo_and_the_world_model(monkeypatch):
             assert env.arm.joints()[0] == pytest.approx(5, abs=1.5)
         finally:
             env.close()
+        assert world.closed
+
+
+class NoDetections:
+    def detect(self, image):
+        return []
+
+
+def test_make_real_env_runs_the_real_world_model_loop_over_robotd(monkeypatch):
+    """WS3's actual WorldModel: its loop reads robotd's front camera and the arm's FK tip."""
+    import skillsmith.kinematics
+    import skillsmith.perception.frames
+    import skillsmith.perception.world
+
+    kin = FakeKin()
+    monkeypatch.setattr(skillsmith.kinematics, "make_kinematics", lambda cfg: kin)
+    monkeypatch.setattr(skillsmith.perception.world, "_default_camera", lambda cfg: object())
+    monkeypatch.setattr(skillsmith.perception.world, "_default_detector", lambda cfg: NoDetections())
+    monkeypatch.setattr(skillsmith.perception.frames.Frame, "bgr", lambda self: self.jpeg)  # no opencv
+    bus = NullBus()
+    with robotd() as url:
+        env = make_real_env(cfg_at(url), bus=bus)
+        try:
+            world = env.perception
+            assert isinstance(world, skillsmith.perception.world.WorldModel)
+            assert world.arm is env.arm and world.kin is kin and world.bus is bus
+            deadline = time.monotonic() + 5
+            while world.rate() == 0.0:
+                assert time.monotonic() < deadline, f"world model loop never stepped: {bus.types()}"
+                time.sleep(0.02)
+            scene = env.perception.observe()
+            assert scene.source == "camera:front" and scene.objects == ()
+            assert "error" not in bus.types()
+        finally:
+            env.close()
+        assert world._thread is None  # Env.close stopped the loop
+
+
+def test_make_real_env_without_camera_calibration_says_how_to_make_it(monkeypatch, tmp_path):
+    import skillsmith.kinematics
+    import skillsmith.perception.frames
+    from skillsmith.perception.geometry import CalibrationMissing
+
+    Closable.closed = 0
+    monkeypatch.setattr(skillsmith.kinematics, "make_kinematics", lambda cfg: FakeKin())
+    monkeypatch.setattr(skillsmith.perception.frames, "make_frame_source", lambda cfg, cam: Closable())
+    with robotd() as url:
+        cfg = cfg_at(url)
+        cfg.raw()["cameras"]["calibration"] = str(tmp_path / "missing.json")
+        with pytest.raises(CalibrationMissing, match="calibrate_camera"):
+            make_real_env(cfg)
+    assert Closable.closed == 1
 
 
 def test_make_real_env_fails_fast_when_robotd_is_down(monkeypatch):

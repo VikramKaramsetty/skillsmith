@@ -21,7 +21,10 @@ make_real_env(cfg, bus=None) (WS1.5):
 - RobotdArm at cfg.robot.robotd_url, checked with one GET /state so a dead robotd fails at startup
   with the command to start it, not mid-skill.
 - PlacoKinematics via `make_kinematics(cfg)` (the same IK the sim gate validates).
-- WorldModel(cfg, frame_source=RobotdFrames(front), kinematics, arm): frames only via robotd.
+- WorldModel(cfg, frame_source=RobotdFrames(front), kinematics, arm, bus=bus): frames only via robotd.
+  Its live loop is started here (observe() returns the loop's latest Scene and bumps are only seen by
+  the loop); Env.close() stops it. No camera calibration (config/camera.json) fails here with the
+  command that writes it.
 - Anything that fails after the arm is built closes what was built, then re-raises.
 
 HUMAN-ONLY: nothing in this module is run by agents against a real robotd. See AGENTS.md "Hard rules".
@@ -179,7 +182,9 @@ def make_real_env(cfg, bus: Optional[EventBus] = None):
         kin = make_kinematics(cfg)
         frames = make_frame_source(cfg, FRONT_CAM)
         built.append(frames)
-        perception = WorldModel(cfg, frame_source=frames, kinematics=kin, arm=arm)
+        perception = WorldModel(cfg, frame_source=frames, kinematics=kin, arm=arm, bus=bus)
+        built.append(perception)
+        perception.start()
     except BaseException:
         for part in reversed(built):
             _close_quietly(part)
