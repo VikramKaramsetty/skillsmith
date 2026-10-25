@@ -29,6 +29,20 @@ Tracking rules (WS3.5):
   on its next detection (where it really landed is not a bump).
 - A not-held track whose detections stay more than `world.bump_threshold` from its anchor for
   `world.bump_frames` consecutive frames fires ONE message, then re-anchors at the new position.
+
+Confidence gate (WS3.6). `perception_ok()` is (False, reason) when any of these hold since the
+baseline (the first update after construction or `reset_gate()`); issues are joined by "; " and
+each starts with a fixed prefix the classifier can match:
+- "world model stale: ..."  the latest update failed (camera gone, detector crashed).
+- "marker drift X cm ..."   `camera.marker_drift(frame)` (run every `world.drift_every` updates;
+  falls back to the median of `camera.marker_errors(frame)` while marker_drift is a stub)
+  exceeded `world.max_marker_drift` (default 1 cm) on `DRIFT_CHECKS` checks in a row → CAMERA_MOVED.
+- "low confidence: ..."     a detection under `world.min_confidence` for `LOW_CONF_FRAMES`
+  frames in a row, away from the tip and the held object (the arm covering a cup lowers its
+  score; that is not doubt about the table). Latched until `reset_gate()` → PERCEPTION_UNCERTAIN.
+- "object count changed ..." a track not in the baseline seen for `NEW_FRAMES` frames, or a
+  baseline object unseen for `world.lost_s` seconds of updates (not held) → PERCEPTION_UNCERTAIN.
+The runtime should call `reset_gate()` when an attempt starts so the gate covers one attempt.
 """
 
 from __future__ import annotations
@@ -55,6 +69,12 @@ ASSOC_RADIUS = 0.08  # m; a detection farther than this from every same-kind tra
 GRAB_RADIUS = 0.06  # m; the held object is the track nearest the tip, within this
 BUMP_FRAMES = 2  # consecutive frames over the threshold before a bump fires (one bad frame is noise)
 RATE_WINDOW = 30  # steps averaged by rate()
+MAX_MARKER_DRIFT = 0.01  # m; calibration markers farther than this from where calibrated = camera moved
+DRIFT_CHECKS = 2  # consecutive drift checks over the limit before the gate fails
+LOW_CONF_FRAMES = 3  # consecutive frames with an uncertain detection before the gate fails
+NEW_FRAMES = 3  # frames a new track must be seen before it counts as an extra object
+LOST_S = 5.0  # s of updates a baseline object may stay unseen before it counts as missing
+ARM_RADIUS = 0.08  # m; uncertain detections this close to the tip are the arm's occlusion, not doubt
 
 
 @dataclass
@@ -62,6 +82,8 @@ class _Track:
     obj: SceneObject
     anchor: Optional[Tuple[float, float]]  # rest position bumps are measured from; None = re-anchor
     over: int = 0  # consecutive frames beyond the bump threshold
+    seen: int = 1  # frames with a detection
+    missed: int = 0  # consecutive frames without one
 
 
 class WorldModel:
@@ -74,6 +96,9 @@ class WorldModel:
         self.min_confidence = float(_opt(world, "min_confidence", 0.5))
         self.assoc_radius = float(_opt(world, "assoc_radius", ASSOC_RADIUS))
         self.bump_frames = int(_opt(world, "bump_frames", BUMP_FRAMES))
+        self.max_marker_drift = float(_opt(world, "max_marker_drift", MAX_MARKER_DRIFT))
+        self.drift_every = max(1, int(_opt(world, "drift_every", round(self.rate_hz))))
+        self.lost_frames = max(1, round(float(_opt(world, "lost_s", LOST_S)) * self.rate_hz))
         self.sizes = dict(KNOWN_OBJECTS)
         objects = _opt(world, "objects", None)
         for kind, size in (objects.raw() if objects is not None else {}).items():
@@ -97,6 +122,13 @@ class WorldModel:
         self._scene: Optional[Scene] = None
         self._last_error: Optional[str] = None
         self._step_times: List[float] = []
+        self._steps = 0
+        self._baseline: Optional[set] = None  # track ids at the gate's baseline; None = take it next update
+        self._drift: Optional[float] = None  # last measured marker drift (m)
+        self._drift_over = 0  # consecutive drift checks over the limit
+        self._drift_unavailable: Optional[str] = None
+        self._low_conf_run = 0
+        self._low_conf: Optional[str] = None  # latched low-confidence issue
         self._thread: Optional[threading.Thread] = None
         self._stop = threading.Event()
 
@@ -120,7 +152,33 @@ class WorldModel:
             return message
 
     def perception_ok(self) -> Tuple[bool, str]:
-        raise NotImplementedError("WS3.6")
+        """The confidence gate: (True, summary) or (False, "; "-joined issues). See module doc."""
+        with self._lock:
+            if self._scene is None:
+                return False, "world model stale: no update yet" + (
+                    f" ({self._last_error})" if self._last_error else "")
+            issues = []
+            if self._last_error is not None:
+                issues.append(f"world model stale: {self._last_error}")
+            if self._drift is not None and self._drift_over >= DRIFT_CHECKS:
+                issues.append(f"marker drift {self._drift * 100:.1f} cm "
+                              f"(limit {self.max_marker_drift * 100:.1f} cm): camera moved, recalibrate")
+            if self._low_conf is not None:
+                issues.append(self._low_conf)
+            count = self._count_issue()
+            if count is not None:
+                issues.append(count)
+            if issues:
+                return False, "; ".join(issues)
+            return True, self._ok_summary()
+
+    def reset_gate(self) -> None:
+        """Start a new gate window (call when an attempt starts): the next update is the baseline
+        for the object count, and latched low-confidence issues clear. Marker drift is a property
+        of the camera, so it stays until the markers are back in place."""
+        with self._lock:
+            self._baseline = None
+            self._low_conf, self._low_conf_run = None, 0
 
     def align_offset(self, obj: SceneObject) -> Tuple[float, float]:
         raise NotImplementedError("WS3.7")
@@ -180,15 +238,19 @@ class WorldModel:
         event once per distinct reason) when no update was possible; the last Scene is kept."""
         try:
             frame = self.frames.read()
-            detections = list(self.detector.detect(self._decode(frame)))
+            image = self._decode(frame)
+            detections = list(self.detector.detect(image))
             tip, holding = self._arm_state()
         except Exception as e:
             self._fail(f"{type(e).__name__}: {e}")
             return False
+        drift = self._measure_drift(image) if self._steps % self.drift_every == 0 else None
         with self._lock:
+            self._steps += 1
             self._frame = frame
             self._update_held(tip, holding)
             self._associate(self._localise(detections))
+            self._update_gate(detections, tip, drift)
             self._scene = Scene(tuple(t.obj for t in self._tracks.values()), frame.t, _source(frame))
             self._step_times = (self._step_times + [time.monotonic()])[-RATE_WINDOW:]
             recovered = self._last_error is not None
@@ -288,13 +350,18 @@ class WorldModel:
                 self._tracks[tid] = _Track(replace(obj, id=tid), anchor=(obj.x, obj.y))
                 matched.add(tid)
         for tid, track in self._tracks.items():
-            if tid not in matched and tid != self._held and track.obj.visible:
+            if tid in matched or tid == self._held:
+                track.missed = 0
+                continue
+            track.missed += 1
+            if track.obj.visible:
                 track.obj = replace(track.obj, visible=False)
                 track.over = 0
 
     def _update_track(self, tid: str, obj: SceneObject) -> None:
         track = self._tracks[tid]
         track.obj = replace(obj, id=tid, visible=True)
+        track.seen += 1
         if track.anchor is None:
             track.anchor = (obj.x, obj.y)
             return
@@ -312,6 +379,88 @@ class WorldModel:
         n = self._counts.get(key, 0)
         self._counts[key] = n + 1
         return f"{key}_{n}"
+
+    # ---- confidence gate (WS3.6) ---------------------------------------------------------
+    def _measure_drift(self, image: Any) -> Optional[float]:
+        """Marker drift in metres, or None when it could not be measured this time (markers
+        hidden by the arm, or the camera model has no marker check: emitted once)."""
+        try:
+            drift = self._camera_drift(image)
+        except Exception as e:
+            reason = f"{type(e).__name__}: {e}"
+            if reason != self._drift_unavailable:
+                self._drift_unavailable = reason
+                self.bus.emit("error", where="perception.world",
+                              message=f"marker drift not checked (confidence gate): {reason}")
+            return None
+        self._drift_unavailable = None
+        return drift if math.isfinite(drift) else None
+
+    def _camera_drift(self, image: Any) -> float:
+        """`camera.marker_drift(image)`; while that is still a stub, the median of
+        `camera.marker_errors(image)` (geometry's real calibration check), NaN when no marker is seen."""
+        fn = getattr(self.camera, "marker_drift", None)
+        try:
+            if fn is None:
+                raise NotImplementedError(f"{type(self.camera).__name__} has no marker_drift()")
+            return float(fn(image))
+        except NotImplementedError:
+            errors_fn = getattr(self.camera, "marker_errors", None)
+            if errors_fn is None:
+                raise
+        errors = sorted(float(e) for e in errors_fn(image).values())
+        if not errors:
+            return math.nan
+        mid = len(errors) // 2
+        return errors[mid] if len(errors) % 2 else (errors[mid - 1] + errors[mid]) / 2
+
+    def _update_gate(self, detections: Sequence[Any], tip: Optional[Vec3], drift: Optional[float]) -> None:
+        if drift is not None:
+            self._drift = drift
+            self._drift_over = self._drift_over + 1 if drift > self.max_marker_drift else 0
+        if self._baseline is None:
+            self._baseline = set(self._tracks)
+        doubtful = self._uncertain(detections, tip)
+        self._low_conf_run = self._low_conf_run + 1 if doubtful else 0
+        if doubtful and self._low_conf_run >= LOW_CONF_FRAMES and self._low_conf is None:
+            label, confidence = doubtful
+            self._low_conf = (f"low confidence: {label} at {confidence:.2f} (< {self.min_confidence:.2f}) "
+                              f"for {self._low_conf_run} frames")
+
+    def _uncertain(self, detections: Sequence[Any], tip: Optional[Vec3]) -> Optional[Tuple[str, float]]:
+        """The least confident detection under `min_confidence` that the arm does not explain."""
+        worst: Optional[Tuple[str, float]] = None
+        arm = [(tip[0], tip[1])] if tip is not None else []
+        if self._held is not None:
+            held = self._tracks[self._held].obj
+            arm.append((held.x, held.y))
+        for det in detections:
+            confidence = float(getattr(det, "confidence", 1.0))
+            if confidence >= self.min_confidence:
+                continue
+            height, _width = self.sizes.get(det.kind, DEFAULT_SIZE)
+            x, y = self.camera.pixel_to_table(det.point_uv[0], det.point_uv[1], height)
+            if any(math.hypot(x - px, y - py) <= ARM_RADIUS for px, py in arm):
+                continue
+            if worst is None or confidence < worst[1]:
+                worst = (det.label, confidence)
+        return worst
+
+    def _count_issue(self) -> Optional[str]:
+        baseline = self._baseline or set()
+        new = [t.obj.label for tid, t in self._tracks.items() if tid not in baseline and t.seen >= NEW_FRAMES]
+        lost = [self._tracks[tid].obj.label for tid in sorted(baseline)
+                if tid != self._held and self._tracks[tid].missed >= self.lost_frames]
+        if not new and not lost:
+            return None
+        parts = [f"{label} appeared" for label in new]
+        parts += [f"{label} unseen for {self.lost_frames / self.rate_hz:.1f} s" for label in lost]
+        now = len(baseline) + len(new) - len(lost)
+        return f"object count changed {len(baseline)} → {now}: " + ", ".join(parts)
+
+    def _ok_summary(self) -> str:
+        drift = "markers unchecked" if self._drift is None else f"markers {self._drift * 100:.1f} cm"
+        return f"perception ok: {drift}, {len(self._baseline or ())} objects stable, confidence fine"
 
 
 def _bump_message(label: str, dx: float, dy: float) -> str:
