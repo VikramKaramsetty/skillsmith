@@ -1,8 +1,10 @@
 """Entry point: `python -m robotd [--mock] [--port 8100] [--host 127.0.0.1] [--config PATH]`. OWNER: WS1.
 
 robotd is standalone: it runs in the GX10's LeRobot venv, so it imports nothing from skillsmith and
-reads config/robot.yaml itself. It binds 127.0.0.1 by default; any other host needs a shared token
-in $ROBOTD_TOKEN, which clients send as the X-Robotd-Token header (the Mac fallback link).
+reads config/robot.yaml itself, plus config/<profile>.yaml overlays (--profile or $SKILLSMITH_PROFILE,
+comma-separated, same merge as skillsmith.config: `--profile mac` runs the arm on a Mac).
+It binds 127.0.0.1 by default; any other host needs a shared token in $ROBOTD_TOKEN, which clients
+send as the X-Robotd-Token header (the Mac fallback link).
 Without --mock it opens the follower (config robot.follower_port / robot.calibration_id) through
 LeRobot, holding its current pose; on Ctrl-C it disconnects and the arm goes limp (support it).
 Cameras come from config `cameras:` (a V4L path or an MJPEG URL each; robotd/cameras.py).
@@ -39,14 +41,31 @@ def parse_args(argv: Optional[Sequence[str]]) -> argparse.Namespace:
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--port", type=int, default=8100)
     p.add_argument("--config", default=str(DEFAULT_CONFIG))
+    p.add_argument("--profile", default=os.environ.get("SKILLSMITH_PROFILE"),
+                   help="config overlays merged on top, e.g. mac or mac,stage (config/<name>.yaml)")
     return p.parse_args(argv)
 
 
-def load_config(path: str) -> dict:
+def _merge(base: dict, over: dict) -> dict:
+    """Deep-merge `over` onto `base`: the same rule as skillsmith.config._merge."""
+    out = dict(base)
+    for key, value in over.items():
+        out[key] = _merge(out[key], value) if isinstance(value, dict) and isinstance(out.get(key), dict) else value
+    return out
+
+
+def load_config(path: str, profile: Optional[str] = None) -> dict:
     import yaml
 
     with open(path) as f:
-        return yaml.safe_load(f)
+        data = yaml.safe_load(f)
+    for name in [n.strip() for n in (profile or "").split(",") if n.strip()]:
+        overlay = Path(path).parent / f"{name}.yaml"
+        if not overlay.exists():
+            raise FileNotFoundError(f"no config profile '{name}' ({overlay})")
+        with open(overlay) as f:
+            data = _merge(data, yaml.safe_load(f) or {})
+    return data
 
 
 def build_controller(cfg: dict, bus: Bus) -> ArmController:
@@ -96,7 +115,7 @@ def main(argv: Optional[Sequence[str]] = None, serve: Optional[Serve] = None) ->
               "(clients send it as the X-Robotd-Token header)", file=sys.stderr)
         return 2
     logging.basicConfig(level=logging.INFO, format="robotd %(levelname)s %(message)s")
-    cfg = load_config(args.config)
+    cfg = load_config(args.config, args.profile)
     try:
         bus = open_bus(args.mock or args.cameras_only, cfg)
     except Exception as e:  # LeRobot raises its own types; the operator needs the reason, not a traceback
