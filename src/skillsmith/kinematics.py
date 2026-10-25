@@ -54,6 +54,9 @@ Side approach (`approach="side"`):
 - `keep_tilt=True` (side, while holding) aligns with the SEED's finger tilt instead of level: near
   the base the tilt changes with height, and re-levelling on a lift swings the held cup about the
   grip and digs its base into the table. The result must still be within SIDE_MAX_TILT_DEG of level.
+- `side_z_offset` (m, real arm only: `robot.side_z_offset` via hal/real.py): in level poses the real tip
+  sat ~2 cm above the model (jaws closed over the cup's top). ik(side) aims that much lower and fk
+  reports that much higher for level poses, so heights stay consistent through grasp, carry and place.
 - Side solutions keep SIDE_LIMIT_MARGIN_DEG inside the URDF limits: near the base a level gripper
   sits on wrist_flex's -95 deg stop, and robotd refuses goals within 2 deg of a limit.
 
@@ -91,6 +94,7 @@ RESTART_POSTURES = ((-40.0, 40.0, 90.0), (0.0, 0.0, 90.0), (20.0, -20.0, 90.0), 
                     (40.0, -40.0, 90.0), (-80.0, 60.0, 90.0))
 APPROACHES = ("down", "side")
 SIDE_ROLL_DEG = -90.0     # wrist_roll for a side grasp: jaws open sideways, wrist camera on TOP (+90 hangs it under)
+SIDE_POSE_MAX_DOWN = 0.7  # |gripper z . world z| below this = a level (side) pose for side_z_offset
 SIDE_ELBOW_MAX_DEG = 85.0  # side: elbow_flex cap; folded further, the lower arm hits the shoulder (sim)
 SIDE_LIMIT_MARGIN_DEG = 3.0  # side solutions stay this far inside the URDF limits (robotd refuses < 2 deg)
 SIDE_MAX_TILT_DEG = 30.0  # fingers may point this far below level (wrist_flex limit near the base), else None
@@ -122,6 +126,7 @@ class PlacoKinematics:
         self.iterations = iterations
         self.last_tilt_deg: Optional[float] = None  # tilt of the last ik solution from its approach axis
         self.side_roll_deg = float(side_roll_deg)
+        self.side_z_offset = 0.0  # m; real tip height minus model in level poses (set by hal/real.py)
         self._cam_in_tip = np.asarray(cam_in_tip if cam_in_tip is not None else WRIST_CAM_IN_TIP, dtype=float)
         if self._cam_in_tip.shape != (4, 4):
             raise ValueError(f"cam_in_tip must be 4x4, got shape {self._cam_in_tip.shape}")
@@ -137,13 +142,18 @@ class PlacoKinematics:
     # ---- Kinematics protocol ------------------------------------------------------------
     def fk(self, joints: Sequence[float]) -> Vec3:
         self._set_arm(joints)
-        x, y, z = self._tip_pose()[:3, 3] - self._origin
+        pose = self._tip_pose()
+        x, y, z = pose[:3, 3] - self._origin
+        if self.side_z_offset and abs(float(pose[2, 2])) < SIDE_POSE_MAX_DOWN:  # a level (side) pose
+            z += self.side_z_offset
         return (float(x), float(y), float(z))
 
     def ik(self, target: Vec3, seed: Sequence[float], approach: str = "down",
            keep_tilt: bool = False) -> Optional[List[float]]:
         if approach not in APPROACHES:
             raise ValueError(f"approach must be one of {APPROACHES}, got {approach!r}")
+        if approach == "side" and self.side_z_offset:  # aim the model lower so the real tip lands on target
+            target = (target[0], target[1], target[2] - self.side_z_offset)
         target_arr = self._np.asarray(target, dtype=float) + self._origin  # robot frame -> URDF base_link
         self._pos_task.target_world = target_arr
         self._col, self._axis = self._approach_axis(approach)

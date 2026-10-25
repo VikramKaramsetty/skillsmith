@@ -20,7 +20,7 @@ if TYPE_CHECKING:
     from skillsmith.hal.base import Env
 
 # approach_side (side grasp, gripper level). Measured in the MuJoCo sim on the tapered demo cup.
-SIDE_GRIP_BELOW_TOP = 0.015  # m; default grip height under the object's top (narrow end; reaches nearer)
+SIDE_GRIP_BELOW_TOP = 0.025  # m; default grip height under the object's top (deep enough to hold it)
 SIDE_STANDOFF = 0.06        # m; the level jaws start this far short of the object, then slide in
 SIDE_STANDOFF_MARGIN = 0.01  # m; ...and never closer than its radius + this
 SIDE_HOVER = 0.03           # m; open jaws come in level this far above the object's top, then go down

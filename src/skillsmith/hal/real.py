@@ -180,6 +180,7 @@ def make_real_env(cfg, bus: Optional[EventBus] = None):
     try:
         arm.joints()  # fail at startup, with the start command, if robotd is not up
         kin = make_kinematics(cfg)
+        kin.side_z_offset = float(cfg.robot.get("side_z_offset", 0.0))  # real-arm level-pose height error
         frames = make_frame_source(cfg, FRONT_CAM)
         built.append(frames)
         perception = WorldModel(cfg, frame_source=frames, kinematics=kin, arm=arm, bus=bus)

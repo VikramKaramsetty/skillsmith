@@ -119,7 +119,7 @@ pointing straight down, or LEVEL (parallel to the table) after `robot.approach_s
 (7.6 cm on the table, 5.1 cm at the top), 9.5 cm tall. Top-down grips miss it. Use:
 
 ```python
-robot.approach_side(obj)        # reach in from the side at 1.5 cm under its top, jaws open
+robot.approach_side(obj)        # reach in from the side, 2.5 cm under its top (leave grip_z unset)
 if not robot.grasp():
     raise SkillError("side grasp missed")
 held_z = robot.position()[2]
