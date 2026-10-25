@@ -10,7 +10,10 @@ robot:
   # Calibration zero vs URDF zero, added by robotd to every reading (model = raw + offset). Fitted
   # 2026-10-25 on Rohan's Mac from 9 jaw-tip touches on the printed mat (T1-T5, markers 0-3):
   # 0.3 cm mean / 0.4 cm max error after, 4.9 cm before. Redo after any lerobot-calibrate (runs/fit_offsets.py).
-  joint_offsets_deg: [2.32, -3.0, -4.96, -0.64, 0.0, 0.0]
+  # wrist_roll -90 (2026-10-25): raw roll 0 opens the jaws sideways with the wrist camera on top, which is URDF
+  # roll -90. The tip fit used the fixed jaw tip, which hardly moves with roll, so it never showed; side grasps
+  # opened the jaws up/down and drove the moving jaw into the table.
+  joint_offsets_deg: [2.32, -3.0, -4.96, -0.64, -90.0, 0.0]
   position_p_gain: 32                # servo stiffness (LeRobot default 16 let the elbow sag 2.3 deg at reach)
   joint_names: [shoulder_pan, shoulder_lift, elbow_flex, wrist_flex, wrist_roll, gripper]
   urdf: assets/so101/so101_new_calib.urdf      # WS2 vendors this from TheRobotStudio SO-ARM100
