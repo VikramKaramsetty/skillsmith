@@ -375,6 +375,18 @@ def _collision_hint(phase: Optional[str]) -> str:
     }.get(phase or "", "the trace: the tip path against the other objects and the table")
 
 
+def _too_near(f: _Facts) -> Optional[Classification]:
+    """A side grasp (or the skill itself) saying the object must move outward: the table needs fixing,
+    not the code, so no Droid round is spent on it."""
+    if f.kind not in ("Unreachable", "SkillError"):
+        return None
+    m = f.message.lower()
+    if "outward" not in m or ("from the base" not in m and "too near" not in m):
+        return None
+    return _label(f, "OBJECT_OUT_OF_REACH", f.stop, f.message,
+                  "move the object farther from the base (side grasps need about 0.28 m)")
+
+
 def _refused(f: _Facts) -> Optional[Classification]:
     if f.kind not in ("SafetyViolation", "Unreachable"):
         return None
@@ -582,7 +594,8 @@ def _after(a: AttemptResult, obj: Optional[SceneObject]) -> Optional[SceneObject
 # ---- entry point --------------------------------------------------------------------------
 
 RULES: Sequence[Callable[[_Facts], Optional[Classification]]] = (
-    _static, _hardware, _gate, _timeout, _code_error, _bump, _carry_path, _collision, _refused, _not_found,
+    _static, _hardware, _gate, _timeout, _code_error, _bump, _carry_path, _collision, _too_near, _refused,
+    _not_found,
     _grasp_miss, _no_pick, _slip, _place,
 )
 

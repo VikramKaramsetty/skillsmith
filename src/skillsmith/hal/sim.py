@@ -263,7 +263,7 @@ class SimArm:
             if self._arrived(goal):
                 return
             self._step()
-        if not self._arrived(goal):
+        if not self._arrived(goal) and not self._near(goal):  # within SETTLE_DEG but still jittering = there
             worst = max(range(5), key=lambda i: abs(self.joints()[i] - goal[i]))
             raise SkillError(f"sim arm did not reach its target: {self._arm_joints[worst]} is "
                              f"{abs(self.joints()[worst] - goal[worst]):.1f} deg off after {SETTLE_S} s")
@@ -348,6 +348,9 @@ class SimArm:
         q = self.joints()
         slow = all(abs(float(self.data.qvel[d])) < math.radians(5.0) for d in self._dadr)
         return slow and all(abs(a - b) < SETTLE_DEG for a, b in zip(q, goal))
+
+    def _near(self, goal: Sequence[float]) -> bool:
+        return all(abs(a - b) < SETTLE_DEG for a, b in zip(self.joints(), goal))
 
     def _check_limits(self, goal: Sequence[float]) -> None:
         for name, v in zip(self._arm_joints, goal):
