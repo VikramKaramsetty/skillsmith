@@ -273,3 +273,19 @@ def test_a_cup_moved_by_hand_before_an_attempt_is_not_a_bump_of_it():
     for _ in range(5):
         world.step()
     assert "moved" in (world.unexpected_motion() or "")
+
+
+def test_a_lifted_held_cup_is_neither_a_new_cup_nor_a_bump_and_survives_a_holding_flicker():
+    det = FakeDetector([cup("red", 0.29, 0.0)])
+    arm = FakeArm(tip=(0.31, 0.0, 0.07))
+    world = make_world(detector=det, arm=arm)
+    world.step()
+    arm.holding = True
+    world.step()  # grabbed: 2 cm from the tip
+    det.dets = [cup("red", 0.33, 0.0)]  # lifted: its top is higher than the localiser assumes, so it lands off
+    arm.move_tip(0.31, 0.0, 0.12)
+    for k in range(4):
+        arm.holding = k != 1  # one flicker mid-lift
+        world.step()
+    assert world.unexpected_motion() is None
+    assert len(world.observe().objects) == 1
