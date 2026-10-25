@@ -36,6 +36,8 @@ SWING_CLEARANCE = 0.06      # m; the gripper turns between down and level at lea
 NEAR_DPS = 12.0             # deg/s; joint speed cap for approach_side's moves next to the object (descent,
 #                             slide, close-up): a 1.7 cm tip step swung shoulder+wrist 19 deg at 57 deg/s and
 #                             shoved the cup on the real arm
+DEFAULT_TILT_CAP_DEG = 10.0  # kinematics.SIDE_MAX_TILT_DEG: the side solve's tilt cap when none is given
+HELD_TILT_SLACK_DEG = 3.0  # carrying, the cap sits this far above the tilt the object was gripped with
 MAX_STEP_JUMP_DEG = 25.0    # a non-turning waypoint moving any joint more than this = IK branch flip, refused
 PUSH_TOL = 0.015            # m; the camera seeing the object this far from where the approach planned = pushed
 PUSH_TOL_OVER = 0.04        # m; push tolerance when the gripper is over the object (occludes its top)
@@ -248,7 +250,11 @@ class Robot:
             return self._env.kin.ik(p, seed)
         if getattr(self._env.kin, "tool_axis", None) is None:  # fake world / doubles: plain side solve
             return self._env.kin.ik(p, seed, approach="side")
-        return self._env.kin.ik(p, seed, approach="side", keep_tilt=hold, side_max_tilt=self._tilt_cap)
+        cap = self._tilt_cap
+        if hold:  # keep_tilt holds the tilt it gripped with, so the cap must allow it: an 11 deg grip under the
+            down = max(-1.0, min(1.0, -self._env.kin.tool_axis(seed, "z")[2]))  # 10 deg default had no solution
+            cap = max(cap if cap is not None else DEFAULT_TILT_CAP_DEG, math.degrees(math.asin(down)) + HELD_TILT_SLACK_DEG)
+        return self._env.kin.ik(p, seed, approach="side", keep_tilt=hold, side_max_tilt=cap)
 
     def _axis_or(self, q, name: str, fallback: Vec3) -> Vec3:
         axis = getattr(self._env.kin, "tool_axis", None)
@@ -454,7 +460,7 @@ class Robot:
             raise Unreachable(f"({target[0]:.3f}, {target[1]:.3f}) is {math.hypot(target[0], target[1]):.3f} m "
                               f"from the base: with the gripper level it must stay {SIDE_MIN_REACH:.2f} m or more out")
         turning = want != level
-        hold = want and not turning and self._env.arm.gripper_holding()
+        hold = want and not turning  # keep the tilt on any level move: a cap under the current tilt flips the branch
         prev = seed  # each waypoint is solved from the previous solution (like _descent_ok), not the measured
         for wp in self._waypoints(self._tip(), target, straight=want and not turning):  # joints: near a limit,
             seed = prev if prev is not None else self._env.arm.joints()                  # sag can flip the branch

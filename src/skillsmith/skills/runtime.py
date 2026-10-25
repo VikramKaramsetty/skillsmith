@@ -173,7 +173,8 @@ def run_skill(source: str, env, params: dict, cfg, bus: EventBus, *, skill: str,
     result = AttemptResult(ok=ok, env=env.name, skill=skill, version=version, trace=robot.trace,
                            error=error, verify=verify, safety=safety, scene_before=scene_before,
                            scene_after=scene_after, duration_s=round(duration, 3),
-                           video_path=getattr(env.arm, "last_video_path", None))
+                           video_path=getattr(env.arm, "last_video_path", None),
+                           held_at_stop=not ok and _still_holding(robot))
     _analyse(result, cfg, bus, None if result.ok else _perception_gate(env, bus), robot=robot, env=env)
     bus.emit("attempt.finished", env=env.name, skill=skill, version=version, ok=ok,
              error=error, duration_s=result.duration_s, reason=result.reason())
@@ -262,6 +263,13 @@ def _reset_perception_gate(env, bus: EventBus) -> None:
         reset()
     except Exception as e:  # the attempt still runs; perception_ok() afterwards judges the scene
         bus.emit("error", where="perception.reset_gate", message=repr(e))
+
+
+def _still_holding(robot) -> bool:
+    try:
+        return bool(robot.holding())
+    except Exception:  # an arm that cannot answer is not holding as far as the gate goes
+        return False
 
 
 def _perception_gate(env, bus: EventBus) -> Optional[Tuple[bool, str]]:

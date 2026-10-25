@@ -160,12 +160,19 @@ def _hardware(f: _Facts) -> Optional[Classification]:
 
 
 def _gate(f: _Facts) -> Optional[Classification]:
-    """Perception we cannot trust: environment, never a skill label."""
+    """Perception we cannot trust: environment, never a skill label. A moved camera always counts; doubt
+    about detections does not while the arm holds a cup: the jaws hide part of it, so a low score or a
+    vanished track is the grip, not doubt about the table (the cup is in the jaws: we know where it is)."""
     a = f.attempt
+    holding = a.held_at_stop
     if f.perception is not None and not f.perception[0]:
         reason = f.perception[1] or "perception check failed"
+        if holding and _gate_class(reason)[0] == "PERCEPTION_UNCERTAIN":
+            return None
         cls, hint = _gate_class(reason)
         return _label(f, cls, f.stop, f"perception gate failed: {reason}", hint, perception=reason)
+    if holding:
+        return None
     floor = f.setting("world", "min_confidence", MIN_DETECTION)
     low = [o for s in (a.scene_before, a.scene_after) if s for o in s.objects if o.confidence < floor]
     if low:

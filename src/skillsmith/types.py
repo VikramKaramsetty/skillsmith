@@ -168,6 +168,7 @@ class AttemptResult:
     phases: list = field(default_factory=list)  # list[PhaseCheck], from analysis.analyse_attempt
     classification: Optional[Classification] = None
     keyframes: dict = field(default_factory=dict)  # phase -> annotated image path
+    held_at_stop: bool = False  # the arm still held an object when the attempt ended (real/sim arms)
 
     def reason(self) -> str:
         """One line on why the attempt failed (or 'ok'). The classification leads when present."""

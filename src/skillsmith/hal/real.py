@@ -44,7 +44,7 @@ from skillsmith.perception.frames import TOKEN_ENV, TOKEN_HEADER
 
 N_JOINTS = 6
 FRONT_CAM = "front"
-HOLD_PUSH_LOAD = 100.0  # gripper load: jaws stopped short of the command AND pushing this hard = on the object
+HOLD_PUSH_LOAD = 50.0  # gripper load: jaws stopped short of the command AND pushing this hard = on the object
 HOLD_WIDE_GAP = 4.0  # gripper %; jaws this far short of a commanded close hold something (empty closes to ~1.6)
 START_HINT = "a human starts it: ~/robot/.venv/bin/python -m robotd --port 8100 (docs/RUNBOOK.md)"
 
