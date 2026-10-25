@@ -21,11 +21,12 @@ and `config/robot.yaml` (workspace box, reach 8–33 cm).
 
 - Foam board or stiff card (A4/Letter, 2 pieces), spray adhesive or a glue stick
 - Painter's tape (masking tape), a craft knife + steel ruler, a tape measure
-- **Overhead USB webcam**, 1080p, ideally with manual focus (e.g. Logitech C920/C922), plugged into the GX10
-- **A mount that holds it 60–80 cm above the table, looking straight down**: an overhead phone/camera
-  arm with a desk clamp, a C-stand or boom tripod, or a bar across two stands. It must not wobble.
-- Cups that don't nest: a small **blue** cup and a **red** cup (upturned), about 6.5 cm across, matte
-  if possible. A block as a spare. Check the cup fits the gripper's jaw opening.
+- **An overhead phone mount for the iPhone** (the overhead camera, via Continuity Camera): it must hold
+  the phone in landscape 60–80 cm above the table, looking straight down, without wobbling. An
+  overhead phone arm with a desk clamp, a boom tripod, or a bar across two stands all work.
+- A USB cable from the iPhone to the Mac (steadier than wireless) and power for the phone
+- Cups, about 6.5 cm across, matte if possible. A block as a spare. Check the cup fits the gripper's
+  jaw opening.
 - A diffuse light (a desk lamp bounced off a wall works); no hard shadows or glare on the cups
 
 ## 1. Make the table mat
@@ -45,7 +46,8 @@ What's on the mat:
 - The **workspace box** and the 8 cm / 33 cm **reach circles** (dashed): the arm stays inside these
 - **MARKER 0–3** boxes: where the ArUco markers go
 - **T1–T5** crosses: the accuracy-test marks (WS3.9, issue #89)
-- Dashed circles: where the **blue cup** and **red cup** start in the demo
+
+There are no cup spots: the camera finds the cups wherever they are.
 
 ## 2. Make the markers
 
@@ -62,14 +64,16 @@ What's on the mat:
    real size to the calibration as `--square <metres per square>`.
 2. Glue it flat onto foam board with no bubbles. A bent board ruins the calibration.
 
-## 4. Mount the overhead camera
+## 4. Mount the overhead camera (iPhone)
 
-1. Mount the webcam **60–80 cm above the table**, looking straight down, roughly over the centre
-   of the cups (about x = 21 cm, y = 0 on the mat). The whole mat should be in view, all four
-   markers clearly visible, and the arm should never hit the camera, even fully raised.
-2. Turn off autofocus and autoexposure if the camera allows it (focus changes break the calibration).
-3. Tape or zip-tie everything. **Any bump means redoing step 6.**
-4. Plug it into the GX10. Only robotd opens it. Point `cameras.front` at it (lead's config change).
+1. Mount the iPhone in **landscape, 60–80 cm above the table**, looking straight down, roughly over
+   the middle of the workspace (about x = 21 cm, y = 0 on the mat). The whole mat should be in view,
+   all four markers clearly visible, and the arm should never hit the phone, even fully raised.
+2. Lock the phone, keep it on power, and connect it to the Mac by USB if you can. Turn the
+   Continuity Camera **video effects off** in Control Center (Center Stage, Portrait, Studio Light,
+   Desk View): they crop and zoom, which breaks the calibration.
+3. Tape or clamp everything. **Any bump means redoing step 6.**
+4. robotd on the Mac opens it as `name:iPhone`. See `docs/RUNBOOK.md` → "iPhone overhead camera".
 
 ## 5. Check the arm first (hardware, human only)
 
@@ -103,7 +107,7 @@ within 1 cm of the printed coordinates.
 
 ## 8. Demo layout
 
-- Blue cup on its dashed circle (right of centre, y = −8 cm); red cup **upside down** on its circle
-  (y = +8 cm).
+- Put the cups anywhere inside the dashed workspace box, not covering a marker and with room for
+  the gripper between them.
 - Nothing else on the mat. Cables and hands stay out of the camera's view.
 - Before going on: `calibrate_camera.py --check` says OK, and the dashboard shows both cups.

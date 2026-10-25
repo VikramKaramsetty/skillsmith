@@ -25,8 +25,6 @@ from reportlab.pdfgen import canvas
 OUT = Path(__file__).resolve().parent
 GREY = Color(0.62, 0.62, 0.62)
 LIGHT = Color(0.85, 0.85, 0.85)
-BLUE = Color(0.15, 0.35, 0.75)
-RED = Color(0.8, 0.15, 0.15)
 
 PATTERN = (9, 6)            # inner corners
 SQUARE_MM = 25.0
@@ -42,8 +40,6 @@ WORKSPACE_Y = (-0.20, 0.20)
 MIN_REACH, MAX_REACH = 0.08, 0.33
 MAT_MARKERS = {0: (0.10, -0.18), 1: (0.29, -0.14), 2: (0.29, 0.14), 3: (0.10, 0.18)}
 ACCURACY_MARKS = {1: (0.22, 0.0), 2: (0.15, -0.10), 3: (0.15, 0.10), 4: (0.28, -0.10), 5: (0.28, 0.10)}
-DEMO_CUPS = {"blue cup": ((0.22, -0.08), BLUE), "red cup (upside down)": ((0.22, 0.08), RED)}
-CUP_DIAMETER = 0.065
 
 
 def scale_bar(c, x, y, length_mm=100):
@@ -222,17 +218,6 @@ def draw_targets(c):
         c.drawString(u + 1.5 * mm, v + 1.5 * mm, f"T{k}")
         c.setFont("Helvetica", 5.5)
         c.drawString(u + 1.5 * mm, v - 3.5 * mm, f"({x * 100:.0f},{y * 100:.0f})")
-    for name, ((x, y), col) in DEMO_CUPS.items():
-        u, v = to_mat(x, y)
-        c.setStrokeColor(col)
-        c.setLineWidth(0.8)
-        c.setDash(3, 2)
-        c.circle(u, v, CUP_DIAMETER / 2 * 1000 * mm, stroke=1, fill=0)
-        c.setDash()
-        c.setFillColor(col)
-        c.setFont("Helvetica", 6.5)
-        c.drawCentredString(u, v - (CUP_DIAMETER / 2 * 1000 + 4) * mm, f"demo: {name}")
-        c.setFillColor(black)
     c.setStrokeColor(black)
 
 
@@ -240,15 +225,20 @@ def draw_mat(c):
     w, h = mat_size_pts()
     c.setLineWidth(0.5)
     c.rect(0, 0, w, h, stroke=1, fill=0)
+    c.saveState()
+    edge = c.beginPath()
+    edge.rect(0, 0, w, h)
+    c.clipPath(edge, stroke=0, fill=0)  # the reach circles run past the mat edge
     draw_grid(c, w, h)
     draw_workspace(c)
     draw_origin(c)
     draw_marker_spots(c)
     draw_targets(c)
+    c.restoreState()
     c.setFont("Helvetica-Bold", 9)
     c.drawRightString(w - 4 * mm, 16 * mm, "Skillsmith table mat · 1:1 · robot frame (cm)")
     c.setFont("Helvetica", 6.5)
-    c.drawRightString(w - 4 * mm, 12 * mm, "T1-T5: accuracy marks (WS3.9) · dashed circles: demo cup start spots")
+    c.drawRightString(w - 4 * mm, 12 * mm, "T1-T5: accuracy marks (WS3.9) · cups can go anywhere inside the workspace")
     c.drawRightString(w - 4 * mm, 8.5 * mm, "Grid squares are 5 cm: measure one to check the print scale")
 
 
