@@ -181,39 +181,63 @@ def run_skill(source: str, env, params: dict, cfg, bus: EventBus, *, skill: str,
 
 
 def _attach_keyframes(result: AttemptResult, robot, env, bus: EventBus) -> None:
-    """One annotated picture per phase, from the frames the robot captured after each motion call:
-    the overhead view (objects boxed, gripper tip and the call's target drawn) beside the wrist view.
-    This is what Droid sees of the attempt (report + attached images), so it can reason about a cup
-    knocked over or squeezed out, not just read numbers. Never fails the attempt."""
+    """One labelled picture per phase, from the frames the robot captured after each motion call, for
+    Droid (report + attached images) and the dashboard. Overhead: every object boxed where it is now,
+    a crosshair where the attempt expected the handled object and an arrow to where it ended up
+    ("moved X cm"), the gripper tip with its height. Wrist view beside it, labelled with the jaw opening.
+    A caption strip underneath: phase and verdict, failure class, the call that ran, the classifier's
+    summary and hint, and the error. Never fails the attempt."""
     captures = getattr(robot, "captures", None)
     run_dir = getattr(bus, "run_dir", None)
     if not captures or run_dir is None:
         return
     try:
-        from skillsmith.perception.annotate import annotate_keyframe, side_by_side, write_image
+        import math as _m
+
+        from skillsmith.perception.annotate import annotate_keyframe, caption_strip, side_by_side, write_image
 
         camera = getattr(env.perception, "camera", None)
-        scene = result.scene_after or result.scene_before
+        before, after = result.scene_before, result.scene_after or result.scene_before
         calls = {c.index: c for c in result.trace}
-        cls = result.classification.cls if result.classification else ("ok" if result.ok else "")
+        cl = result.classification
+        verdict = cl.cls if cl else ("ok" if result.ok else "")
         for phase in result.phases:
             idx = max((i for i in captures if phase.start_index <= i <= phase.end_index), default=None)
             if idx is None:
                 continue
-            front, wrist, tip = captures[idx]
+            front, wrist, tip, grip = (list(captures[idx]) + [None])[:4]
             call = calls.get(idx)
-            target = None
-            if call is not None and all(k in call.args for k in "xyz"):
-                target = (call.args["x"], call.args["y"], call.args["z"])
-            title = f"{phase.phase} {'ok' if phase.ok else 'FAIL'} · {cls} · after {call.name if call else '?'}"
-            img = None
-            if front is not None:
-                img = annotate_keyframe(front, scene, camera,
-                                        {"gripper": tuple(tip), "target": target, "title": title[:80]})
+            name = call.args.get("obj") if call is not None else None
+            if not name and cl is not None:
+                name = (cl.evidence or {}).get("object")
+            obj0 = before.find(name) if (before is not None and name) else None
+            obj1 = after.find(name) if (after is not None and name) else None
+            overlays = {"gripper": tuple(tip), "title": ""}
+            moved = None
+            if obj0 is not None and obj1 is not None:
+                overlays["target"] = (obj0.x, obj0.y, obj0.top)
+                overlays["actual"] = (obj1.x, obj1.y, obj1.top)
+                moved = _m.hypot(obj1.x - obj0.x, obj1.y - obj0.y)
+                overlays["error_cm"] = round(moved * 100, 1)
+            img = annotate_keyframe(front, after, camera, overlays) if front is not None else None
+            jaw = "" if grip is None else f"jaws {grip:.0f}% open"
             if wrist is not None:
-                img = wrist if img is None else side_by_side(img, wrist, ("overhead", "wrist"), height=360)
+                img = wrist if img is None else side_by_side(
+                    img, wrist, (f"overhead (tip z={tip[2] * 100:.1f} cm)", f"wrist camera {jaw}"), height=420)
             if img is None:
                 continue
+            args = "" if call is None else ", ".join(f"{k}={v}" for k, v in call.args.items() if v is not None)
+            lines = [f"PHASE {phase.phase.upper()}: {'OK' if phase.ok else 'FAILED'}  |  attempt: {verdict}"
+                     f"  |  after call #{idx} {call.name if call else '?'}({args})",
+                     f"phase check: {phase.detail}"]
+            if moved is not None and name:
+                lines.append(f"{name}: expected at ({obj0.x:.3f}, {obj0.y:.3f}) [crosshair], now at ({obj1.x:.3f}, "
+                             f"{obj1.y:.3f}) [arrow], moved {moved * 100:.1f} cm")
+            if cl is not None:
+                lines += [f"why: {cl.summary}", f"look at: {cl.hint}"]
+            if result.error:
+                lines.append(f"error: {result.error}")
+            img = caption_strip(img, lines)
             path = write_image(Path(run_dir) / "frames" / f"{result.env}_v{result.version}_{int(time.time())}_"
                                                           f"{phase.phase}.jpg", img)
             phase.frame_path = path

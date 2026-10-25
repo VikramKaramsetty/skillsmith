@@ -26,7 +26,7 @@ SIDE_GRASP_DEPTH = 0.025    # m; the grasp point (fingertips) ends this far PAST
 #                             attaches on contact, so it never showed)
 SIDE_GRASP_DEPTH_MIN = 0.015  # m; shallower near the reach limit, never less than this
 SIDE_STANDOFF = 0.06        # m; the level jaws start this far short of the object, then slide in
-SIDE_STANDOFF_MARGIN = 0.01  # m; ...and never closer than its radius + this
+SIDE_STANDOFF_MARGIN = 0.02  # m; ...and never closer than its radius + this (1 cm let the descent clip the cup)
 SIDE_HOVER = 0.03           # m; open jaws come in level this far above the object's top, then go down
 JAW_CENTRE_SHIFT = 0.03     # m; descend this far along +tool x, then slide back (sim: 0..6 cm pass, -2.5 hits)
 SIDE_MIN_REACH = 0.18       # m from the base axis; nearer, a side pose folds the arm into itself (sim)
@@ -187,7 +187,11 @@ class Robot:
         except Exception:
             return
         if front is not None or wrist is not None:
-            self.captures[index] = (front, wrist, tip)
+            try:
+                grip = float(self._env.arm.joints()[5])
+            except Exception:
+                grip = None
+            self.captures[index] = (front, wrist, tip, grip)
 
     def _close_pct(self) -> float:
         """Where grasp() closes the jaws: robot.gripper_closed_by_kind for the object the last approach
