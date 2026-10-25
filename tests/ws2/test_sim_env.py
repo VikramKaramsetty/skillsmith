@@ -84,7 +84,7 @@ def _run(e, source: str, skill: str, params: dict, success=None):
     return run_skill(source, e, params, CFG, _Bus(), skill=skill, library=library, success=success)
 
 
-def test_env_starts_at_home_with_the_scene():
+def test_env_starts_at_home_with_the_scene(tmp_path):
     env = make_env("sim", CFG)
     assert env.name == "sim" and env.arm.name == "sim" and env.perception is env.arm
     assert env.kin.fk(env.arm.joints()) == pytest.approx(tuple(CFG.robot.home_xyz), abs=0.005)
@@ -96,7 +96,8 @@ def test_env_starts_at_home_with_the_scene():
         got = seen.find(obj.id)
         assert got.xy_dist(obj) < 1e-3 and abs(got.z - obj.z) < 1e-3
     assert env.arm.safety_issues() == [] and env.arm.gripper_holding() is False
-    assert env.perception.snapshot("x.png") is None  # frames and video arrive with WS2.5
+    snap = tmp_path / "x.png"
+    assert env.perception.snapshot(str(snap)) == str(snap) and snap.is_file()  # WS2.5 overhead render
 
 
 def test_kinematic_tip_is_the_grasp_point_between_the_jaws(env):
