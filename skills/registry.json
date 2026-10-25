@@ -1,7 +1,7 @@
 {
   "pick_place": {
     "file": "pick_place.py",
-    "successes": 0,
+    "successes": 1,
     "uses": [],
     "version": 1
   }
