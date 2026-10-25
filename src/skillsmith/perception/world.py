@@ -11,8 +11,19 @@ Contract (docs/ARCHITECTURE.md "Perception and world state"):
   not held". The Robot raises WorldChanged on it before the next motion.
 - `perception_ok() -> (bool, str)`: the confidence gate (markers still where calibrated,
   detection confidence, object count stable). The classifier uses it. (WS3.6)
-- `align_offset(obj) -> (dx, dy)`: wrist-camera fine correction in metres, used by robot.align_over. (WS3.7)
-- `holding_check() -> (bool, str)`: wrist-camera post-grasp check. (WS3.7)
+- `align_offset(obj) -> (dx, dy)`: wrist-camera fine correction in metres (base frame), used by
+  robot.align_over. Delegates to `perception.wrist`: one wrist frame from robotd, tool yaw from the arm
+  joints (`wrist.tool_yaw_deg`, or the injected `tool_yaw()`), camera-to-object distance = tip z +
+  `wrist.cam_height` - obj.top. NEVER raises: no wrist camera, no frame, cv2 missing, no blob or
+  confidence under `wrist.min_align_confidence` -> (0.0, 0.0) plus one `error` event (where
+  "perception.wrist"), so the skill degrades to the coarse overhead alignment. A good result emits a
+  `note` (where "perception.wrist", dx, dy, confidence, reason). (WS3.7)
+- `holding_check() -> (bool, str)`: wrist-camera post-grasp check on the held object's colour (any
+  saturated colour when nothing is tracked as held). NEVER raises: when the wrist camera cannot judge
+  (unavailable, failing, or too dark) it emits one `error` event and falls back to the gripper signal
+  (`arm.gripper_holding()`), saying so in the reason; with no arm either it answers (False, why). (WS3.7)
+- The wrist source: `wrist_frames=` when given; otherwise robotd's "wrist" camera (same robotd URL as the
+  front camera) when the front source is robotd's (the real env), else none (fakes, MockCamera).
 - `snapshot(path)`: save the latest frame for evidence.
 - Reads frames ONLY through robotd (it owns the cameras).
 
@@ -77,6 +88,13 @@ LOST_S = 5.0  # s of updates a baseline object may stay unseen before it counts 
 ARM_RADIUS = 0.08  # m; uncertain detections this close to the tip are the arm's occlusion, not doubt
 
 
+_AUTO = object()  # WorldModel(wrist_frames=...) default: robotd's wrist camera when the front one is robotd's
+
+
+class WristUnusable(RuntimeError):
+    """The wrist camera gave no usable answer (no camera, no blob, low confidence, too dark)."""
+
+
 @dataclass
 class _Track:
     obj: SceneObject
@@ -89,7 +107,9 @@ class _Track:
 class WorldModel:
     def __init__(self, cfg, frame_source=None, kinematics=None, arm=None, *, detector=None,
                  camera=None, bus: Optional[EventBus] = None,
-                 decode: Optional[Callable[[Any], Any]] = None):
+                 decode: Optional[Callable[[Any], Any]] = None, wrist_frames: Any = _AUTO,
+                 wrist_decode: Optional[Callable[[Any], Any]] = None,
+                 tool_yaw: Optional[Callable[[], float]] = None):
         world = cfg.get("world")
         self.rate_hz = float(_opt(world, "rate_hz", 12))
         self.bump_threshold = float(_opt(world, "bump_threshold", 0.01))
@@ -111,6 +131,10 @@ class WorldModel:
         self.arm = arm
         self.bus = bus if bus is not None else NullBus()
         self._decode = decode if decode is not None else (lambda frame: frame.bgr())
+        self.cfg = cfg
+        self.wrist_frames = _default_wrist_frames(cfg, frame_source) if wrist_frames is _AUTO else wrist_frames
+        self._wrist_decode = wrist_decode if wrist_decode is not None else (lambda frame: frame.bgr())
+        self._tool_yaw = tool_yaw
 
         self._lock = threading.Lock()
         self._tracks: Dict[str, _Track] = {}
@@ -181,10 +205,45 @@ class WorldModel:
             self._low_conf, self._low_conf_run = None, 0
 
     def align_offset(self, obj: SceneObject) -> Tuple[float, float]:
-        raise NotImplementedError("WS3.7")
+        """Wrist-camera fine correction (dx, dy) in metres, base frame. (0.0, 0.0) on any failure."""
+        try:
+            from skillsmith.perception import wrist
+
+            wc = wrist.WristConfig.from_cfg(self.cfg)
+            image = self._wrist_image()
+            result = wrist.fine_offset(image, obj.color or None, wc, self._wrist_distance(obj, wc))
+            if not result.found:
+                raise WristUnusable(result.reason)
+            if result.confidence < wc.min_align_confidence:
+                raise WristUnusable(f"low confidence {result.confidence:.2f} "
+                                    f"(< {wc.min_align_confidence:.2f}): {result.reason}")
+            dx, dy = wrist.tool_to_base(result.dx, result.dy, self._yaw(wc))
+            dx, dy = round(dx, 4), round(dy, 4)
+        except Exception as e:
+            self._wrist_error(f"align_offset({obj.id}) -> (0, 0), coarse alignment only: {_why(e)}")
+            return 0.0, 0.0
+        self.bus.emit("note", text=f"wrist align {obj.id}: {dx * 100:+.1f}, {dy * 100:+.1f} cm "
+                      f"(confidence {result.confidence:.2f})", where="perception.wrist", obj=obj.id,
+                      dx=dx, dy=dy, confidence=result.confidence, reason=result.reason)
+        return dx, dy
 
     def holding_check(self) -> Tuple[bool, str]:
-        raise NotImplementedError("WS3.7")
+        """Wrist-camera grasp check; falls back to the gripper signal when the camera cannot judge."""
+        try:
+            from skillsmith.perception import wrist
+
+            result = wrist.check_holding(self._wrist_image(), self._held_color(), self.cfg)
+            if result.confidence <= 0.0:
+                raise WristUnusable(result.reason)
+        except Exception as e:
+            why = _why(e)
+            held, fallback = self._gripper_fallback()
+            self._wrist_error(f"holding_check: {why}; {fallback}")
+            return held, f"wrist camera could not judge ({why}); {fallback}"
+        reason = f"wrist camera: {result.reason} (confidence {result.confidence:.2f})"
+        self.bus.emit("note", text=reason, where="perception.wrist", holding=result.holding,
+                      confidence=result.confidence, fill=result.fill)
+        return result.holding, reason
 
     def snapshot(self, path: str) -> Optional[str]:
         with self._lock:
@@ -210,9 +269,10 @@ class WorldModel:
         if self._thread is not None:
             self._thread.join(timeout=2.0)
             self._thread = None
-        close = getattr(self.frames, "close", None)
-        if callable(close):
-            close()
+        for source in (self.frames, self.wrist_frames):
+            close = getattr(source, "close", None)
+            if callable(close):
+                close()
 
     def rate(self) -> float:
         """Achieved update rate in Hz over the recent steps (0 until two steps ran)."""
@@ -271,6 +331,49 @@ class WorldModel:
             return None, False
         tip = tuple(float(v) for v in self.kin.fk(self.arm.joints()))
         return tip, bool(self.arm.gripper_holding())
+
+    # ---- wrist camera (WS3.7) -------------------------------------------------------------
+    def _wrist_image(self) -> Any:
+        if self.wrist_frames is None:
+            raise WristUnusable("no wrist camera configured")
+        return self._wrist_decode(self.wrist_frames.read())
+
+    def _wrist_distance(self, obj: SceneObject, wc: Any) -> Optional[float]:
+        """Camera-to-object-top distance (m), or None (wrist.ref_distance scale) without arm + FK."""
+        if self.arm is None or self.kin is None:
+            return None
+        tip_z = float(self.kin.fk(self.arm.joints())[2])
+        distance = tip_z + wc.cam_height - obj.top
+        return distance if distance > 0 else None
+
+    def _yaw(self, wc: Any) -> float:
+        if self._tool_yaw is not None:
+            return float(self._tool_yaw())
+        if self.arm is None:
+            return 0.0
+        from skillsmith.perception.wrist import tool_yaw_deg
+
+        return tool_yaw_deg(self.arm.joints(), wc)
+
+    def _held_color(self) -> Optional[str]:
+        with self._lock:
+            track = self._tracks.get(self._held) if self._held is not None else None
+        return (track.obj.color or None) if track is not None else None
+
+    def _gripper_fallback(self) -> Tuple[bool, str]:
+        if self.arm is None:
+            return False, "no gripper signal either, so not confirmed as holding"
+        try:
+            held = bool(self.arm.gripper_holding())
+        except Exception as e:
+            return False, f"gripper signal failed too ({_why(e)}), so not confirmed as holding"
+        return held, f"fell back to the gripper signal: {'holding' if held else 'not holding'}"
+
+    def _wrist_error(self, message: str) -> None:
+        try:
+            self.bus.emit("error", where="perception.wrist", message=message)
+        except Exception:
+            pass  # an event sink failing must not turn a degraded alignment into a crash
 
     # ---- held object --------------------------------------------------------------------
     def _update_held(self, tip: Optional[Vec3], holding: bool) -> None:
@@ -484,6 +587,22 @@ def _default_frames(cfg):
     from skillsmith.perception.frames import make_frame_source
 
     return make_frame_source(cfg, "front")
+
+
+def _default_wrist_frames(cfg, front: Any) -> Any:
+    """robotd's wrist camera when the front frames come from robotd (or default to it); else None."""
+    from skillsmith.perception.frames import RobotdFrames, make_frame_source
+
+    if front is not None and not isinstance(front, RobotdFrames):
+        return None
+    try:
+        return make_frame_source(cfg, "wrist")
+    except Exception:  # no robot.robotd_url: align_offset / holding_check report "no wrist camera"
+        return None
+
+
+def _why(e: BaseException) -> str:
+    return str(e) if isinstance(e, WristUnusable) else f"{type(e).__name__}: {e}"
 
 
 def _default_detector(cfg):
