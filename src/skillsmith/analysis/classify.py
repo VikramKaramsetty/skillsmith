@@ -16,17 +16,19 @@ Rule order (first match wins):
   1 static checks rejected the skill                 STATIC_REJECTED
   2 a primitive call hit an I/O or robotd error      HARDWARE_FAULT
   3 perception gate                                  CAMERA_MOVED / CALIBRATION_DRIFT / PERCEPTION_UNCERTAIN
-  4 wall-clock timeout                               TIMEOUT
+  4 wall-clock timeout (runtime AttemptTimeout)      TIMEOUT
   5 a Python error in the skill's own code           SKILL_ERROR
   6 WorldChanged, or a not-held object moved         KNOCKED_ON_APPROACH / COLLISION / BUMPED_BY_SOMETHING_ELSE
-  7 CollisionError or a contact safety issue         COLLISION
-  8 the safety guard refused a target                OBJECT_OUT_OF_REACH (the object itself) / UNSAFE_TARGET
-  9 an object the skill or check named is not there  OBJECT_NOT_FOUND
- 10 the gripper closed empty                         GRASP_MISS
- 11 the tip reached an object and never grasped      NO_PICK
- 12 the held object was left behind before release   SLIP_IN_CARRY
- 13 released, then the success check failed          PLACE_OFF_TARGET / DROPPED_FROM_HEIGHT / PLACE_WRONG_HEIGHT
- 14 anything else                                    UNKNOWN
+  7 the carry-path guard stopped a held object      COLLISION (phase carry, hint: travel height)
+    ([CARRY_PATH] SafetyViolation or audit issue)
+  8 CollisionError or a contact safety issue         COLLISION
+  9 the safety guard refused a target                OBJECT_OUT_OF_REACH (the object itself) / UNSAFE_TARGET
+ 10 an object the skill or check named is not there  OBJECT_NOT_FOUND
+ 11 the gripper closed empty                         GRASP_MISS
+ 12 the tip reached an object and never grasped      NO_PICK
+ 13 the held object was left behind before release   SLIP_IN_CARRY
+ 14 released, then the success check failed          PLACE_OFF_TARGET / DROPPED_FROM_HEIGHT / PLACE_WRONG_HEIGHT
+ 15 anything else                                    UNKNOWN
 Not produced here: AMBIGUOUS_TASK (task parser), HUMAN_REJECTED (repair loop).
 """
 
@@ -39,6 +41,7 @@ from dataclasses import dataclass
 from typing import Callable, List, Optional, Sequence, Tuple
 
 from skillsmith.analysis.phases import DROP_TOL, MOVE_EPS, grasped
+from skillsmith.safety import CARRY_CODE
 from skillsmith.types import (
     BUCKET_SKILL,
     FAILURE_CLASSES,
@@ -60,6 +63,9 @@ RIM_FRACTION = 0.7          # gripped above this fraction of the object's height
 TOUCH = 0.015               # m; the tip (or held object) this close to an object touched it
 FAR = 0.08                  # m; never closer than this to a moved object: something else moved it
 AIM = 0.03                  # m; a refused target this close to an object's footprint was aimed at it
+CARRY_TAG = f"[{CARRY_CODE}]"  # the carry-path guard's SafetyViolation (WS4.3)
+CARRY_HINT = ("the carry: how high the held object travels over the objects it passes; its base must clear "
+              "their tops (the guard's message gives the tip z needed), or the path must go around them")
 
 HARDWARE_ERRORS = frozenset({
     "RobotdError", "FrameError", "OSError", "IOError", "ConnectionError", "ConnectionRefusedError",
@@ -212,7 +218,7 @@ def _code_error(f: _Facts) -> Optional[Classification]:
                   "the failing line of the skill", error=f.kind)
 
 
-# ---- 6-9: motion and targets ----------------------------------------------------------------
+# ---- 6-10: motion and targets ----------------------------------------------------------------
 
 def _bump(f: _Facts) -> Optional[Classification]:
     """A not-held object moved: did the arm do it (and when), or something else?"""
@@ -333,6 +339,20 @@ def _moving(call: PrimitiveCall) -> bool:
             and math.dist(call.ee_before, call.ee_after) >= MOVE_EPS)
 
 
+def _carry_path(f: _Facts) -> Optional[Classification]:
+    """The carry-path guard (WS4.3) stopped a held object before it hit something, or the audit found
+    a carry segment too close to an object: a collision in the carry, fixed by the travel height."""
+    if f.kind == "SafetyViolation" and CARRY_TAG in f.message:
+        message = f.message.replace(CARRY_TAG, "").strip()
+        return _label(f, "COLLISION", f.stop, f"the carry-path guard stopped the move: {message}", CARRY_HINT,
+                      phase="carry", stopped_by="carry-path guard")
+    issue = next((i for i in f.attempt.safety.issues if i.code == CARRY_CODE), None)
+    if issue is None:
+        return None
+    pos = next((p for p, c in enumerate(f.trace) if c.index == issue.call_index), f.stop)
+    return _label(f, "COLLISION", pos, issue.message.replace(CARRY_TAG, "").strip(), CARRY_HINT, phase="carry")
+
+
 def _collision(f: _Facts) -> Optional[Classification]:
     if f.kind == "CollisionError":
         target = _target(f.stop_call)
@@ -415,7 +435,7 @@ def _not_found(f: _Facts) -> Optional[Classification]:
                   0.8, query=query)
 
 
-# ---- 10-13: what the gripper and the objects did --------------------------------------------
+# ---- 11-14: what the gripper and the objects did --------------------------------------------
 
 def _grasp_miss(f: _Facts) -> Optional[Classification]:
     if not any(p.phase == "grasp" for p in f.phases) or grasped(f.attempt)[0] is not None:
@@ -560,7 +580,7 @@ def _after(a: AttemptResult, obj: Optional[SceneObject]) -> Optional[SceneObject
 # ---- entry point --------------------------------------------------------------------------
 
 RULES: Sequence[Callable[[_Facts], Optional[Classification]]] = (
-    _static, _hardware, _gate, _timeout, _code_error, _bump, _collision, _refused, _not_found,
+    _static, _hardware, _gate, _timeout, _code_error, _bump, _carry_path, _collision, _refused, _not_found,
     _grasp_miss, _no_pick, _slip, _place,
 )
 

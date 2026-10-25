@@ -21,6 +21,7 @@ from skillsmith.types import (
     BUCKET_UNKNOWN,
     FAILURE_CLASSES,
     AttemptResult,
+    SafetyIssue,
     SafetyReport,
 )
 
@@ -66,12 +67,13 @@ def _call(attempt, name, nth=0):
 # ---- skill bucket ---------------------------------------------------------------------------
 
 def test_classifier_is_off_until_the_config_enables_it():
-    w = FakeWorld.demo(BASE, rim_slip=True)
-    r = run_skill(demo_sources()[0], Env("fake", w, w, w), CUPS, BASE, NullBus(), skill="stack", success=ON_TOP)
+    off = Config({k: v for k, v in BASE.raw().items() if k != "analysis"})  # no `analysis.classifier` key
+    w = FakeWorld.demo(off, rim_slip=True)
+    r = run_skill(demo_sources()[0], Env("fake", w, w, w), CUPS, off, NullBus(), skill="stack", success=ON_TOP)
     assert not r.ok and r.classification is None and r.phases == []
     with pytest.raises(NotImplementedError, match="analysis.classifier"):
-        analyse_attempt(r, BASE)
-    assert analyse(r, BASE)[1].cls == "SLIP_IN_CARRY"  # analyse() always runs, flag or not
+        analyse_attempt(r, off)
+    assert analyse(r, off)[1].cls == "SLIP_IN_CARRY"  # analyse() always runs, flag or not
 
 
 def test_success_has_no_classification():
@@ -114,8 +116,18 @@ def test_carrying_too_low_is_a_collision_in_the_carry():
     low = PICK_PLACE.replace("TRAVEL_Z = 0.18", "TRAVEL_Z = 0.09")
     r = _run(low, {"obj": "blue cup", "x": 0.22, "y": 0.08}, skill="pick_place")
     failing = next(c for c in r.trace if not c.ok)
-    c = _expect(r, "COLLISION", "carry", failing.index)
-    assert "held blue cup hit red cup" in c.summary and "z=0.050" in c.summary
+    assert failing.error.startswith("SafetyViolation: [CARRY_PATH]")  # WS4.3 guard stops it before contact
+    c = _expect(r, "COLLISION", "carry", failing.index)  # a carry collision, not UNSAFE_TARGET
+    assert c.summary.startswith("the carry-path guard stopped the move: carrying blue cup")
+    assert "red cup" in c.summary and "clearance" in c.summary and "[CARRY_PATH]" not in c.summary
+    assert "how high the held object travels" in c.hint and c.evidence["stopped_by"] == "carry-path guard"
+
+
+def test_a_carry_path_audit_issue_is_a_collision_in_the_carry():
+    message = "carrying blue cup, move (0.2, 0.1, 0.09) -> (0.2, -0.1, 0.09) (call 3) sweeps through red cup"
+    a = replace(_synthetic(error=None), safety=SafetyReport(ok=False, issues=[SafetyIssue("CARRY_PATH", message, 3)]))
+    c = analyse_attempt(a, cfg)[1]
+    assert (c.cls, c.bucket, c.phase) == ("COLLISION", BUCKET_SKILL, "carry") and "sweeps through" in c.summary
 
 
 def test_placing_into_the_support_is_a_collision_in_the_place():
@@ -176,6 +188,18 @@ def test_timeout_is_timeout():
     a = _synthetic(error="SkillTimeout: attempt ran longer than 30.0 s (t.py line 5: while True:)")
     c = analyse_attempt(a, cfg)[1]
     assert (c.cls, c.bucket) == ("TIMEOUT", BUCKET_SKILL) and "30.0 s" in c.summary
+
+
+def test_the_runtime_attempt_timeout_is_timeout():
+    slow = Config({**cfg.raw(), "safety": {**cfg.raw()["safety"], "attempt_timeout_s": 0.05}})
+    w = FakeWorld.demo(slow)
+    spin = _skill("robot.home()", "for a in range(50):", "    for b in range(50):", "        for c in range(50):",
+                  "            for d in range(50):", "                for e in range(50):", "                    pass")
+    r = run_skill(spin, Env("fake", w, w, w), {}, slow, NullBus(), skill="t")  # WS4.2: AttemptTimeout
+    assert r.error.startswith("AttemptTimeout:")
+    c = r.classification
+    assert (c.cls, c.bucket) == ("TIMEOUT", BUCKET_SKILL) and "wall-clock limit" in c.summary
+    assert "loops" in c.hint
 
 
 class BumpingWorld(FakeWorld):
