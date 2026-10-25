@@ -125,12 +125,12 @@ class RepairLoop:
                     source = self._repair(task, source, report, rounds, scene)
                     continue
 
-            attempt = self._attempt(task, source, rounds)
+            attempt = self._confirm(self._attempt(task, source, rounds))
             attempts.append(attempt)
             while _needs_human(attempt) and env_stops < max_rounds and self._ask_human(attempt):
                 env_stops += 1
                 scene = self._observe()
-                attempt = self._attempt(task, source, rounds)
+                attempt = self._confirm(self._attempt(task, source, rounds))
                 attempts.append(attempt)
             if attempt.ok:
                 previous = self.library.load(task.skill) if needs_gates and self.library.has(task.skill) else ""
@@ -212,6 +212,29 @@ class RepairLoop:
     def _attempt(self, task: TaskSpec, source: str, rnd: int) -> AttemptResult:
         return run_skill(source, self.target, task.params, self.cfg, self.bus, skill=task.skill,
                          version=rnd, library=self.library.sources(), success=task.success)
+
+    def _confirm(self, attempt: AttemptResult) -> AttemptResult:
+        """After a real-arm attempt, the supervising human answers 'did the task succeed?' and that
+        answer wins over the sensors (a paper cup made the holding signal read 'lost' while the arm held
+        it). A 'no' with a note becomes the failure Droid repairs. Approvers without `confirm` skip this."""
+        ask = getattr(self.approver, "confirm", None)
+        if self.target.name != "real" or not callable(ask):
+            return attempt
+        system = "succeeded" if attempt.ok else f"failed: {attempt.reason()}"
+        summary = {"kind": "outcome", "title": f"Did '{attempt.skill}' v{attempt.version} succeed? (system: {system})",
+                   "skill": attempt.skill, "version": attempt.version}
+        self.bus.emit("outcome.requested", summary=summary)
+        ok, note = ask(self.bus.run_id, summary)
+        self.bus.emit("outcome.decided", ok=ok, note=note, system_ok=attempt.ok)
+        if ok and not attempt.ok:
+            attempt.ok, attempt.error, attempt.classification = True, None, None
+            self.history.append(f"v{attempt.version} on real: the human confirmed success (system said: {system})")
+        elif not ok and attempt.ok:
+            attempt.ok = False
+            attempt.error = f"HumanVerdict: the supervisor says it failed: {note or 'no detail given'}"
+        elif not ok and note:
+            attempt.error = f"{attempt.error or 'failed'} | supervisor: {note}"
+        return attempt
 
     def _ask_human(self, attempt: AttemptResult) -> bool:
         """An environment failure: a human fixes the table or camera, then approves a retry of

@@ -95,8 +95,17 @@ class RobotdArm:
     def set_gripper(self, pct: float) -> None:
         self._call("POST", "/gripper", {"pct": float(pct)}, self.move_timeout_s)
         self._gripper_goal = float(pct)
+        self._latched = False
+        if pct < 50:  # a close: latch "holding" if it caught something (see gripper_holding)
+            self._latched = self._raw_holding()
 
     def gripper_holding(self) -> bool:
+        """Latched after a close that caught something, until the jaws open: on a paper cup the jaws creep
+        toward the command and the load fades, so the raw signal read 'lost' while the arm was lifting the
+        cup. A real drop shows up in the cameras (the cup back on the table) and the success check."""
+        return bool(getattr(self, "_latched", False)) or self._raw_holding()
+
+    def _raw_holding(self) -> bool:
         """robotd's load-based signal, OR the jaws stopped well short of a commanded close: empty jaws
         close to ~0-2 %, so >= HOLD_WIDE_GAP short means something is between them. A gently ramped
         close on a paper cup never reached robotd's load threshold, so a real grasp read as a miss."""

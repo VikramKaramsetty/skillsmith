@@ -348,6 +348,7 @@ One JSON object per line in `runs/<run_id>/events.jsonl`, also pushed to subscri
 | `sim.video` | `path` |
 | `reset.requested` | `message` (a human resets the table; followed by an approval request with `kind: "reset"`) |
 | `approval.requested` / `approval.decided` | `summary` / `approved`, `note`. `summary.kind`: absent (approve code for the real arm), `"reset"`, or `"environment"` (+ `class`, `phase`, `summary`, `hint`, `skill`, `version`, `env`: a human fixes the table/camera, then approves a retry of the same code) |
+| `outcome.requested` / `outcome.decided` | `summary` / `ok`, `note`, `system_ok`. After each real-arm attempt the supervisor answers "did the task succeed?"; the answer overrides the sensors and a "no" note goes to Droid |
 | `skill.saved` | `skill`, `version` |
 | `run.finished` | `ok`, `rounds` |
 | `phase.check` | `PhaseCheck` dict |

@@ -31,3 +31,14 @@ class CliApprover:
         if answer.lower() in ("y", "yes"):
             return True, ""
         return False, answer if answer.lower() not in ("", "n", "no") else ""
+
+    def confirm(self, run_id: str, summary: dict) -> Tuple[bool, str]:
+        """After a real attempt: did the task succeed? y = success (saved), anything else = failure; a
+        note after 'n' (e.g. 'n cup slipped while lifting') is passed to Droid."""
+        print("\n" + "=" * 70)
+        print(f"OUTCOME — run {run_id}: {summary.get('title', '')}")
+        answer = input("Did the task succeed? [y/n, optionally 'n <what went wrong>'] ").strip()
+        if answer.lower() in ("y", "yes"):
+            return True, ""
+        note = answer[1:].strip(" :,-") if answer.lower().startswith("n") else answer
+        return False, note
