@@ -236,8 +236,8 @@ def test_the_arm_hovering_over_a_cup_is_not_a_bump():
     det = FakeDetector([cup("white", 0.15, -0.10)])
     world = make_world(detector=det, arm=arm)
     world.step()
-    arm.move_tip(0.15, -0.10, 0.18)  # over the cup: its detection shifts 1.5 cm (arm merged with it)
-    det.dets = [cup("white", 0.165, -0.093)]
+    arm.move_tip(0.15, -0.10, 0.18)  # over the cup: its detection shifts 2.8 cm (arm merged with it)
+    det.dets = [cup("white", 0.175, -0.088)]
     for _ in range(10):
         world.step()
     white = obj(world, "white_cup_0")
@@ -300,3 +300,18 @@ def test_displacement_sees_a_cup_pushed_while_the_arm_occludes_it():
     for _ in range(3):
         world.step()
     assert world.displacement("red_cup_0", (0.29, 0.0)) == pytest.approx(0.06, abs=0.002)
+
+
+def test_a_lifted_held_cup_seen_off_its_track_never_bumps_while_another_cup_stands_nearby():
+    det = FakeDetector([cup("pink", 0.29, -0.10), cup("pink", 0.25, 0.15)])
+    arm = FakeArm(tip=(0.27, 0.16, 0.07))
+    world = make_world(detector=det, arm=arm)
+    world.step()
+    arm.holding = True
+    world.step()  # grabbed the cup at (0.25, 0.15)
+    arm.move_tip(0.27, 0.16, 0.18)  # lifted 11 cm: its top is seen 4.5 cm off
+    det.dets = [cup("pink", 0.29, -0.10), cup("pink", 0.295, 0.15)]
+    for _ in range(5):
+        world.step()
+    assert world.unexpected_motion() is None
+    assert len(world.observe().objects) == 2

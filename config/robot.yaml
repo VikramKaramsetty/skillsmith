@@ -48,7 +48,7 @@ wrist:                              # wrist-camera checks (perception/wrist.py, 
 
 world:                              # live world model (WS3.5)
   rate_hz: 12
-  bump_threshold: 0.01              # m; a not-held object moving more than this = WorldChanged
+  bump_threshold: 0.02              # m; a not-held object moving more than this = WorldChanged (1 cm tripped on camera jitter)
   min_confidence: 0.5               # below this a detection is 'uncertain' (confidence gate)
   objects:                          # measured: the demo's paper cup, used upside down (mouth on the table)
     cup: {height: 0.0953, width: 0.0762, top_width: 0.0508}   # 3.75 in tall; 3 in mouth on the table; 2 in base on top

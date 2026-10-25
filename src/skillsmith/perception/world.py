@@ -81,6 +81,7 @@ KNOWN_OBJECTS: Dict[str, Tuple[float, float]] = {
 DEFAULT_SIZE = (0.05, 0.05)
 ASSOC_RADIUS = 0.08  # m; a detection farther than this from every same-kind track starts a new one
 GRAB_RADIUS = 0.06  # m; the held object is the track nearest the tip, within this
+HELD_NEAR = 0.12  # m; while holding, a same-colour detection this near the tip is the held object, never a bump
 HELD_ABSORB = 0.08  # m; a same-colour detection this near the held object IS it (lifted: its top is not at the
 #                     table-top height the localiser assumes, so it lands a few cm off; it must not become a
 #                     "new" cup or a bump)
@@ -521,7 +522,7 @@ class WorldModel:
         held = self._tracks.get(self._held) if self._held is not None else None
         for i, obj in enumerate(seen):
             if i not in used and held is not None and (held.obj.color, held.obj.kind) == (obj.color, obj.kind) \
-                    and math.hypot(held.obj.x - obj.x, held.obj.y - obj.y) <= HELD_ABSORB:
+                    and math.hypot(held.obj.x - obj.x, held.obj.y - obj.y) <= HELD_NEAR:
                 used.add(i)  # the lifted held object, localised off: absorbed, not a new cup
         for i, obj in enumerate(seen):
             if i not in used:
@@ -560,6 +561,11 @@ class WorldModel:
             return
         ax, ay = track.anchor
         tip, holding = getattr(self, "_arm_now", (None, False))
+        if tip is not None and holding and self._held is not None and tid != self._held:
+            held = self._tracks.get(self._held)
+            if held is not None and (held.obj.color, held.obj.kind) == (obj.color, obj.kind) \
+                    and math.hypot(obj.x - tip[0], obj.y - tip[1]) <= HELD_NEAR:
+                return  # the held cup seen off its track (its top is higher than assumed): not a bump
         if tip is not None and not holding and math.hypot(ax - tip[0], ay - tip[1]) <= ARM_RADIUS:
             track.obj = replace(track.obj, x=ax, y=ay)  # occluded by the arm: keep where it was
             track.over = 0
