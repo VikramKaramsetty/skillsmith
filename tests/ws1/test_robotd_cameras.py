@@ -6,6 +6,7 @@ import time
 import pytest
 
 from robotd.cameras import CaptureCamera
+from robotd.cameras import FFmpegCapture as RealFFmpegCapture  # bound before conftest fakes it
 from robotd.controller import ArmController, RobotdError
 from robotd.mock import MockBus, MockCamera
 from robotd.server import create_app
@@ -200,3 +201,85 @@ def test_an_unknown_camera_name_lists_what_is_there():
     devices = parse_avfoundation_devices(LISTING)
     with pytest.raises(OSError, match=r"no camera named like 'name:Capture'.*\[1\] Vikram"):
         resolve_source("name:Capture", lambda: devices)  # screens are never cameras
+
+
+# ---- name: cameras through ffmpeg (fake process on a real pipe; no camera is opened) -------------
+
+class PipeProc:
+    """Stands in for the ffmpeg process: the test writes bytes to `feed`, the capture reads stdout."""
+
+    def __init__(self):
+        import os
+
+        r, w = os.pipe()
+        self.stdout = os.fdopen(r, "rb", buffering=0)
+        self._w = os.fdopen(w, "wb", buffering=0)
+        self.cmd = None
+        self.terminated = False
+
+    def feed(self, data: bytes):
+        self._w.write(data)
+
+    def eof(self):
+        self._w.close()
+
+    def terminate(self):
+        self.terminated = True
+
+    def wait(self, timeout=None):
+        return 0
+
+
+def ffmpeg_capture(monkeypatch, timeout_s=0.2):
+    from robotd import cameras
+
+    monkeypatch.setattr(cameras, "_ffmpeg", lambda: "/bin/ffmpeg")
+    proc = PipeProc()
+
+    def popen(cmd, **kw):
+        proc.cmd = cmd
+        return proc
+
+    devices = lambda: [(0, "MacBook Pro Camera"), (1, "Rohan’s iPhone Camera")]  # noqa: E731
+    return RealFFmpegCapture("name:iPhone", (1280, 720), devices=devices, popen=popen, timeout_s=timeout_s), proc
+
+
+def test_ffmpeg_opens_the_camera_by_its_full_name_not_an_index(monkeypatch):
+    cap, proc = ffmpeg_capture(monkeypatch)
+    assert cap.name == "Rohan’s iPhone Camera"
+    i = proc.cmd.index("-i")
+    assert proc.cmd[i + 1] == "Rohan’s iPhone Camera:none"
+    assert proc.cmd[proc.cmd.index("-video_size") + 1] == "1280x720" and proc.cmd.index("-video_size") < i
+    assert "scale=1280:720" in proc.cmd and proc.cmd[-1] == "-"
+
+
+def test_ffmpeg_capture_returns_the_newest_whole_jpeg(monkeypatch):
+    cap, proc = ffmpeg_capture(monkeypatch)
+    proc.feed(jpeg(1) + jpeg(2) + b"\xff\xd8partial")
+    assert cap.read() == jpeg(2)
+    proc.feed(b"-rest\xff\xd9")
+    assert cap.read() == b"\xff\xd8partial-rest\xff\xd9"
+
+
+def test_ffmpeg_capture_gives_none_when_ffmpeg_is_silent_or_gone(monkeypatch):
+    cap, proc = ffmpeg_capture(monkeypatch)
+    assert cap.read() is None  # timeout: CaptureCamera counts it and reopens after a few
+    proc.eof()
+    assert cap.read() is None
+    cap.close()
+    assert proc.terminated
+
+
+def test_open_capture_uses_ffmpeg_for_names_on_macos_only(monkeypatch, never_open_real_cameras):
+    from robotd import cameras
+
+    monkeypatch.setattr(cameras, "_ffmpeg", lambda: "/bin/ffmpeg")
+    picked = []
+    monkeypatch.setattr(cameras, "FFmpegCapture", lambda s, z: picked.append(("ffmpeg", s)))
+    monkeypatch.setattr(cameras, "OpenCVCapture", lambda s, z: picked.append(("opencv", s)))
+    monkeypatch.setattr(cameras.sys, "platform", "darwin")
+    cameras.open_capture("name:iPhone")
+    cameras.open_capture(0)
+    monkeypatch.setattr(cameras.sys, "platform", "linux")
+    cameras.open_capture("name:iPhone")
+    assert picked == [("ffmpeg", "name:iPhone"), ("opencv", 0), ("opencv", "name:iPhone")]

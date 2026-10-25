@@ -6,6 +6,8 @@ gives them (~15 fps) and keeps only the newest JPEG plus its capture time (unix 
 so a dead camera never hands the world model an old frame. A capture that keeps failing is closed
 and reopened every `reopen_s`.
 
+`open_capture(source, size)` picks the capture: on macOS a `name:<text>` camera is read through ffmpeg by
+its exact device name (`FFmpegCapture`), because OpenCV's camera indices don't follow ffmpeg's list order.
 `OpenCVCapture(source, size)` reads a device index, a device path, an http MJPEG URL or `name:<text>`
 through cv2.VideoCapture (imported lazily) and returns JPEG bytes. Tests replace it; agents never open a
 camera. `name:iPhone` picks the macOS camera whose name contains "iPhone" (Continuity Camera): indices
@@ -19,6 +21,7 @@ import logging
 import re
 import shutil
 import subprocess
+import sys
 import threading
 import time
 from typing import Callable, List, Optional, Protocol, Tuple, Union
@@ -28,6 +31,7 @@ from robotd.controller import RobotdError
 STALE_S = 1.0
 FAILS_BEFORE_REOPEN = 5
 JPEG_QUALITY = 85
+FFMPEG_FPS = 30
 
 log = logging.getLogger("robotd")
 
@@ -92,6 +96,92 @@ def resolve_source(source: Union[int, str],
             return index
     names = ", ".join(f"[{i}] {n}" for i, n in found) or "none"
     raise OSError(f"no camera named like {source!r}; cameras: {names}")
+
+
+def device_name(source: str, devices: Optional[Callable[[], List[Tuple[int, str]]]] = None) -> str:
+    """`name:<text>` -> the full macOS name of the first camera whose name contains <text>."""
+    found = (devices or avfoundation_devices)()
+    index = resolve_source(source, lambda: found)
+    return dict(found)[index]
+
+
+def ffmpeg_command(exe: str, name: str, size: Optional[Tuple[int, int]] = None) -> List[str]:
+    """ffmpeg reading one AVFoundation camera by its exact name and writing JPEG frames to stdout.
+    The size is asked of the camera too: a USB webcam rejects 30 fps at its default (largest) mode and
+    then delivers nothing; the scale keeps the output size right when a camera picks its own mode."""
+    mode = ["-video_size", f"{size[0]}x{size[1]}"] if size else []
+    scale = ["-vf", f"scale={size[0]}:{size[1]}"] if size else []
+    return [exe, "-hide_banner", "-loglevel", "error", "-f", "avfoundation", "-framerate", str(FFMPEG_FPS),
+            *mode, "-i", f"{name}:none", *scale, "-f", "image2pipe", "-c:v", "mjpeg", "-q:v", "3", "-"]
+
+
+class FFmpegCapture:
+    """A `name:` camera read through ffmpeg by its exact device name (macOS only).
+
+    OpenCV's AVFoundation backend numbers cameras in its own order, which differs from ffmpeg's
+    device list once an iPhone is plugged in by USB (robotd opened the MacBook camera as the iPhone).
+    Opening by name means no index is involved at all."""
+
+    def __init__(self, source: str, size: Optional[Tuple[int, int]] = None,
+                 devices: Optional[Callable[[], List[Tuple[int, str]]]] = None,
+                 popen: Callable[..., subprocess.Popen] = subprocess.Popen, timeout_s: float = 3.0):
+        exe = _ffmpeg()
+        if not exe:
+            raise OSError("name: cameras need ffmpeg: pip install imageio-ffmpeg in robotd's venv")
+        self.source = source
+        self.name = device_name(source, devices)
+        self.timeout_s = timeout_s
+        self._buf = b""
+        self._proc = popen(ffmpeg_command(exe, self.name, size), stdout=subprocess.PIPE,
+                           stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL)
+        log.info("camera %r opened by name through ffmpeg (%s)", source, self.name)
+
+    def read(self) -> Optional[bytes]:
+        """The newest complete JPEG ffmpeg has written, or None after `timeout_s` without one."""
+        deadline = time.monotonic() + self.timeout_s
+        while True:
+            frame = self._take_newest()
+            if frame is not None:
+                return frame
+            left = deadline - time.monotonic()
+            if left <= 0 or not self._fill(left):
+                return None
+
+    def _fill(self, wait_s: float) -> bool:
+        import os
+        import select
+
+        out = self._proc.stdout
+        ready, _, _ = select.select([out], [], [], wait_s)
+        if not ready:
+            return False
+        chunk = os.read(out.fileno(), 1 << 20)
+        self._buf += chunk
+        return bool(chunk)  # b"" = ffmpeg exited
+
+    def _take_newest(self) -> Optional[bytes]:
+        end = self._buf.rfind(b"\xff\xd9")
+        if end < 0:
+            return None
+        start = self._buf.rfind(b"\xff\xd8", 0, end)
+        if start < 0:
+            return None
+        frame, self._buf = self._buf[start:end + 2], self._buf[end + 2:]
+        return frame
+
+    def close(self) -> None:
+        self._proc.terminate()
+        try:
+            self._proc.wait(timeout=2.0)
+        except subprocess.TimeoutExpired:
+            self._proc.kill()
+
+
+def open_capture(source: Union[int, str], size: Optional[Tuple[int, int]] = None) -> Capture:
+    """`name:` cameras through ffmpeg by name on macOS; anything else through OpenCV."""
+    if isinstance(source, str) and source.startswith("name:") and sys.platform == "darwin" and _ffmpeg():
+        return FFmpegCapture(source, size)
+    return OpenCVCapture(source, size)
 
 
 class OpenCVCapture:

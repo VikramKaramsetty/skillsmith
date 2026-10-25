@@ -88,7 +88,7 @@ def open_cameras(mock: bool, cfg: dict) -> dict:
         return {name: MockCamera(name) for name in CAMERAS}
     spec = cfg["cameras"]
     sizes = {name: tuple(spec[f"{name}_size"]) if spec.get(f"{name}_size") else None for name in CAMERAS}
-    return {name: cameras.CaptureCamera(name, lambda s=spec[name], z=sizes[name]: cameras.OpenCVCapture(s, z))
+    return {name: cameras.CaptureCamera(name, lambda s=spec[name], z=sizes[name]: cameras.open_capture(s, z))
             for name in CAMERAS if spec.get(name)}
 
 
