@@ -247,3 +247,13 @@ def test_the_arm_hovering_over_a_cup_is_not_a_bump():
     for _ in range(10):
         world.step()
     assert world.unexpected_motion() is not None
+
+
+def test_a_split_top_is_one_cup_not_two():
+    det = FakeDetector([cup("pink", 0.20, 0.06)])
+    world = make_world(detector=det)
+    world.step()
+    det.dets = [cup("pink", 0.19, 0.05), cup("pink", 0.215, 0.075)]  # the gripper splits the pink top
+    for _ in range(5):
+        world.step()
+    assert [o.id for o in world.observe().objects] == ["pink_cup_0"]

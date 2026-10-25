@@ -453,6 +453,8 @@ class WorldModel:
                 self._update_track(tid, seen[i])
         for i, obj in enumerate(seen):
             if i not in used:
+                if self._fragment_of(obj) is not None:
+                    continue  # a second piece of a tracked object (the gripper split its top): not a new one
                 tid = self._new_id(obj)
                 self._tracks[tid] = _Track(replace(obj, id=tid), anchor=(obj.x, obj.y))
                 matched.add(tid)
@@ -464,6 +466,17 @@ class WorldModel:
             if track.obj.visible:
                 track.obj = replace(track.obj, visible=False)
                 track.over = 0
+
+    def _fragment_of(self, obj: SceneObject) -> Optional[str]:
+        """A tracked object of the same colour and kind whose footprint this detection lies inside.
+        A gripper over a cup's painted top splits it into two blobs; the second one used to become a
+        new cup, which tripped the confidence gate ("object count changed") and sent real skill failures
+        to the human as environment problems."""
+        for tid, track in self._tracks.items():
+            o = track.obj
+            if (o.color, o.kind) == (obj.color, obj.kind) and math.hypot(o.x - obj.x, o.y - obj.y) < o.width:
+                return tid
+        return None
 
     def _update_track(self, tid: str, obj: SceneObject) -> None:
         track = self._tracks[tid]
