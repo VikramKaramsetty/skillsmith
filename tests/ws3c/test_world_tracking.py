@@ -229,3 +229,21 @@ def test_default_detector_prompts_yolo_with_the_configured_labels(monkeypatch):
     assert world._default_detector({"detect": {"labels": ["white cup", "red cup"]}}) == "det"
     assert world._default_detector({}) == "det"
     assert built == [["white cup", "red cup"], None]  # no labels: make_detector falls back to HSV
+
+
+def test_the_arm_hovering_over_a_cup_is_not_a_bump():
+    arm = FakeArm(tip=(0.10, 0.15, 0.20))  # far from the cup
+    det = FakeDetector([cup("white", 0.15, -0.10)])
+    world = make_world(detector=det, arm=arm)
+    world.step()
+    arm.move_tip(0.15, -0.10, 0.18)  # over the cup: its detection shifts 1.5 cm (arm merged with it)
+    det.dets = [cup("white", 0.165, -0.093)]
+    for _ in range(10):
+        world.step()
+    white = obj(world, "white_cup_0")
+    assert (white.x, white.y) == pytest.approx((0.15, -0.10))
+    assert world.unexpected_motion() is None
+    arm.move_tip(0.10, 0.15, 0.20)  # the arm leaves: a real move is a bump again
+    for _ in range(10):
+        world.step()
+    assert world.unexpected_motion() is not None

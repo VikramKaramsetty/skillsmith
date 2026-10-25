@@ -71,9 +71,12 @@ class FeetechBus:
 
 
 def connect_follower(port: str, calibration_id: str,
-                     make_robot: Optional[Callable[[str, str], Any]] = None) -> FeetechBus:
-    """Open the follower without moving it. Raises on a calibration mismatch or a missing LeRobot."""
-    robot = (make_robot or _lerobot_follower)(port, calibration_id)
+                     make_robot: Optional[Callable[[str, str], Any]] = None,
+                     p_gain: Optional[int] = None) -> FeetechBus:
+    """Open the follower without moving it. Raises on a calibration mismatch or a missing LeRobot.
+    `p_gain` (config robot.position_p_gain) is the servos' position P coefficient; LeRobot's 16 lets the
+    elbow sag ~2.3 deg under gravity at reach (~1 cm at the tip), so robotd refused the move."""
+    robot = make_robot(port, calibration_id) if make_robot else _lerobot_follower(port, calibration_id, p_gain)
     robot.bus.connect()
     try:
         if not robot.is_calibrated:
@@ -90,11 +93,12 @@ def connect_follower(port: str, calibration_id: str,
     return FeetechBus(robot)
 
 
-def _lerobot_follower(port: str, calibration_id: str) -> Any:
+def _lerobot_follower(port: str, calibration_id: str, p_gain: Optional[int] = None) -> Any:
     try:
         from lerobot.robots.so_follower import SO101Follower, SO101FollowerConfig
     except ImportError as e:
         raise ImportError(
             "LeRobot is not installed in this Python: run robotd with ~/robot/.venv/bin/python "
             f"(docs/RUNBOOK.md), or use --mock ({e})") from e
-    return SO101Follower(SO101FollowerConfig(port=port, id=calibration_id, use_degrees=True))
+    extra = {"position_p_coefficient": int(p_gain)} if p_gain else {}
+    return SO101Follower(SO101FollowerConfig(port=port, id=calibration_id, use_degrees=True, **extra))

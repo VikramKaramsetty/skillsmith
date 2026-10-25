@@ -35,6 +35,9 @@ Tracking rules (WS3.5):
 - Association is greedy nearest-neighbour per (color, kind) within `world.assoc_radius`. A new
   detection gets a stable id `<color>_<kind>_<n>`; ids are never reused.
 - A track with no detection this frame is hidden: `visible=False`, last position kept, never "moved".
+  A resting track within ARM_RADIUS (xy) of the gripper tip, while not holding, keeps its position
+  and counts no bump: the arm over a cup occludes and shifts its detection (a false 1.5 cm "bump"
+  stopped the first real pick). Re-anchoring after a release still takes the first detection.
 - When the arm reports holding, the track nearest the tip becomes held; it follows the FK tip with
   the offset it had at grasp time, and detections near it are absorbed. On release it re-anchors
   on its next detection (where it really landed is not a bump).
@@ -309,6 +312,7 @@ class WorldModel:
             self._steps += 1
             self._frame = frame
             self._update_held(tip, holding)
+            self._arm_now = (tip, holding)
             self._associate(self._localise(detections))
             self._update_gate(detections, tip, drift)
             self._scene = Scene(tuple(t.obj for t in self._tracks.values()), frame.t, _source(frame))
@@ -469,6 +473,11 @@ class WorldModel:
             track.anchor = (obj.x, obj.y)
             return
         ax, ay = track.anchor
+        tip, holding = getattr(self, "_arm_now", (None, False))
+        if tip is not None and not holding and math.hypot(ax - tip[0], ay - tip[1]) <= ARM_RADIUS:
+            track.obj = replace(track.obj, x=ax, y=ay)  # occluded by the arm: keep where it was
+            track.over = 0
+            return
         if math.hypot(obj.x - ax, obj.y - ay) <= self.bump_threshold:
             track.over = 0
             return
