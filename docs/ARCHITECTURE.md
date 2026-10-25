@@ -7,10 +7,10 @@ contracts are in `docs/INTERFACES.md`; the objective is in `docs/NORTH_STAR.md`.
 
 | # | Layer | Written by | Runs on | Rate |
 |---|---|---|---|---|
-| 1 | **World model**: objects, positions, held/hidden, bump events | us (WS3) | GX10 | 10–15 Hz |
+| 1 | **World model**: objects, positions, held/hidden, bump events | us (WS3) | Mac | 10–15 Hz |
 | 2 | **Skill**: Python sequencing primitives | **Droid** (and seed skills by us) | orchestrator, sandboxed | ~10–30 calls |
-| 3 | **Primitives + IK**: target → joint angles, closed-loop alignment | us (WS2, lead) | GX10 | per waypoint |
-| 4 | **Motor control**: robotd clamps + servo firmware | us (WS1) + Feetech | GX10 + servos | 30–50 Hz |
+| 3 | **Primitives + IK**: target → joint angles, closed-loop alignment | us (WS2, lead) | Mac | per waypoint |
+| 4 | **Motor control**: robotd clamps + servo firmware | us (WS1) + Feetech | Mac + servos | 30–50 Hz |
 | — | **Failure analysis**: phases, class, bucket | us (WS4), plain rules | orchestrator | after each attempt |
 | — | **Repair**: Droid via the SDK, with evidence and tools | Droid + us (WS5) | orchestrator + Factory | on failure |
 
@@ -19,8 +19,10 @@ Droid only ever writes layer 2. The robotics risk lives in layers 1, 3 and 4, wh
 ## Processes
 
 ```
-┌───────────────────────────────── GX10 ─────────────────────────────────┐
+┌───────────────────────── MacBook (one machine) ─────────────────────────┐
 │ robotd (only owner of serial port + cameras)                            │
+│   USB serial → follower arm; iPhone overhead (Continuity Camera) +      │
+│   USB wrist camera, both opened by name                                 │
 │   HTTP 127.0.0.1:8100: state (joints, gripper pos+load), move, gripper, │
 │   stop, frames/streams (overhead + wrist, timestamped, ~15 fps)         │
 │   enforces joint limits, per-step clamp, watchdog (last safety layer)   │
@@ -33,10 +35,10 @@ Droid only ever writes layer 2. The robotics risk lives in layers 1, 3 and 4, wh
 │   DroidSDKAuthor: one droid_sdk.Session per run + skillsmith tools      │
 │   EventBus → runs/<id>/events.jsonl + dashboard (:8080, SSE)            │
 └─────────────────────────────────────────────────────────────────────────┘
-        ▲ USB-Ethernet link-local (demo) / Tailscale (dev)
-┌──── MacBook ────┐        Factory (cloud): Droid's model calls
-│ dashboard       │        Frontier vision API (optional, advisory)
-└─────────────────┘
+        │ internet
+        ▼
+   Factory (cloud): Droid's model calls
+   Frontier vision API (optional, advisory)
 ```
 
 ## The loop
@@ -72,7 +74,7 @@ approach**.
 1. **Camera calibration** (once, about 15 min): a printed checkerboard for the intrinsics, then
    4+ ArUco markers taped at table points whose robot-frame positions are measured by touching
    them with the gripper tip (FK). Saved to `config/camera.json`.
-2. **Detection**: YOLO-World / YOLO-E on the GX10 GPU (main), HSV colour blobs (backup). Each
+2. **Detection**: YOLO-World / YOLO-E on the Mac (main), HSV colour blobs (backup). Each
    detection gives a label, the pixel of the object's top centre, and a confidence.
 3. **Ray casting**: the top-centre pixel's ray is intersected with the plane at the object's
    known top height (from the object table). Stacked objects use the height of what is below

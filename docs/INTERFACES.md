@@ -163,7 +163,7 @@ Frames (WS3, `skillsmith/perception/frames.py`) are the WorldModel's input:
 `FrameSource.read() -> Frame` (JPEG/BGR plus capture time `t`, unix seconds) and `close()`.
 `RobotdFrames` is the production source (only robotd opens cameras).
 
-`robotd` HTTP API (WS1, on GX10 `127.0.0.1:8100`, JSON bodies):
+`robotd` HTTP API (WS1, on the Mac at `127.0.0.1:8100`, JSON bodies):
 
 | Method | Path | Body / result |
 |---|---|---|

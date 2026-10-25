@@ -34,8 +34,8 @@ story we tell the Factory judges ("controlled permissions").
 - Clear the workspace of anything not in the task. No hands inside the box while torque
   is on.
 - Start each session at `max_tcp_speed: 0.05` and raise it only after a clean run.
-- Watch the GX10 for NVIDIA "bad register read" errors (`sudo dmesg | tail`), which
-  ended a previous boot. If they appear, stop real runs.
+- Keep the Mac on power and awake during real runs. If the overhead iPhone drops out or
+  gets bumped, stop real runs and recalibrate the camera (`docs/RUNBOOK.md`).
 
 ## Known gaps (be honest in Q&A)
 

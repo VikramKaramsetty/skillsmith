@@ -48,12 +48,11 @@ inside the module that needs them, so `make check` runs anywhere.
 
 ## Hard rules
 
-- **Never move the real arm.** Agents do not run anything with `--backend real` and do
-  not open `/dev/serial/*` or `/dev/video*` on the GX10. Write the code plus a test
+- **Never move the real arm.** Agents do not run anything with `--env real` or
+  `--backend real`, and do not open the serial ports (`/dev/cu.*`) or any real camera
+  (the iPhone via Continuity Camera, the USB wrist camera). Write the code plus a test
   against `fake` or `sim`; a human runs hardware. Say "needs hardware test" in your
   hand-off, with the exact command.
-- Never `pkill -f <pattern>` over SSH (the pattern matches the SSH session itself).
-  Use `pgrep -a <name>` and then `kill <pid>`.
 - Only `robotd` opens the follower serial port and the cameras. Everything else talks
   to `robotd`. (Only one process can hold a serial port or a camera at a time.)
 - Units everywhere: metres, seconds, degrees for joints, gripper 0–100 (0 = closed).
