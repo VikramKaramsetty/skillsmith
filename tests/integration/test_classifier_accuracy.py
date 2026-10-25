@@ -133,8 +133,6 @@ def test_recorded_attempt_rebuilds_what_the_classifier_saw(tmp_path):
     assert replayed.scene_before.objects == live.scene_before.objects
 
 
-@pytest.mark.xfail(strict=True, reason="waiting on WS4 runtime: attempt.finished does not emit scene_after "
-                                       "or safety yet (INTERFACES §7 lists them), so a recording loses them")
 def test_recorded_attempt_keeps_scene_after_and_safety(tmp_path):
     live = record(tmp_path, "collide", COLLIDING_PICK_PLACE, {"obj": "blue cup", "x": 0.22, "y": 0.08},
                   success=STACK, skill="pick_place")
@@ -322,8 +320,7 @@ def _assert_gates(report: AccuracyReport, *, min_precision: float, min_recall: f
 def test_classifier_on_hand_labelled_fake_recordings(fake_corpus):
     """Unambiguous fake failures, replayed from events.jsonl: every class named, nothing wrong."""
     gaps = sorted({g for case in load_corpus(fake_corpus) for g in case.missing})
-    if gaps:
-        pytest.skip(f"waiting on WS4 runtime: attempt.finished lacks {', '.join(gaps)} (INTERFACES §7)")
+    assert not gaps, f"attempt.finished lacks {', '.join(gaps)} (INTERFACES §7)"
     report = evaluate(load_corpus(fake_corpus), _product_classifier())
     print(report.markdown())
     _assert_gates(report, min_precision=1.0, min_recall=1.0)

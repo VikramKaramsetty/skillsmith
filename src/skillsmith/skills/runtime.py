@@ -173,9 +173,12 @@ def run_skill(source: str, env, params: dict, cfg, bus: EventBus, *, skill: str,
                            error=error, verify=verify, safety=safety, scene_before=scene_before,
                            scene_after=scene_after, duration_s=round(duration, 3),
                            video_path=getattr(env.arm, "last_video_path", None))
-    _analyse(result, cfg, bus, None if result.ok else _perception_gate(env, bus))
+    perception = _perception_gate(env, bus)
+    _analyse(result, cfg, bus, None if result.ok else perception, env)
     bus.emit("attempt.finished", env=env.name, skill=skill, version=version, ok=ok,
-             error=error, duration_s=result.duration_s, reason=result.reason())
+             error=error, duration_s=result.duration_s, reason=result.reason(),
+             scene_before=scene_before, scene_after=scene_after, safety=safety,
+             perception=None if perception is None else list(perception))
     return result
 
 
@@ -212,8 +215,26 @@ def _perception_gate(env, bus: EventBus) -> Optional[Tuple[bool, str]]:
     return bool(ok), str(reason)
 
 
-def _analyse(result: AttemptResult, cfg, bus: EventBus, perception: Optional[Tuple[bool, str]] = None) -> None:
-    """Phase checks + failure classification (WS4.4/WS4.5)."""
+def _attach_keyframes(result: AttemptResult, env, bus: EventBus) -> None:
+    """Merge the env's per-phase key frames (`arm.keyframes(trace, phases)`, sim only) into
+    `result.keyframes`, then give each phase that has one its `frame_path` (WS4.10)."""
+    render = getattr(env.arm, "keyframes", None) if env is not None else None
+    if callable(render):
+        try:
+            frames = render(result.trace, result.phases) or {}
+        except Exception as e:  # no frames is fine; a silent failure is not
+            bus.emit("error", where="keyframes", message=f"{type(e).__name__}: {e}")
+            frames = {}
+        for phase, path in frames.items():
+            result.keyframes.setdefault(phase, path)
+    for phase in result.phases:
+        if phase.frame_path is None and result.keyframes.get(phase.phase):
+            phase.frame_path = result.keyframes[phase.phase]
+
+
+def _analyse(result: AttemptResult, cfg, bus: EventBus, perception: Optional[Tuple[bool, str]] = None,
+             env=None) -> None:
+    """Phase checks + failure classification (WS4.4/WS4.5), with key frames on the phases."""
     from skillsmith.analysis import analyse_attempt
 
     try:
@@ -224,6 +245,7 @@ def _analyse(result: AttemptResult, cfg, bus: EventBus, perception: Optional[Tup
     except Exception as e:  # analysis must never lose the attempt; the report falls back to the raw error
         bus.emit("error", where="analysis", message=f"{type(e).__name__}: {e}")
         return
+    _attach_keyframes(result, env, bus)
     for phase in result.phases:
         bus.emit("phase.check", **dataclasses.asdict(phase))
     if result.classification is not None:
