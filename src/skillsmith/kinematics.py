@@ -37,8 +37,9 @@ How `ik` solves (WS2.2):
   solution wins (ties go to the one closest to the seed).
 
 Side approach (`approach="side"`):
-- The gripper is level (parallel to the table) and points AWAY from the base. wrist_roll is held at
-  `side_roll_deg` (90) so the jaws open sideways: gripper_link x (the closing axis) is horizontal,
+- The gripper is level (parallel to the table, at most SIDE_MAX_TILT_DEG off) and points AWAY from
+  the base. wrist_roll is held at
+  `side_roll_deg` (-90: wrist camera on top) so the jaws open sideways: gripper_link x (the closing axis) is horizontal,
   which is what a side grasp of an upright cup needs.
 - "Level" = gripper_link y (normal to the jaw plane) points straight down (up for a negative roll),
   so both the pointing axis and the closing axis are horizontal. Yaw is left to shoulder_pan: a
@@ -97,7 +98,7 @@ SIDE_ROLL_DEG = -90.0     # wrist_roll for a side grasp: jaws open sideways, wri
 SIDE_POSE_MAX_DOWN = 0.7  # |gripper z . world z| below this = a level (side) pose for side_z_offset
 SIDE_ELBOW_MAX_DEG = 85.0  # side: elbow_flex cap; folded further, the lower arm hits the shoulder (sim)
 SIDE_LIMIT_MARGIN_DEG = 3.0  # side solutions stay this far inside the URDF limits (robotd refuses < 2 deg)
-SIDE_MAX_TILT_DEG = 30.0  # fingers may point this far below level (wrist_flex limit near the base), else None
+SIDE_MAX_TILT_DEG = 10.0  # side poses stay horizontal: fingers at most this far off level, else None (Unreachable)
 # (shoulder_lift, elbow_flex, wrist_flex): postures with the gripper level, low and far to near
 SIDE_POSTURES = ((0.0, 60.0, -60.0), (20.0, 30.0, -50.0), (-20.0, 80.0, -60.0), (40.0, 0.0, -40.0),
                  (30.0, 40.0, -70.0), (-40.0, 90.0, -50.0))

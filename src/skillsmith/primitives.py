@@ -129,10 +129,11 @@ class Robot:
             if q is None:  # one solve: reach check + gripper axes at the grasp
                 raise Unreachable(f"no level (side) grasp of {target.label} at ({x:.3f}, {y:.3f}, z={gz:.3f}), "
                                   f"{math.hypot(x, y):.3f} m from the base: a side grasp reaches about "
-                                  "0.22..0.33 m out. Move it outward")
+                                  "0.28..0.33 m out with the gripper horizontal. Move it outward")
             (jx, jy, _), (ax, ay) = self._jaw_axis(q, x, y), self._reach_dir(q, x, y)
             shift = (JAW_CENTRE_SHIFT * jx, JAW_CENTRE_SHIFT * jy)  # object mid-gap while the jaws come in
-            back = self._standoff(target, x, y, gz, shift, (ax, ay), q)
+            turn_z = target.top + max(hover, SWING_CLEARANCE)
+            back = self._standoff(target, x, y, (gz, turn_z), shift, (ax, ay), q)
             bx, by = x + shift[0] - back * ax, y + shift[1] - back * ay
             self._move((bx, by, target.top + max(hover, SWING_CLEARANCE)), None, i, side=True)  # turn up high
             fix = 0.0
@@ -177,18 +178,31 @@ class Robot:
         n = math.hypot(zx, zy) or 1.0
         return zx / n, zy / n
 
-    def _standoff(self, target: SceneObject, x: float, y: float, gz: float, shift, a, seed) -> float:
+    def _standoff(self, target: SceneObject, x: float, y: float, zs, shift, a, seed) -> float:
         """How far back (m, along the reach direction) the jaws start: SIDE_STANDOFF, or less where
         a level gripper cannot reach that near the base (never below the object's radius + 1 cm)."""
-        least = target.width_at(gz) / 2 + SIDE_STANDOFF_MARGIN
+        least = target.width_at(zs[0]) / 2 + SIDE_STANDOFF_MARGIN  # zs: (grip z, turn z), both must be reachable
         back = SIDE_STANDOFF
         while back >= least:
             p = (x + shift[0] - back * a[0], y + shift[1] - back * a[1])
-            if math.hypot(*p) >= SIDE_MIN_REACH and self._ik((p[0], p[1], gz), seed, side=True) is not None:
+            if math.hypot(*p) >= SIDE_MIN_REACH and self._descent_ok(p, zs, seed):
                 return back
             back -= 0.01
         raise Unreachable(f"{target.label} at ({x:.3f}, {y:.3f}) is too near the base to reach in from the side: "
-                          f"a level gripper cannot start {least * 100:.0f} cm short of it. Move it outward")
+                          f"a horizontal gripper cannot start {least * 100:.0f} cm short of it "
+                          "(it needs ~0.28 m or more). Move it outward")
+
+    def _descent_ok(self, p, zs, seed) -> bool:
+        """Can a level gripper go down at p from zs[1] (turn height) to zs[0] (grip height) in approach_step
+        steps, each solved from the one before, exactly as _move will?"""
+        grip_z, turn_z = zs
+        q = self._ik((p[0], p[1], turn_z), seed, side=True)
+        n = max(1, math.ceil((turn_z - grip_z) / self._cfg.safety.approach_step))
+        for k in range(1, n + 1):
+            if q is None:
+                return False
+            q = self._ik((p[0], p[1], turn_z + (grip_z - turn_z) * k / n), q, side=True)
+        return q is not None
 
     def _wrist_locate(self, target: SceneObject) -> Optional[tuple[float, float]]:
         """Locate `target`'s top with the wrist camera from the current pose. None (overhead position

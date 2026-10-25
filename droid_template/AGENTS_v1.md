@@ -122,7 +122,7 @@ robot.move_to(x, y, cup.top + 0.03)
 robot.home()                          # home points down again
 ```
 
-- A side grasp reaches cups about **0.22–0.33 m from the base** (it reaches in from ~4 cm short of
+- A side grasp reaches cups about **0.28–0.33 m from the base** (gripper horizontal) (it reaches in from ~4 cm short of
   the cup, so it needs room behind it). Nearer is `Unreachable` before moving: report it, don't tune
   heights. Keep level moves at ≥ 0.18 m.
 - While holding a cup level, travel at `cup.top + 0.03`, not 0.18 (too high to stay level).
