@@ -41,6 +41,23 @@ class labels are seeded (the rule-based classifier, WS4.5, isn't merged yet), so
 class plus a generic hint. Re-run once WS4.5 lands (classifier labels, no caveat line) and with
 harder cases (bugs that need the frames or the object track to diagnose).
 
+### 1b. Model ladder: Haiku first (Factory mentor's advice)
+
+Droid now starts every repair on **Haiku 5.5, medium reasoning** and steps up only when a fix doesn't
+hold: Haiku high, then Sonnet 5.5, then Opus 5.5, inside the same Droid session (`droid.escalate` in
+`config/robot.yaml`). Same benchmark, evidence v2, **real classifier labels** (WS4.5, no seeded caveat):
+
+`python -m skillsmith.repair.benchmark --author droid --evidence v2 --max-rounds 2`
+(raw: `results/benchmark-droid-haiku-medium-2026-10-24.json`)
+
+| Model | Fixed | Fixed in one round | Median seconds to fix | Stepped up |
+|---|---|---|---|---|
+| Haiku 5.5, medium | **8/8** | **8/8** | **14.3** | never |
+| Droid default (GPT-6 Sol), for comparison (§1, v2) | 8/8 | 8/8 | 16.4 | n/a |
+
+Haiku handles every seeded case on the first rung, slightly faster. The ladder is the safety net for
+harder real-world failures; the dashboard shows a `droid.escalate` note when it climbs.
+
 ## 2. The demo failure, end to end
 
 `skillsmith --profile stage demo-fake --seed --author droid`
