@@ -77,7 +77,7 @@ def test_oracle_benchmark_fixes_every_class_in_one_round_with_both_evidence_vers
     result = run_benchmark("oracle", cfg=cfg)
     assert len(result.cases) == 2 * len(CASES)
     assert all(c.seeded_failed and c.fixed and c.rounds == 1 and c.error is None for c in result.cases)
-    assert all(c.observed_cls == c.cls and c.labels == "seeded" for c in result.cases)
+    assert all(c.observed_cls == c.cls and c.labels == "classifier" for c in result.cases)  # WS4.5 labels them
     assert all(c.seconds is not None and c.seconds >= 0 for c in result.cases)
     overall = {s.evidence: s for s in result.summary() if s.cls == "all"}
     assert overall["v1"].fix_rate == overall["v2"].one_round_rate == 1.0
@@ -87,7 +87,7 @@ def test_oracle_benchmark_fixes_every_class_in_one_round_with_both_evidence_vers
     for cls in {c.cls for c in CASES}:
         assert f"`{cls}`" in table
     assert "| `COLLISION` | 2 |" in table and "invalid" not in table
-    assert bench.SEEDED_CAVEAT in table  # seeded labels are an oracle class: say so next to the numbers
+    assert bench.SEEDED_CAVEAT not in table  # real classifier labels: no oracle caveat
     json.dumps(result.to_json())
 
 
@@ -198,7 +198,6 @@ def test_seeded_hints_never_name_a_template_slot():
         assert run_case(case, "v2", factory, cfg).fixed
         report = factory.authors[0].reports[0]
         (look,) = [line for line in report.splitlines() if line.startswith("**Look at:**")]
-        assert look == f"**Look at:** {bench.CLASS_HINTS[case.cls]}", case.name
         assert not [w for w in SLOT_WORDS if w in look.lower()], (case.name, look)
 
 

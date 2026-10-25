@@ -135,6 +135,7 @@ def test_expected_vs_actual_has_numbers_and_frame_pairs(rim_slip):
 
 def test_unclassified_failure_still_leads_with_a_class():
     attempt = _run(load_config(), rim_slip=True)
+    attempt.phases, attempt.classification = [], None  # analysis gave nothing (WS4.5 labels this run)
     md = attempt_report(TASK, attempt, [])
     assert md.splitlines()[2].startswith("**Failure class:** `UNKNOWN` (unclassified")
     assert "_no phase checks for this attempt_" in md

@@ -20,6 +20,9 @@ cameras:
   front: http://100.67.242.86:8001/stream    # MacBook stand-in; replace with a fixed overhead webcam
   calibration: config/camera.json             # intrinsics + pose, written by tools/calibrate_camera.py (WS3.2)
 
+analysis:
+  classifier: true                  # WS4.5 rule-based failure classifier (class, bucket, phase, hint)
+
 world:                              # live world model (WS3.5)
   rate_hz: 12
   bump_threshold: 0.01              # m; a not-held object moving more than this = WorldChanged
