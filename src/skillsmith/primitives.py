@@ -67,7 +67,7 @@ class Robot:
     def grasp(self) -> bool:
         """Close the gripper. True if something is held."""
         def do(_i):
-            self._env.arm.set_gripper(self._cfg.robot.gripper_closed)
+            self._env.arm.set_gripper(self._close_pct())
             held = self._env.arm.gripper_holding()
             state = getattr(self._env.arm, "state", None)
             if callable(state):  # evidence: where the jaws stopped and how hard they push
@@ -145,6 +145,7 @@ class Robot:
             scene = self._env.perception.observe()
             self.last_scene = scene
             target = scene.require(obj)
+            self._grasp_kind = target.kind
             x, y = target.x, target.y
             gz = target.top - SIDE_GRIP_BELOW_TOP if grip_z is None else float(grip_z)
             gz = min(max(gz, target.z + 0.01), target.top - 0.005)
@@ -187,6 +188,14 @@ class Robot:
             return
         if front is not None or wrist is not None:
             self.captures[index] = (front, wrist, tip)
+
+    def _close_pct(self) -> float:
+        """Where grasp() closes the jaws: robot.gripper_closed_by_kind for the object the last approach
+        aimed at (taught per object: a paper cup is gripped at its width, not crushed), else gripper_closed."""
+        by_kind = self._cfg.robot.get("gripper_closed_by_kind")
+        kinds = by_kind.raw() if by_kind is not None else {}
+        kind = getattr(self, "_grasp_kind", None)
+        return float(kinds.get(kind, self._cfg.robot.gripper_closed))
 
     def _check_not_pushed(self, target: SceneObject, dps: float, phase: str) -> None:
         """Stop BEFORE closing when the camera sees the object pushed: the gripper touched it."""

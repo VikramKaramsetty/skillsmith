@@ -23,6 +23,7 @@ robot:
   home_xyz: [0.18, 0.0, 0.15]       # MEASURE: safe pose above the middle of the table
   gripper_open: 100
   gripper_closed: 0
+  gripper_closed_by_kind: {cup: 25}  # taught on the demo cup 2026-10-25: the jaws meet it at 31 %; 0 crushed it
 
 cameras:                            # robotd opens these; `name:` = the macOS camera whose name contains it
   front: "name:iPhone"              # overhead: the iPhone via Continuity Camera (video effects OFF, docs/RUNBOOK.md)
