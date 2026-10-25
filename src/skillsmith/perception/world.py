@@ -94,6 +94,10 @@ DRIFT_CHECKS = 2  # consecutive drift checks over the limit before the gate fail
 LOW_CONF_FRAMES = 3  # consecutive frames with an uncertain detection before the gate fails
 NEW_FRAMES = 3  # frames a new track must be seen before it counts as an extra object
 LOST_S = 5.0  # s of updates a baseline object may stay unseen before it counts as missing
+OCCLUDE_NEAR = 0.15  # m; a resting track this near the tip is hidden by the wrist and forearm (the overhead
+#                      camera looks down at an angle): its jumps are occlusion, not a bump. approach_side's own
+#                      push check (raw detections) still catches a real push of the target. 8 cm let a 3 cm jitter
+#                      of a cup near the base stop the pick (runs 083640, 085032)
 ARM_RADIUS = 0.08  # m; uncertain detections this close to the tip are the arm's occlusion, not doubt
 
 
@@ -566,7 +570,7 @@ class WorldModel:
             if held is not None and (held.obj.color, held.obj.kind) == (obj.color, obj.kind) \
                     and math.hypot(obj.x - tip[0], obj.y - tip[1]) <= HELD_NEAR:
                 return  # the held cup seen off its track (its top is higher than assumed): not a bump
-        if tip is not None and not holding and math.hypot(ax - tip[0], ay - tip[1]) <= ARM_RADIUS:
+        if tip is not None and not holding and math.hypot(ax - tip[0], ay - tip[1]) <= OCCLUDE_NEAR:
             track.obj = replace(track.obj, x=ax, y=ay)  # occluded by the arm: keep where it was
             track.over = 0
             return

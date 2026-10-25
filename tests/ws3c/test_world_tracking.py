@@ -116,7 +116,7 @@ def test_held_object_follows_gripper_and_is_not_a_bump():
 
 def test_release_reanchors_without_bump_then_bump_detectable():
     arm = FakeArm(tip=(0.22, 0.08, 0.04))
-    det = FakeDetector([cup("red", 0.22, 0.08), cup("blue", 0.22, -0.08)])
+    det = FakeDetector([cup("red", 0.22, 0.08), cup("blue", 0.22, -0.15)])
     world = make_world(detector=det, arm=arm)
     world.step()
     arm.holding = True
@@ -125,12 +125,12 @@ def test_release_reanchors_without_bump_then_bump_detectable():
     world.step()
     arm.holding = False
     world.step()
-    det.dets = [cup("red", 0.185, 0.006), cup("blue", 0.22, -0.08)]  # landed ~0.8 cm off the FK guess
+    det.dets = [cup("red", 0.185, 0.006), cup("blue", 0.22, -0.15)]  # landed ~0.8 cm off the FK guess
     for _ in range(3):
         world.step()
     assert world.unexpected_motion() is None
     assert obj(world, "red_cup_0").x == pytest.approx(0.185)
-    det.dets = [cup("red", 0.185, 0.006), cup("blue", 0.19, -0.08)]  # blue is knocked toward -x
+    det.dets = [cup("red", 0.185, 0.006), cup("blue", 0.19, -0.15)]  # blue (beyond OCCLUDE_NEAR of the tip) is knocked toward -x
     world.step()
     world.step()
     assert world.unexpected_motion() == "blue cup moved 3.0 cm toward -x while not held"
