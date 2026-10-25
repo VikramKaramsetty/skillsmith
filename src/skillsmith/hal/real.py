@@ -44,6 +44,8 @@ from skillsmith.perception.frames import TOKEN_ENV, TOKEN_HEADER
 
 N_JOINTS = 6
 FRONT_CAM = "front"
+HOLD_PUSH_LOAD = 50.0  # gripper load: jaws stopped short of the command AND pushing this hard = on the object
+HOLD_WIDE_GAP = 4.0  # gripper %; jaws this far short of a commanded close hold something (empty closes to ~1.6)
 START_HINT = "a human starts it: ~/robot/.venv/bin/python -m robotd --port 8100 (docs/RUNBOOK.md)"
 
 # robotd is on localhost or a link-local cable: never route it through an HTTP proxy from the environment
@@ -92,9 +94,29 @@ class RobotdArm:
 
     def set_gripper(self, pct: float) -> None:
         self._call("POST", "/gripper", {"pct": float(pct)}, self.move_timeout_s)
+        self._gripper_goal = float(pct)
+        self._latched = False
+        if pct < 50:  # a close: latch "holding" if it caught something (see gripper_holding)
+            self._latched = self._raw_holding()
 
     def gripper_holding(self) -> bool:
-        return bool(self._field(self.state(), "holding", "GET /state"))
+        """Latched after a close that caught something, until the jaws open: on a paper cup the jaws creep
+        toward the command and the load fades, so the raw signal read 'lost' while the arm was lifting the
+        cup. A real drop shows up in the cameras (the cup back on the table) and the success check."""
+        return bool(getattr(self, "_latched", False)) or self._raw_holding()
+
+    def _raw_holding(self) -> bool:
+        """robotd's load-based signal, OR the jaws stopped well short of a commanded close: empty jaws
+        close to ~0-2 %, so >= HOLD_WIDE_GAP short means something is between them. A gently ramped
+        close on a paper cup never reached robotd's load threshold, so a real grasp read as a miss."""
+        st = self.state()
+        if bool(self._field(st, "holding", "GET /state")):
+            return True
+        goal = getattr(self, "_gripper_goal", None)
+        if goal is None or goal >= 50:
+            return False
+        gap = float(st.get("gripper_pos", 0.0)) - goal
+        return gap >= HOLD_WIDE_GAP or (gap >= 1.0 and abs(float(st.get("gripper_load", 0.0))) >= HOLD_PUSH_LOAD)
 
     def stop(self) -> None:
         self._call("POST", "/stop", {})
@@ -180,6 +202,7 @@ def make_real_env(cfg, bus: Optional[EventBus] = None):
     try:
         arm.joints()  # fail at startup, with the start command, if robotd is not up
         kin = make_kinematics(cfg)
+        kin.side_z_offset = float(cfg.robot.get("side_z_offset", 0.0))  # real-arm level-pose height error
         frames = make_frame_source(cfg, FRONT_CAM)
         built.append(frames)
         perception = WorldModel(cfg, frame_source=frames, kinematics=kin, arm=arm, bus=bus)

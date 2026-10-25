@@ -237,6 +237,25 @@ def side_by_side(before_bgr, after_bgr, labels: Tuple[str, str] = ("before", "af
     return np.hstack([tiles[0], gap, tiles[1]])
 
 
+def caption_strip(img, lines: Sequence[str], width_chars: int = 110):
+    """`img` with a white strip underneath holding `lines` (wrapped), dark text: the readable part of a
+    key frame for Droid (phase, verdict, class, what ran, the classifier's summary and hint)."""
+    import textwrap
+
+    import cv2
+    import numpy as np
+
+    wrapped = [w for line in lines if line for w in textwrap.wrap(str(line), width_chars)]
+    scale = max(0.45, img.shape[1] / 1800.0)
+    line_h = int(28 * scale / 0.6)
+    strip = np.full((line_h * len(wrapped) + line_h // 2, img.shape[1], 3), 255, dtype=img.dtype)
+    for k, text in enumerate(wrapped):
+        bold = 2 if k == 0 else 1
+        cv2.putText(strip, text, (10, line_h * (k + 1)), cv2.FONT_HERSHEY_SIMPLEX, scale, (20, 20, 20), bold,
+                    cv2.LINE_AA)
+    return np.vstack([img, strip])
+
+
 def write_image(path: Union[str, Path], img) -> str:
     """Save `img` (creating parent folders) and return the path, for `AttemptResult.keyframes`."""
     import cv2

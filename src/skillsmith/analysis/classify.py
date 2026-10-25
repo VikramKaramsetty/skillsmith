@@ -160,12 +160,19 @@ def _hardware(f: _Facts) -> Optional[Classification]:
 
 
 def _gate(f: _Facts) -> Optional[Classification]:
-    """Perception we cannot trust: environment, never a skill label."""
+    """Perception we cannot trust: environment, never a skill label. A moved camera always counts; doubt
+    about detections does not while the arm holds a cup: the jaws hide part of it, so a low score or a
+    vanished track is the grip, not doubt about the table (the cup is in the jaws: we know where it is)."""
     a = f.attempt
+    holding = a.held_at_stop
     if f.perception is not None and not f.perception[0]:
         reason = f.perception[1] or "perception check failed"
+        if holding and _gate_class(reason)[0] == "PERCEPTION_UNCERTAIN":
+            return None
         cls, hint = _gate_class(reason)
         return _label(f, cls, f.stop, f"perception gate failed: {reason}", hint, perception=reason)
+    if holding:
+        return None
     floor = f.setting("world", "min_confidence", MIN_DETECTION)
     low = [o for s in (a.scene_before, a.scene_after) if s for o in s.objects if o.confidence < floor]
     if low:
@@ -375,6 +382,19 @@ def _collision_hint(phase: Optional[str]) -> str:
     }.get(phase or "", "the trace: the tip path against the other objects and the table")
 
 
+def _too_near(f: _Facts) -> Optional[Classification]:
+    """A side grasp (or the skill itself) saying the object must move outward: the table needs fixing,
+    not the code, so no Droid round is spent on it."""
+    if f.kind not in ("Unreachable", "SkillError"):
+        return None
+    m = f.message.lower()
+    near = "from the base" in m or "too near the base" in m
+    if not near or not any(w in m for w in ("outward", "inward", "needs", "move it", "move the")):
+        return None
+    return _label(f, "OBJECT_OUT_OF_REACH", f.stop, f.message,
+                  "move the object farther from the base (side grasps need about 0.28 m)")
+
+
 def _refused(f: _Facts) -> Optional[Classification]:
     if f.kind not in ("SafetyViolation", "Unreachable"):
         return None
@@ -582,7 +602,8 @@ def _after(a: AttemptResult, obj: Optional[SceneObject]) -> Optional[SceneObject
 # ---- entry point --------------------------------------------------------------------------
 
 RULES: Sequence[Callable[[_Facts], Optional[Classification]]] = (
-    _static, _hardware, _gate, _timeout, _code_error, _bump, _carry_path, _collision, _refused, _not_found,
+    _static, _hardware, _gate, _timeout, _code_error, _bump, _carry_path, _collision, _too_near, _refused,
+    _not_found,
     _grasp_miss, _no_pick, _slip, _place,
 )
 

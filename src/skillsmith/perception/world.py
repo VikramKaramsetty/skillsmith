@@ -81,6 +81,12 @@ KNOWN_OBJECTS: Dict[str, Tuple[float, float]] = {
 DEFAULT_SIZE = (0.05, 0.05)
 ASSOC_RADIUS = 0.08  # m; a detection farther than this from every same-kind track starts a new one
 GRAB_RADIUS = 0.06  # m; the held object is the track nearest the tip, within this
+HELD_NEAR = 0.12  # m; while holding, a same-colour detection this near the tip is the held object, never a bump
+HELD_ABSORB = 0.08  # m; a same-colour detection this near the held object IS it (lifted: its top is not at the
+#                     table-top height the localiser assumes, so it lands a few cm off; it must not become a
+#                     "new" cup or a bump)
+RELEASE_FRAMES = 3  # holding must read False this many updates in a row before the held object is let go
+#                     (robotd's load-based signal flickers mid-lift; one False dropped the cup, then "bumped")
 BUMP_FRAMES = 2  # consecutive frames over the threshold before a bump fires (one bad frame is noise)
 RATE_WINDOW = 30  # steps averaged by rate()
 MAX_MARKER_DRIFT = 0.01  # m; calibration markers farther than this from where calibrated = camera moved
@@ -88,6 +94,10 @@ DRIFT_CHECKS = 2  # consecutive drift checks over the limit before the gate fail
 LOW_CONF_FRAMES = 3  # consecutive frames with an uncertain detection before the gate fails
 NEW_FRAMES = 3  # frames a new track must be seen before it counts as an extra object
 LOST_S = 5.0  # s of updates a baseline object may stay unseen before it counts as missing
+OCCLUDE_NEAR = 0.15  # m; a resting track this near the tip is hidden by the wrist and forearm (the overhead
+#                      camera looks down at an angle): its jumps are occlusion, not a bump. approach_side's own
+#                      push check (raw detections) still catches a real push of the target. 8 cm let a 3 cm jitter
+#                      of a cup near the base stop the pick (runs 083640, 085032)
 ARM_RADIUS = 0.08  # m; uncertain detections this close to the tip are the arm's occlusion, not doubt
 
 
@@ -106,6 +116,7 @@ class _Track:
     over: int = 0  # consecutive frames beyond the bump threshold
     seen: int = 1  # frames with a detection
     missed: int = 0  # consecutive frames without one
+    raw: Optional[Tuple[float, float]] = None  # latest detected xy, even while the arm 'occludes' it
 
 
 class WorldModel:
@@ -147,6 +158,7 @@ class WorldModel:
         self._tracks: Dict[str, _Track] = {}
         self._counts: Dict[str, int] = {}
         self._held: Optional[str] = None
+        self._not_holding = 0  # consecutive updates with holding False (see RELEASE_FRAMES)
         self._held_offset: Vec3 = (0.0, 0.0, 0.0)
         self._bumps: List[str] = []
         self._frame = None
@@ -173,6 +185,17 @@ class WorldModel:
             with self._lock:
                 scene = self._scene
         return scene if scene is not None else Scene((), time.time(), "camera:none")
+
+    def displacement(self, query: str, since: Tuple[float, float]) -> Optional[float]:
+        """How far (m) the camera last saw `query` from `since`, using its RAW detection: near the arm a
+        moved object is otherwise kept where it was (occlusion rule), which hid the gripper pushing a cup
+        away. None when it has no fresh detection."""
+        with self._lock:
+            hits = [t for t in self._tracks.values() if t.raw is not None and t.missed == 0
+                    and (t.obj.id == query or t.obj.label == query)]
+        if not hits:
+            return None
+        return min(math.hypot(t.raw[0] - since[0], t.raw[1] - since[1]) for t in hits)
 
     def unexpected_motion(self) -> Optional[str]:
         with self._lock:
@@ -205,11 +228,14 @@ class WorldModel:
 
     def reset_gate(self) -> None:
         """Start a new gate window (call when an attempt starts): the next update is the baseline
-        for the object count, and latched low-confidence issues clear. Marker drift is a property
-        of the camera, so it stays until the markers are back in place."""
+        for the object count, and latched low-confidence issues clear, and so do bumps: a cup moved by
+        hand while the run waited (e.g. at the approval prompt) is where it is now, not a bump of this
+        attempt (each bump already re-anchored its track). Marker drift is a property of the camera,
+        so it stays until the markers are back in place."""
         with self._lock:
             self._baseline = None
             self._low_conf, self._low_conf_run = None, 0
+            self._bumps.clear()
 
     def align_offset(self, obj: SceneObject) -> Tuple[float, float]:
         """Wrist-camera fine correction (dx, dy) in metres, base frame. (0.0, 0.0) on any failure."""
@@ -272,6 +298,21 @@ class WorldModel:
         self.bus.emit("note", text=reason, where="perception.wrist", holding=result.holding,
                       confidence=result.confidence, fill=result.fill)
         return result.holding, reason
+
+    def keyframe_images(self) -> Tuple[Any, Any]:
+        """(front BGR, wrist BGR) right now, either None when unavailable: evidence for Droid (keyframes)."""
+        with self._lock:
+            frame = self._frame
+        front = wrist = None
+        try:
+            front = self._decode(frame) if frame is not None else None
+        except Exception:
+            front = None
+        try:
+            wrist = self._wrist_image() if self.wrist_frames is not None else None
+        except Exception:
+            wrist = None
+        return front, wrist
 
     def snapshot(self, path: str) -> Optional[str]:
         with self._lock:
@@ -406,6 +447,8 @@ class WorldModel:
 
     # ---- held object --------------------------------------------------------------------
     def _update_held(self, tip: Optional[Vec3], holding: bool) -> None:
+        if holding:
+            self._not_holding = 0
         if holding and tip is not None:
             if self._held is None:
                 self._grab(tip)
@@ -414,6 +457,9 @@ class WorldModel:
                 dx, dy, dz = self._held_offset
                 track.obj = replace(track.obj, x=tip[0] + dx, y=tip[1] + dy, z=max(0.0, tip[2] + dz),
                                     visible=True)
+        elif self._held is not None and self._not_holding < RELEASE_FRAMES - 1:
+            self._not_holding += 1  # a flicker: keep the object attached for now
+            return
         elif self._held is not None:
             track = self._tracks[self._held]
             track.anchor, track.over = None, 0  # where it really landed is not a bump
@@ -477,6 +523,11 @@ class WorldModel:
             matched.add(tid)
             if tid != self._held:  # the held object follows the tip; its detection is absorbed
                 self._update_track(tid, seen[i])
+        held = self._tracks.get(self._held) if self._held is not None else None
+        for i, obj in enumerate(seen):
+            if i not in used and held is not None and (held.obj.color, held.obj.kind) == (obj.color, obj.kind) \
+                    and math.hypot(held.obj.x - obj.x, held.obj.y - obj.y) <= HELD_NEAR:
+                used.add(i)  # the lifted held object, localised off: absorbed, not a new cup
         for i, obj in enumerate(seen):
             if i not in used:
                 if self._fragment_of(obj) is not None:
@@ -506,6 +557,7 @@ class WorldModel:
 
     def _update_track(self, tid: str, obj: SceneObject) -> None:
         track = self._tracks[tid]
+        track.raw = (obj.x, obj.y)
         track.obj = replace(obj, id=tid, visible=True)
         track.seen += 1
         if track.anchor is None:
@@ -513,7 +565,12 @@ class WorldModel:
             return
         ax, ay = track.anchor
         tip, holding = getattr(self, "_arm_now", (None, False))
-        if tip is not None and not holding and math.hypot(ax - tip[0], ay - tip[1]) <= ARM_RADIUS:
+        if tip is not None and holding and self._held is not None and tid != self._held:
+            held = self._tracks.get(self._held)
+            if held is not None and (held.obj.color, held.obj.kind) == (obj.color, obj.kind) \
+                    and math.hypot(obj.x - tip[0], obj.y - tip[1]) <= HELD_NEAR:
+                return  # the held cup seen off its track (its top is higher than assumed): not a bump
+        if tip is not None and not holding and math.hypot(ax - tip[0], ay - tip[1]) <= OCCLUDE_NEAR:
             track.obj = replace(track.obj, x=ax, y=ay)  # occluded by the arm: keep where it was
             track.over = 0
             return

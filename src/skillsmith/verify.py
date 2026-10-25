@@ -214,7 +214,20 @@ def _upright(scene, args, xy_tol, z_tol):
     return VerifyResult(True, f"{o.label} is upright (height {_cm(o.height)}, width {_cm(o.width)})")
 
 
+def _lifted(scene, args, xy_tol, z_tol):
+    """[name, min_z]: the object's base is at least min_z above the table (held up by the gripper)."""
+    name, min_z = args
+    miss = _missing(scene, name)
+    if miss:
+        return miss
+    o = scene.find(name)
+    if o.z < float(min_z) - z_tol:
+        return VerifyResult(False, f"{o.label} is not lifted: its base is at {_cm(o.z)} (need {_cm(float(min_z))})")
+    return VerifyResult(True, f"{o.label} is lifted: its base is at {_cm(o.z)}")
+
+
 _OPS = {
+    "lifted": _lifted,
     "on_top": _on_top, "inside": _inside, "near": _near, "all": _all, "any": _any, "not": _not,
     "tower": _tower, "sorted_by_color": _sorted_by_color, "left_of": _left_of, "upright": _upright,
 }

@@ -10,7 +10,11 @@ robot:
   # Calibration zero vs URDF zero, added by robotd to every reading (model = raw + offset). Fitted
   # 2026-10-25 on Rohan's Mac from 9 jaw-tip touches on the printed mat (T1-T5, markers 0-3):
   # 0.3 cm mean / 0.4 cm max error after, 4.9 cm before. Redo after any lerobot-calibrate (runs/fit_offsets.py).
-  joint_offsets_deg: [2.32, -3.0, -4.96, -0.64, 0.0, 0.0]
+  # wrist_roll -90 (2026-10-25): raw roll 0 opens the jaws sideways with the wrist camera on top, which is URDF
+  # roll -90. The tip fit used the fixed jaw tip, which hardly moves with roll, so it never showed; side grasps
+  # opened the jaws up/down and drove the moving jaw into the table.
+  joint_offsets_deg: [2.32, -3.0, -4.96, -0.64, -90.0, 0.0]
+  side_z_offset: 0.02               # m; level (side-grasp) poses: real tip ~2 cm above the model (2026-10-25, by eye)
   position_p_gain: 32                # servo stiffness (LeRobot default 16 let the elbow sag 2.3 deg at reach)
   joint_names: [shoulder_pan, shoulder_lift, elbow_flex, wrist_flex, wrist_roll, gripper]
   urdf: assets/so101/so101_new_calib.urdf      # WS2 vendors this from TheRobotStudio SO-ARM100
@@ -19,6 +23,9 @@ robot:
   home_xyz: [0.18, 0.0, 0.15]       # MEASURE: safe pose above the middle of the table
   gripper_open: 100
   gripper_closed: 0
+  gripper_open_by_kind: {cup: 100}  # approach opening per kind (narrower made the moving jaw clip the target cup in sim)
+  gripper_closed_by_kind: {cup: 29}  # taught on the demo cup 2026-10-25: the jaws meet it at 31 %; 0 crushed it,
+  #                                    25 stopped at 27 % (too close to the command to read as holding)
 
 cameras:                            # robotd opens these; `name:` = the macOS camera whose name contains it
   front: "name:iPhone"              # overhead: the iPhone via Continuity Camera (video effects OFF, docs/RUNBOOK.md)
@@ -35,10 +42,13 @@ wrist:                              # wrist-camera checks (perception/wrist.py, 
   # roll_sign, cam_height): a wrong sign moves the gripper up to 2 cm the wrong way. align_over then hovers
   # on the overhead camera's position only. Set 0.3 after the wrist check in PR #204 gives sensible offsets.
   min_align_confidence: 1.1
+  # approach_side's wrist-camera fix OFF on the real arm until tools/calibrate_wrist.py has fitted this camera:
+  # its image is rotated ~90 deg vs the MJCF mount and the pink top reads at saturation ~70 (2026-10-25).
+  locate: false
 
 world:                              # live world model (WS3.5)
   rate_hz: 12
-  bump_threshold: 0.01              # m; a not-held object moving more than this = WorldChanged
+  bump_threshold: 0.02              # m; a not-held object moving more than this = WorldChanged (1 cm tripped on camera jitter)
   min_confidence: 0.5               # below this a detection is 'uncertain' (confidence gate)
   objects:                          # measured: the demo's paper cup, used upside down (mouth on the table)
     cup: {height: 0.0953, width: 0.0762, top_width: 0.0508}   # 3.75 in tall; 3 in mouth on the table; 2 in base on top
@@ -68,6 +78,9 @@ safety:
   max_joint_speed_dps: 60
   max_step_deg: 10                  # robotd per-command clamp (5-10 works; 2 stalled the elbow)
   settle_tol_deg: 2.5               # robotd: a move counts as reached within this (gravity sag)
+  grip_squeeze_pct: 8.0             # robotd soft grip: hold this far past contact (0 crushed it; 12 crushed it too)
+  gripper_torque_limit: 250         # gripper servo Max_Torque_Limit /1000 (LeRobot 500 crushed the paper cup)
+  joint_tol_deg: {wrist_roll: 7.0}  # level gripper: roll sags 4-5 deg under its own weight (2026-10-25)
   joint_limit_margin_deg: 2         # robotd refuses goals this close to a calibrated joint limit
   max_lag_deg: 10                   # robotd watchdog: a joint this far behind its goal halts the move
   max_calls: 80                     # primitive calls per attempt (includes nested skills)

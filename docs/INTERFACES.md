@@ -271,6 +271,7 @@ JSON-able dicts evaluated on the post-attempt `Scene`:
 {"op": "on_top",  "args": ["blue cup", "red cup"]}        // xy < tol, a.z ≥ b.top - 1 cm
 {"op": "inside",  "args": ["red block", "green cup"]}     // xy < cup radius, a.z < cup.top
 {"op": "near",    "args": ["red block", 0.20, -0.10]}     // xy within tol of a point
+{"op": "lifted",  "args": ["pink cup", 0.03]}            // base at least 3 cm above the table (held)
 {"op": "all",     "args": [ <predicate>, ... ]}
 {"op": "any",     "args": [ <predicate>, ... ]}
 {"op": "not",     "args": [ <predicate> ]}
@@ -347,6 +348,7 @@ One JSON object per line in `runs/<run_id>/events.jsonl`, also pushed to subscri
 | `sim.video` | `path` |
 | `reset.requested` | `message` (a human resets the table; followed by an approval request with `kind: "reset"`) |
 | `approval.requested` / `approval.decided` | `summary` / `approved`, `note`. `summary.kind`: absent (approve code for the real arm), `"reset"`, or `"environment"` (+ `class`, `phase`, `summary`, `hint`, `skill`, `version`, `env`: a human fixes the table/camera, then approves a retry of the same code) |
+| `outcome.requested` / `outcome.decided` | `summary` / `ok`, `note`, `system_ok`. After each real-arm attempt the supervisor answers "did the task succeed?"; the answer overrides the sensors and a "no" note goes to Droid |
 | `skill.saved` | `skill`, `version` |
 | `run.finished` | `ok`, `rounds` |
 | `phase.check` | `PhaseCheck` dict |

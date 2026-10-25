@@ -30,9 +30,9 @@
                                      background: #333; color: #ddd; cursor: pointer; }
   #replay-bar button.on { background: #c80; color: #111; font-weight: 700; }
   #replay-pos { color: #ccc; font-variant-numeric: tabular-nums; font-size: 14px; }
-  main { padding: 20px 28px; display: grid; gap: 24px; grid-template-columns: minmax(0, 1fr) minmax(360px, 40%);
+  main { padding: 14px 24px; display: grid; gap: 16px 24px; grid-template-columns: minmax(0, 1fr) minmax(340px, 30%);
          align-items: start; max-width: 1900px; }
-  #story { display: grid; gap: 18px; min-width: 0; }
+  #story { display: grid; gap: 14px; min-width: 0; grid-template-columns: minmax(0, 1fr); }
   @media (max-width: 1100px) { main { grid-template-columns: minmax(0, 1fr); } }
   #world-box { display: grid; gap: 10px; }
   #cam-wrap { position: relative; background: #000; border-radius: 10px; overflow: hidden; min-height: 120px; }
@@ -59,10 +59,11 @@
   #improve-runs .ok { color: #6e6; } #improve-runs .bad { color: #f77; }
   #improve-lessons { color: #cdb; font-size: 15px; margin-top: 6px; }
   .label { color: #888; font-size: 14px; text-transform: uppercase; letter-spacing: .08em; }
-  #task { font-size: 34px; font-weight: 600; }
+  #task { font-size: 24px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   #task.empty { color: #555; }
-  #banner { font-size: 44px; font-weight: 800; padding: 18px 24px; border-radius: 10px; background: #333; }
-  #banner .sub { display: block; font-size: 22px; font-weight: 400; margin-top: 6px; opacity: .9; }
+  #banner { flex: 0 1 46%; min-width: 0; font-size: 26px; font-weight: 800; padding: 10px 18px; border-radius: 10px; background: #333; }
+  #banner .sub { display: block; font-size: 15px; font-weight: 400; margin-top: 2px; opacity: .9;
+                 white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   #banner.idle { background: #2a2a2a; color: #777; }
   #banner.run { background: #234; }
   #banner.fail { background: #922; }
@@ -70,27 +71,27 @@
   #banner.wait { background: #a70; }
   #banner.pass { background: #1a7a3a; }
   #banner.error { background: #600; }
-  #droid { font-size: 26px; }
+  #droid { font-size: 16px; color: #ccc; }
   #droid .via { color: #9a9; font-size: 16px; margin-left: 8px; }
-  #change { color: #bbb; font-size: 18px; }
-  #diff { font: 20px/1.35 ui-monospace, monospace; background: #1a1a1a; border-radius: 8px;
+  #change { color: #999; font-size: 15px; margin-top: 4px; }
+  #diff { font: 15px/1.35 ui-monospace, monospace; background: #1a1a1a; border-radius: 8px;
           padding: 10px 16px; margin: 0; white-space: pre-wrap; word-break: break-all; }
   #diff .add { color: #6e6; } #diff .del { color: #f77; } #diff .more { color: #777; }
-  #gates { display: flex; gap: 22px; }
-  .gate { display: flex; align-items: center; gap: 10px; font-size: 24px; }
-  .light { width: 26px; height: 26px; border-radius: 50%; background: #444; }
+  #gates { display: flex; flex-direction: column; gap: 6px; }
+  .gate { display: flex; align-items: center; gap: 10px; font-size: 18px; }
+  .light { width: 18px; height: 18px; border-radius: 50%; background: #444; flex: none; }
   .gate.ok .light { background: #2d2; box-shadow: 0 0 12px #2d2; }
   .gate.fail .light { background: #e33; box-shadow: 0 0 12px #e33; }
-  .gate .detail { color: #999; font-size: 15px; max-width: 320px; }
+  .gate .detail { color: #999; font-size: 13px; max-width: 260px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   #approval { display: flex; gap: 18px; align-items: center; font-size: 22px; }
-  #approve { font-size: 30px; font-weight: 700; padding: 14px 40px; border: 0; border-radius: 10px;
+  #approve { font-size: 24px; font-weight: 700; padding: 10px 32px; border: 0; border-radius: 10px;
              background: #2a6; color: #fff; cursor: pointer; }
   #approve:disabled { background: #333; color: #777; cursor: default; }
   #reject { font-size: 20px; padding: 10px 22px; border: 0; border-radius: 8px; background: #833; color: #fff; cursor: pointer; }
   #note { font-size: 18px; padding: 8px 10px; width: 320px; background: #1a1a1a; color: #eee; border: 1px solid #444; border-radius: 6px; }
-  #task-form { display: flex; gap: 10px; margin-top: 8px; }
-  #task-input { flex: 1; font-size: 20px; padding: 8px 12px; background: #1a1a1a; color: #eee; border: 1px solid #444; border-radius: 6px; }
-  #task-form button { font-size: 20px; padding: 8px 22px; border: 0; border-radius: 6px; background: #246; color: #fff; cursor: pointer; }
+  #task-form { display: flex; gap: 10px; margin-top: 6px; }
+  #task-input { flex: 1; font-size: 16px; padding: 6px 10px; background: #1a1a1a; color: #eee; border: 1px solid #444; border-radius: 6px; }
+  #task-form button { font-size: 16px; padding: 6px 18px; border: 0; border-radius: 6px; background: #246; color: #fff; cursor: pointer; }
   #task-form button:disabled { background: #333; color: #777; cursor: default; }
   #task-msg { color: #f99; font-size: 16px; }
   .hidden { display: none !important; }
@@ -99,7 +100,7 @@
   #drawer-toggle .refused { color: #f99; font-weight: 700; }
   #drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(760px, 55vw); overflow: auto;
             background: #181818; border-left: 1px solid #333; padding: 14px 22px 40px; font-size: 15px;
-            box-shadow: -8px 0 24px #000a; }
+            box-shadow: -8px 0 24px #000a; z-index: 20; }  /* above the positioned camera box and cards */
   #drawer h2 { font-size: 15px; color: #888; text-transform: uppercase; letter-spacing: .08em; margin: 20px 0 8px; }
   #drawer .close { float: right; font-size: 20px; background: none; border: 0; color: #aaa; cursor: pointer; }
   #drawer .empty { color: #555; }
@@ -118,6 +119,53 @@
   .step .kind { display: inline-block; min-width: 56px; color: #6cf; }
   .step pre { margin: 2px 0 0 56px; font: 12px ui-monospace, monospace; color: #999; white-space: pre-wrap; word-break: break-all; }
   .perm .why { color: #bbb; }
+  /* Iterations: a big stage for the selected attempt, a filmstrip of every attempt under it. */
+  #iter-box { display: grid; gap: 10px; }
+  #iter-stage { background: #1a1a1a; border-radius: 12px; overflow: hidden; border-top: 6px solid #444; }
+  #iter-stage.ok { border-top-color: #2d2; } #iter-stage.bad { border-top-color: #e33; } #iter-stage.run { border-top-color: #48f; }
+  .stage-head { display: flex; align-items: center; gap: 12px; padding: 8px 14px; }
+  .stage-head .ver { font-size: 34px; font-weight: 800; }
+  .stage-head .result { font-size: 26px; font-weight: 800; }
+  .stage-head .change { color: #aaa; font-size: 15px; flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .stage-media { background: #000; position: relative; height: min(46vh, 460px); cursor: zoom-in; }
+  .stage-media video, .stage-media img.main { width: 100%; height: 100%; object-fit: contain; display: block; }
+  .stage-media .none { color: #555; font-size: 18px; padding: 80px 12px; text-align: center; cursor: default; }
+  .stage-media.empty { height: auto; cursor: default; }
+  .stage-media.empty .none { padding: 28px 12px; }
+  .stage-why { padding: 6px 14px 10px; font-size: 16px; color: #f99; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .stage-why .note { color: #888; margin-left: 10px; }
+  .thumbs { display: flex; gap: 6px; padding: 6px; background: #111; }
+  .thumbs img { flex: 1; min-width: 0; height: 70px; object-fit: cover; border: 3px solid #2a6; border-radius: 4px; cursor: pointer; }
+  .thumbs img.bad { border-color: #e33; } .thumbs img.on { outline: 3px solid #fff; }
+  #iters { display: flex; gap: 10px; overflow-x: auto; padding-bottom: 4px; }
+  .iter { flex: 0 0 230px; background: #1a1a1a; border-radius: 8px; overflow: hidden; cursor: pointer;
+          border-top: 5px solid #444; outline: 3px solid transparent; }
+  .iter.ok { border-top-color: #2d2; } .iter.bad { border-top-color: #e33; } .iter.run { border-top-color: #48f; }
+  .iter.on { outline-color: #fff; }
+  .iter-head { display: flex; align-items: center; gap: 6px; padding: 4px 8px; font-size: 13px; white-space: nowrap; }
+  .iter-head .ver { font-size: 18px; font-weight: 800; }
+  .iter-head .result { margin-left: auto; font-weight: 800; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .iter-media { background: #000; aspect-ratio: 8 / 3; }
+  .iter-media img, .iter-media video { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .iter-media .none { color: #555; font-size: 12px; padding: 24px 6px; text-align: center; }
+  .env { font-size: 12px; font-weight: 700; padding: 1px 6px; border-radius: 4px; background: #333; letter-spacing: .06em; }
+  .env.real { background: #a50; color: #fff; }
+  .result.ok { color: #6e6; } .result.bad { color: #f77; } .result.run { color: #8af; }
+  .model { display: inline-block; font-size: 12px; font-weight: 700; color: #111; background: #9c9; border-radius: 4px; padding: 0 6px; }
+  .model.Sonnet { background: #8bd; } .model.Opus { background: #c9e; } .model.Haiku { background: #9d9; }
+  .tag { position: absolute; left: 8px; top: 8px; font-size: 12px; color: #ddd; background: #000a; padding: 1px 6px; border-radius: 3px; }
+  #lightbox { position: fixed; inset: 0; background: #000e; display: flex; flex-direction: column; align-items: center;
+              justify-content: center; gap: 10px; z-index: 30; cursor: zoom-out; padding: 20px; }
+  #lightbox img, #lightbox video { max-width: 96vw; max-height: 84vh; }
+  #lightbox-cap { color: #ddd; font-size: 18px; max-width: 1200px; text-align: center; }
+  /* Text stays small and out of the way: the pictures carry the story. */
+  #top { grid-column: 1 / -1; display: flex; gap: 18px; align-items: stretch; }
+  #task-col { flex: 1; min-width: 0; }
+  #work-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 18px; align-items: start; }
+  #droid-box { cursor: pointer; }
+  #droid-box:not(.open) #droid { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  #droid-box:not(.open) #change { display: none; }
+  #improve-more summary { cursor: pointer; font-size: 14px; }
   details { color: #999; }
   #log { font: 12px ui-monospace, monospace; max-height: 260px; overflow: auto; }
   .ev { padding: 1px 0; border-bottom: 1px solid #222; white-space: pre-wrap; word-break: break-all; }
@@ -140,34 +188,44 @@
   <h2>Droid session</h2><div id="session"></div>
 </aside>
 <main>
- <div id="story">
-  <section><div class="label">Task</div><div id="task" class="empty">waiting for a task…</div>
+ <section id="top">
+  <div id="task-col"><div class="label">Task</div><div id="task" class="empty">waiting for a task…</div>
     <form id="task-form"><input id="task-input" placeholder="stack the blue cup on the red cup" autocomplete="off">
       <button id="task-run" type="submit">Run</button></form>
     <div id="task-msg"></div>
-  </section>
+  </div>
   <section id="banner" class="idle">IDLE</section>
-  <section id="droid-box" class="hidden">
-    <div class="label">Droid <span id="via" class="via"></span></div>
-    <div id="droid"></div>
-    <div id="change"></div>
+ </section>
+ <div id="story">
+  <section id="iter-box">
+    <div class="label">Iterations <span id="iter-note">· waiting for the first attempt</span></div>
+    <div id="iter-stage"><div class="stage-media empty"><div class="none">the sim run or the real arm's key frames show here</div></div></div>
+    <div id="iters"></div>
   </section>
-  <section id="diff-box" class="hidden">
-    <div class="label">The change <span id="diff-versions"></span></div>
-    <pre id="diff"></pre>
-  </section>
-  <section>
-    <div class="label">Gates</div>
-    <div id="gates"></div>
-  </section>
+  <div id="work-row">
+    <section id="diff-box" class="hidden">
+      <div class="label">The change <span id="diff-versions"></span></div>
+      <pre id="diff"></pre>
+    </section>
+    <section>
+      <div class="label">Gates</div>
+      <div id="gates"></div>
+    </section>
+  </div>
   <section id="approval">
     <button id="approve" disabled>Approve</button>
     <span id="reject-box" class="hidden"><input id="note" placeholder="why not? (Droid reads this)">
       <button id="reject">Reject</button></span>
     <span id="approval-text"></span>
   </section>
+  <section id="droid-box" class="hidden" title="click for Droid's full reasoning">
+    <div class="label">Droid <span id="via" class="via"></span></div>
+    <div id="droid"></div>
+    <div id="change"></div>
+  </section>
   <details><summary>event log</summary><div id="log"></div></details>
  </div>
+  <div id="lightbox" class="hidden"><div id="lightbox-media"></div><div id="lightbox-cap"></div></div>
   <aside id="world-box">
     <div class="label"><span id="cam-label">Live camera</span> <span id="cams"></span></div>
     <div id="cam-wrap" class="solo"><img id="camera" class="hidden" alt="camera"><div id="cam-msg"></div>
@@ -178,8 +236,9 @@
       <video id="sim-video" muted autoplay loop controls playsinline></video></section>
     <section id="improve-box"><div class="label">Getting better</div>
       <div id="improve-stats"></div>
-      <table id="improve-runs"></table>
-      <div id="improve-lessons"></div></section>
+      <details id="improve-more"><summary>runs and lessons</summary>
+        <table id="improve-runs"></table>
+        <div id="improve-lessons"></div></details></section>
   </aside>
 </main>
 
@@ -391,6 +450,8 @@ function initialDrawer() {
     session: null,            // {round, via, autonomy, disabled_tools, workspace, tools}
     steps: [],                // [{kind: call|result|check, round, name, ok, text}]
     permissions: [],          // [{round, action, target, allowed, reason}]
+    versions: {},             // version -> {model, round, change}: who wrote it and what Droid said it changed
+    next: null,               // the Droid session writing the next version, until its skill.diff
   };
 }
 
@@ -408,6 +469,31 @@ function keyframes(drawer) {
     if (p.frame_path) out.push({ attempt: i + 1, version: a.version, phase: p.phase, ok: p.ok, detail: p.detail, path: p.frame_path });
   }));
   return out;
+}
+
+// "claude-haiku-5-5" -> "Haiku": the escalation rung, short enough for a card.
+function modelName(model) {
+  const m = /(haiku|sonnet|opus|fable)/i.exec(String(model || ""));
+  return m ? m[1][0].toUpperCase() + m[1].slice(1).toLowerCase() : model || null;
+}
+
+// The Iterations strip: one card per attempt, oldest first. `renders` maps a version to the
+// sim rendering rebuilt from the recording (GET /renders/<run_id>); a live sim.video wins.
+function iterations(drawer, renders = {}) {
+  return drawer.attempts.map((a, i) => {
+    const who = (drawer.versions || {})[a.version] || {};
+    const c = a.classification;
+    const r = a.env === "sim" ? renders[a.version] : null;
+    return {
+      n: i + 1, env: a.env, version: a.version, ok: a.ok,
+      cls: a.ok === false ? (c ? c.cls : "FAIL") : null,
+      summary: a.ok === false && c ? firstLine(c.summary, 140) : "",
+      model: modelName(who.model), change: who.change ? firstLine(who.change, 400) : who.unchanged ? "same code, run again" : "",
+      frames: a.phases.filter((p) => p.frame_path).map((p) => ({ phase: p.phase, ok: p.ok, detail: p.detail, path: p.frame_path })),
+      video: a.video || (r && r.video) || null, poster: (r && r.poster) || null,
+      rerun: r && r.rerun && a.ok != null && r.rerun.ok !== a.ok ? (r.rerun.ok ? "PASS" : "FAIL") : null,
+    };
+  });
 }
 
 function onLastAttempt(drawer, update) {
@@ -430,8 +516,16 @@ function reduceDrawer(drawer, e) {
     case "attempt.finished":
       return onLastAttempt(drawer, (a) => ({ ...a, ok: !!d.ok }));
     case "droid.started":
-      return { ...drawer, session: { tools: (drawer.session && drawer.session.tools) || [], round: d.round, via: d.via,
-                                     autonomy: d.autonomy, disabled_tools: d.disabled_tools || [], workspace: d.workspace } };
+      return { ...drawer, next: { model: d.model || null, round: d.round, change: null },
+               session: { tools: (drawer.session && drawer.session.tools) || [], round: d.round, via: d.via,
+                          autonomy: d.autonomy, disabled_tools: d.disabled_tools || [], workspace: d.workspace } };
+    case "droid.result":
+      return { ...drawer, next: { ...(drawer.next || { model: null, round: d.round }), change: (d.result || {}).change || null } };
+    case "skill.diff":
+      return { ...drawer, next: null, versions: { ...(drawer.versions || {}),
+        [d.new_version]: { ...(drawer.next || { model: null, round: null, change: null }), unchanged: !String(d.diff || "").trim() } } };
+    case "sim.video":
+      return onLastAttempt(drawer, (a) => ({ ...a, video: d.path || null }));
     case "droid.tools":
       return { ...drawer, session: { ...(drawer.session || {}), tools: d.tools || [] } };
     case "droid.tool_call":
@@ -595,7 +689,7 @@ function replayUrl(runId, speed, from) {
   return `/events?${q}`;
 }
 
-if (typeof module !== "undefined") module.exports = { initialState, reduce, shortDiff, keyframes, tableMap, worldLine,
+if (typeof module !== "undefined") module.exports = { initialState, reduce, shortDiff, keyframes, iterations, modelName, tableMap, worldLine,
                                                          reduceImprove, panelRuns, improvementTotals, runTag,
                                                          reduceRecorded, approvalLabels, SPEEDS, parseSpeed, speedLabel, replayUrl };
 </script>
@@ -668,6 +762,7 @@ function render(s) {
     : `${decided}${a.note ? ": " + a.note : ""}`;
 
   renderDrawer(s.drawer);
+  renderIterations(s);
   renderWorld(s.world);
   renderImprove(improve);
 }
@@ -806,7 +901,7 @@ function renderWorld(w) {
   $("world-bump").textContent = w.bumped ? `BUMP · ${w.bumped}` : "";
   $("world-text").textContent = w.objects.length || w.ee ? worldLine(w) : "no world state yet";
 
-  $("sim-box").classList.toggle("hidden", !w.video);
+  $("sim-box").classList.add("hidden");  // the Iterations stage plays the sim video
   const video = $("sim-video");
   const want = w.video ? `/video?path=${encodeURIComponent(w.video)}` : "";
   if (video.getAttribute("src") !== want) {
@@ -876,6 +971,157 @@ function renderDrawer(d) {
   ].map(([k, v]) => { const r = el("div"); r.append(el("span", "caption", `${k}: `), String(v ?? "")); return r; })
     : [el("div", "empty", "Droid has not started")]));
 }
+
+// ---- Iterations strip: every attempt side by side, sim renders and annotated real key frames ----
+let renders = {}, rendersFor = null, iterKey = "";
+
+async function loadRenders(runId) {
+  rendersFor = runId;
+  renders = {};
+  try {
+    const r = await fetch(`/renders/${encodeURIComponent(runId)}`);
+    if (!r.ok) return;  // no renders for this run (live, or not rebuilt yet): cards show key frames only
+    const m = await r.json();
+    if (rendersFor !== runId) return;
+    renders = Object.fromEntries((m.renders || []).map((x) => [x.version, x]));
+    iterKey = "";
+    render(state);
+  } catch (_) { /* the strip works without renders */ }
+}
+
+function openLightbox(kind, src, caption) {
+  const media = el(kind);
+  media.src = src;
+  if (kind === "video") Object.assign(media, { autoplay: true, loop: true, muted: true, controls: true, playsInline: true });
+  $("lightbox-media").replaceChildren(media);
+  $("lightbox-cap").textContent = caption;
+  $("lightbox").classList.remove("hidden");
+}
+$("lightbox").onclick = () => { $("lightbox").classList.add("hidden"); $("lightbox-media").replaceChildren(); };
+
+const iterState = (it) => it.ok == null ? "run" : it.ok ? "ok" : "bad";
+const iterResult = (it) => it.ok == null ? "RUNNING" : it.ok ? "PASS" : it.cls;
+const iterTitle = (it) => `#${it.n} · v${it.version} on ${it.env} · ${it.ok == null ? "running" : it.ok ? "PASS" : it.cls}`;
+// The frame a judge should see first: the failing phase, else the last one.
+const leadFrame = (it) => it.frames.find((f) => !f.ok) || it.frames[it.frames.length - 1];
+let picked = null, iterCount = 0, its = [];  // picked = card number the viewer clicked; null follows the newest
+
+function headBits(it, cls) {
+  const ver = el("span", "ver", it.version != null ? `v${it.version}` : "v?");
+  const env = el("span", `env ${it.env}`, String(it.env || "?").toUpperCase());
+  const res = el("span", `result ${iterState(it)}`, iterResult(it));
+  const model = it.model ? [el("span", `model ${it.model}`, it.model)] : [];
+  const head = el("div", cls);
+  return { head, ver, env, res, model };
+}
+
+function iterCard(it, on) {
+  const card = el("div", `iter ${iterState(it)}${on ? " on" : ""}`);
+  const { head, ver, env, res, model } = headBits(it, "iter-head");
+  head.append(ver, env, ...model, res);
+  const media = el("div", "iter-media");
+  const lead = it.frames.length ? leadFrame(it) : null;
+  const still = it.poster || (lead && lead.path);
+  if (still) {
+    const img = el("img");
+    img.src = frameUrl(still);
+    img.alt = iterTitle(it);
+    media.append(img);
+  } else if (it.video) {
+    const v = el("video");
+    Object.assign(v, { muted: true, autoplay: true, loop: true, playsInline: true });
+    v.src = `/video?path=${encodeURIComponent(it.video)}`;
+    media.append(v);
+  } else {
+    media.append(el("div", "none", it.env === "sim" ? "no render" : "no frames"));
+  }
+  card.title = [iterTitle(it), it.change, it.summary].filter(Boolean).join("\n");
+  card.append(head, media);
+  card.onclick = () => { picked = it.n; iterKey = ""; render(state); };
+  return card;
+}
+
+function renderStage(it) {
+  const stage = $("iter-stage");
+  stage.className = iterState(it);
+  const { head, ver, env, res, model } = headBits(it, "stage-head");
+  head.append(ver, env, res, ...model, el("span", "change", it.change || (it.version === 0 ? "first draft" : "")));
+  head.title = it.change || "";
+  const media = el("div", "stage-media");
+  const parts = [head, media];
+  if (it.video) {
+    const v = el("video");
+    Object.assign(v, { muted: true, autoplay: true, loop: true, playsInline: true });
+    v.src = `/video?path=${encodeURIComponent(it.video)}`;
+    if (it.poster) v.poster = frameUrl(it.poster);
+    media.append(v, el("span", "tag", "sim"));
+    media.onclick = () => openLightbox("video", v.src, iterTitle(it));
+  } else if (it.frames.length) {
+    const img = el("img", "main");
+    const thumbs = el("div", "thumbs");
+    const show = (f) => {
+      img.src = frameUrl(f.path);
+      img.alt = `${f.phase} key frame`;
+      media.onclick = () => openLightbox("img", img.src, `${iterTitle(it)} · ${f.phase} ${f.ok ? "✓" : "✗"} · ${f.detail}`);
+      thumbs.querySelectorAll("img").forEach((t) => t.classList.toggle("on", t.dataset.path === f.path));
+    };
+    media.append(img, el("span", "tag", "real arm · annotated"));
+    it.frames.forEach((f) => {
+      const t = el("img", f.ok ? null : "bad");
+      t.src = frameUrl(f.path);
+      t.dataset.path = f.path;
+      t.title = `${f.phase} ${f.ok ? "✓" : "✗"}: ${f.detail}`;
+      t.onclick = () => show(f);
+      thumbs.append(t);
+    });
+    show(leadFrame(it));
+    if (it.frames.length > 1) parts.push(thumbs);
+  } else {
+    media.append(el("div", "none", it.env === "sim" ? "no sim render for this version (tools/render_runs.py rebuilds them)"
+      : it.ok == null ? "running on the real arm…" : "no key frames recorded for this attempt"));
+  }
+  if (it.summary || it.rerun) {
+    const why = el("div", "stage-why", it.summary);
+    why.title = it.summary;
+    if (it.rerun) why.append(el("span", "note", `render from today's sim: ${it.rerun}`));
+    parts.push(why);
+  }
+  stage.replaceChildren(...parts);
+}
+
+function renderIterations(s) {
+  if (s.run_id && s.run_id !== rendersFor) loadRenders(s.run_id);
+  its = iterations(s.drawer, renders);
+  if (its.length !== iterCount) { iterCount = its.length; picked = null; }  // a new attempt: follow it
+  const shown = its.find((it) => it.n === picked) || its[its.length - 1];
+  // Rebuild only when something changed, so videos keep playing between events.
+  const key = JSON.stringify([its, shown && shown.n]);
+  if (key === iterKey) return;
+  iterKey = key;
+  const versions = new Set(its.map((it) => it.version)).size;
+  $("iter-note").textContent = its.length ? `· ${its.length} attempt(s), ${versions} version(s) · click or ←/→ to compare`
+    : "· waiting for the first attempt";
+  if (shown) renderStage(shown);
+  else {
+    $("iter-stage").className = "";
+    $("iter-stage").replaceChildren(el("div", "stage-media empty"));
+    $("iter-stage").firstChild.append(el("div", "none", "the sim run or the real arm's key frames show here"));
+  }
+  $("iters").replaceChildren(...its.map((it) => iterCard(it, it === shown)));
+  const on = $("iters").querySelector(".iter.on");
+  if (on) on.scrollIntoView({ block: "nearest", inline: "nearest" });
+}
+
+document.addEventListener("keydown", (ev) => {
+  const typing = ev.target instanceof Element && ev.target.closest("input, textarea, select");
+  if (!its.length || typing || !["ArrowLeft", "ArrowRight"].includes(ev.key)) return;
+  const at = picked == null ? its.length : picked;
+  picked = Math.min(Math.max(at + (ev.key === "ArrowLeft" ? -1 : 1), 1), its.length);
+  iterKey = "";
+  render(state);
+});
+
+$("droid-box").onclick = () => $("droid-box").classList.toggle("open");
 
 $("drawer-toggle").onclick = () => $("drawer").classList.toggle("hidden");
 $("drawer-close").onclick = () => $("drawer").classList.add("hidden");

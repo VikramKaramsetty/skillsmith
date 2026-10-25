@@ -74,7 +74,9 @@ def build_controller(cfg: dict, bus: Bus) -> ArmController:
                          max_speed_dps=float(safety["max_joint_speed_dps"]),
                          limit_margin_deg=float(safety.get("joint_limit_margin_deg", 2.0)),
                          max_lag_deg=float(safety.get("max_lag_deg", safety["max_step_deg"])),
-                         settle_tol_deg=float(safety.get("settle_tol_deg", 1.5)))
+                         settle_tol_deg=float(safety.get("settle_tol_deg", 1.5)),
+                         joint_tol_deg=safety.get("joint_tol_deg"),
+                         grip_squeeze_pct=float(safety.get("grip_squeeze_pct", 5.0)))
 
 
 def open_bus(mock: bool, cfg: dict) -> Bus:
@@ -82,7 +84,8 @@ def open_bus(mock: bool, cfg: dict) -> Bus:
         return MockBus()
     robot = cfg["robot"]
     bus = feetech.connect_follower(robot["follower_port"], robot["calibration_id"],
-                                   p_gain=robot.get("position_p_gain"))
+                                   p_gain=robot.get("position_p_gain"),
+                                   gripper_torque_limit=(cfg.get("safety") or {}).get("gripper_torque_limit"))
     offsets = robot.get("joint_offsets_deg")
     return OffsetBus(bus, offsets) if offsets and any(offsets) else bus
 

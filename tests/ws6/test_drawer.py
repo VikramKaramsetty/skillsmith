@@ -101,7 +101,7 @@ def test_long_tool_output_is_clipped(tmp_path):
 
 def test_new_run_clears_the_drawer(tmp_path):
     d = fold(_events(STORY + DEMO[:1]), tmp_path)["drawer"]
-    assert d == {"attempts": [], "session": None, "steps": [], "permissions": []}
+    assert d == {"attempts": [], "session": None, "steps": [], "permissions": [], "versions": {}, "next": None}
 
 
 def test_phase_check_without_attempt_started_is_kept(tmp_path):

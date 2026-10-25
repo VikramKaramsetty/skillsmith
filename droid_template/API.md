@@ -6,7 +6,7 @@ Everything a skill can use. Anything else is rejected by the static check.
 
 | Call | Meaning |
 |---|---|
-| `robot.move_to(x, y, z, speed=None, side=None)` | Gripper tip to (x, y, z) metres. `side=None` keeps the current orientation (level after `approach_side`, else pointing down); `True` = level, `False` = pointing down. Long vertical moves are split into ≤ 2 cm steps. `speed` in m/s, capped by config. Refused (SafetyViolation) if outside the workspace; Unreachable if IK fails (level: nearer than about 0.23 m from the base). |
+| `robot.move_to(x, y, z, speed=None, side=None)` | Gripper tip to (x, y, z) metres. `side=None` keeps the current orientation (level after `approach_side`, else pointing down); `True` = level, `False` = pointing down. Long vertical moves are split into ≤ 2 cm steps. `speed` in m/s, capped by config. Refused (SafetyViolation) if outside the workspace; Unreachable if IK fails (level: nearer than about 0.18 m from the base). |
 | `robot.grasp() -> bool` | Close the gripper. True if something is held. |
 | `robot.release()` | Open the gripper fully. |
 | `robot.look() -> Scene` | Fresh object detection. |
@@ -15,7 +15,7 @@ Everything a skill can use. Anything else is rejected by the static check.
 | `robot.holding() -> bool` | Gripper load check (read-only). |
 | `robot.note(text)` | Show a short message on the dashboard. |
 | `robot.align_over(obj, hover=0.08) -> float` | Hover `hover` m above the object's top at its **latest** position, then fine-align with the wrist camera if available. Returns the remaining xy error in metres. Use it right before descending to grasp or place. |
-| `robot.approach_side(obj, grip_z=None, hover=0.03) -> float` | **Side grasp (use for cups).** Opens the jaws, locates the object's top with the wrist camera from just above it (real arm), brings the gripper in **level** with jaws opening sideways, lowers them around the object to `grip_z` (default 2 cm under its top) and closes the gap to the fixed jaw. Call `grasp()` next; later `move_to` calls stay level. Returns the wrist-camera correction (m). Unreachable nearer than about 0.26 m from the base (for this cup). |
+| `robot.approach_side(obj, grip_z=None, hover=0.03, speed=None) -> float` | **Side grasp (use for cups), like a hand.** Opens the jaws, turns the gripper level (horizontal, jaws opening sideways) high up behind the object, fixes its position with the wrist camera, lowers to `grip_z` (default 2.5 cm under its top, calibrated on the arm: leave it unset for cups) a few cm short of it, slides in horizontally until the jaws are either side of it, and closes the gap to the fixed jaw. Call `grasp()` next; later `move_to` calls stay level. Moves next to the object run at ≤ 12 deg/s, or `speed` deg/s if lower. If the camera sees the object pushed (the gripper touched it) it stops BEFORE closing with WorldChanged "... pushed X cm by the gripper ... Approach slower": retry with a lower `speed`. Returns the wrist-camera correction (m). Unreachable outside about 0.29–0.30 m from the base (it stays horizontal and reaches in from ~4 cm short of the cup). |
 
 Every call is recorded in the trace you see in `failure.md`.
 

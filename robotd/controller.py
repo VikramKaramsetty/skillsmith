@@ -6,7 +6,9 @@ It owns one `Bus` (MockBus, or FeetechBus on the real arm) and turns API calls i
   in front of the servos' own calibrated position limits.
 - It then moves the 5 arm joints from where they actually are, in steps of at most `max_step_deg`,
   paced by `speed_dps` (capped at `max_speed_dps`), and waits until every joint is within
-  `settle_tol_deg` of the target, else 409 with how far each joint still is.
+  `settle_tol_deg` of the target (or its `joint_tol_deg` entry, e.g. a looser wrist_roll, which
+  sags ~5 deg under the gripper's weight when the gripper is level), else 409 with how far each
+  joint still is.
   The gripper value in the target is ignored: only `set_gripper` moves the jaws, so a seed copied
   before a grasp can never loosen the grip mid-carry.
 - Watchdog: after each step, a joint more than `max_lag_deg` behind its goal is blocked or stalled;
@@ -30,10 +32,18 @@ from typing import Any, Dict, Iterator, List, Optional, Protocol, Sequence, Tupl
 JOINT_NAMES = ("shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper")
 ARM = 5  # indices 0..4 are the arm joints; index 5 is the gripper
 POLL_S = 0.01
+MOTION_DT = 0.03  # s between goal updates: the servo tracks a smooth ramp instead of snapping max_step_deg at
+#                   full servo speed and waiting (that made every "slow" move a series of lurches)
+GRIP_CONTACT_LAG = 6.0  # gripper %: the jaws this far behind the closing ramp = they are on the object
+# ...then the goal is held `grip_squeeze_pct` (config safety.grip_squeeze_pct) past where they stopped:
+# 0 % = the servo's torque limit crushed a paper cup; 5 % let the closing jaw squeeze it out forward
+GRIPPER_PCT_S = 60.0  # gripper goal ramp speed (0..100 per s): closing at once slammed the moving jaw into cups
 STILL_PCT = 0.5  # gripper moved less than this between polls = not moving
 # MEASURE (WS1.7): replace with the thresholds from the gripper signal test on our real cups.
 HOLD_MIN_GAP = 5.0  # jaws stopped at least this far (0..100) short of the commanded position
 HOLD_MIN_LOAD = 200.0  # while the gripper servo pushes at least this hard (raw load)
+HOLD_PUSH_LOAD = 100.0  # ...or stopped short at all while pushing this hard
+HOLD_WIDE_GAP = 4.0  # ...or the jaws stopped this far short of a close: something is between them (empty: ~1.6)
 
 log = logging.getLogger("robotd")
 
@@ -108,11 +118,14 @@ class RobotdError(Exception):
 class ArmController:
     def __init__(self, bus: Bus, max_step_deg: float = 10.0, max_speed_dps: float = 60.0,
                  settle_tol_deg: float = 1.5, settle_timeout_s: float = 2.0, gripper_timeout_s: float = 1.5,
-                 limit_margin_deg: float = 2.0, max_lag_deg: Optional[float] = None):
+                 limit_margin_deg: float = 2.0, max_lag_deg: Optional[float] = None,
+                 joint_tol_deg: Optional[Dict[str, float]] = None, grip_squeeze_pct: float = 5.0):
         self.bus = bus
         self.max_step_deg = max_step_deg
         self.max_speed_dps = max_speed_dps
         self.settle_tol_deg = settle_tol_deg
+        self.grip_squeeze_pct = float(grip_squeeze_pct)
+        self._tol = [float((joint_tol_deg or {}).get(n, settle_tol_deg)) for n in JOINT_NAMES[:ARM]]
         self.settle_timeout_s = settle_timeout_s
         self.gripper_timeout_s = gripper_timeout_s
         # a joint that is free keeps up with paced steps; one a whole step behind is not moving
@@ -122,6 +135,7 @@ class ArmController:
         self._motion_lock = threading.Lock()
         self._stop = threading.Event()
         self._goal = self._read()
+        self._grip_cmd = float(self._goal[ARM])
 
     # ---- API ---------------------------------------------------------------------------
     def state(self) -> dict:
@@ -129,7 +143,7 @@ class ArmController:
             present = self.bus.read_present()
             load = self.bus.read_gripper_load()
             torque = self.bus.torque_enabled()
-            holding = _holding(present[ARM], self._goal[ARM], load)
+            holding = _holding(present[ARM], self._grip_cmd, load)
         return {"joints": present, "holding": holding, "gripper_pos": present[ARM],
                 "gripper_load": load, "torque": torque, "t": time.time()}
 
@@ -143,7 +157,7 @@ class ArmController:
         with self._motion("move_joints"):
             start = self._read()[:ARM]
             biggest = max(abs(g - s) for g, s in zip(goal, start))
-            steps = max(1, math.ceil(biggest / self.max_step_deg))
+            steps = max(1, math.ceil(biggest / self.max_step_deg), math.ceil(biggest / (speed * MOTION_DT)))
             for k in range(1, steps + 1):
                 self._write(arm=[s + (g - s) * k / steps for s, g in zip(start, goal)])
                 self._pause(biggest / steps / speed, "move_joints")
@@ -155,7 +169,18 @@ class ArmController:
         if not 0 <= pct <= 100:
             raise RobotdError(400, f"pct must be 0..100 (0 = closed), got {pct}")
         with self._motion("gripper"):
-            self._write(gripper=pct)
+            self._grip_cmd = pct  # holding is judged against the command (0 = closed), not the soft-grip goal
+            start = float(self._goal[ARM])
+            steps = max(1, math.ceil(abs(pct - start) / (GRIPPER_PCT_S * MOTION_DT)))
+            for k in range(1, steps + 1):  # ramp the goal: the jaw closes at GRIPPER_PCT_S, not servo top speed
+                goal = start + (pct - start) * k / steps
+                self._write(gripper=goal)
+                self._pause(MOTION_DT, "gripper")
+                if pct < start:  # closing: stop squeezing harder once the jaws stall on something
+                    present = self._read()[ARM]
+                    if present - goal >= GRIP_CONTACT_LAG:
+                        self._write(gripper=max(pct, present - self.grip_squeeze_pct))
+                        break
             self._wait_gripper()
         return self.holding()
 
@@ -257,7 +282,7 @@ class ArmController:
         """Joints still further than settle_tol_deg from the target: name -> target - present (deg)."""
         present = self._read()
         return {JOINT_NAMES[i]: round(g - present[i], 2)
-                for i, g in enumerate(goal) if abs(g - present[i]) > self.settle_tol_deg}
+                for i, g in enumerate(goal[:ARM]) if abs(g - present[i]) > self._tol[i]}
 
     def _wait_gripper(self) -> None:
         """Until the jaws reach the goal or stop moving (closed on an object), up to gripper_timeout_s."""
@@ -276,7 +301,12 @@ class ArmController:
 
 
 def _holding(pos: float, goal: float, load: float) -> bool:
-    return pos - goal >= HOLD_MIN_GAP and abs(load) >= HOLD_MIN_LOAD
+    """Jaws short of the goal AND pushing, or jaws far short of a close (empty jaws close to ~0-2 %):
+    a gently ramped close on a paper cup stays under HOLD_MIN_LOAD."""
+    gap = pos - goal
+    if goal < 50 and (gap >= HOLD_WIDE_GAP or (gap >= 1.0 and abs(load) >= HOLD_PUSH_LOAD)):
+        return True  # a taught partial close: stopped short and pushing
+    return gap >= HOLD_MIN_GAP and abs(load) >= HOLD_MIN_LOAD
 
 
 def _number(value: Any, name: str) -> float:

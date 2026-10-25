@@ -18,6 +18,7 @@ import sys
 import time
 import traceback
 from contextlib import contextmanager
+from pathlib import Path
 from typing import Any, Callable, Dict, Iterator, Optional, Tuple
 
 from skillsmith.events import EventBus
@@ -172,11 +173,78 @@ def run_skill(source: str, env, params: dict, cfg, bus: EventBus, *, skill: str,
     result = AttemptResult(ok=ok, env=env.name, skill=skill, version=version, trace=robot.trace,
                            error=error, verify=verify, safety=safety, scene_before=scene_before,
                            scene_after=scene_after, duration_s=round(duration, 3),
-                           video_path=getattr(env.arm, "last_video_path", None))
-    _analyse(result, cfg, bus, None if result.ok else _perception_gate(env, bus))
+                           video_path=getattr(env.arm, "last_video_path", None),
+                           held_at_stop=not ok and _still_holding(robot))
+    _analyse(result, cfg, bus, None if result.ok else _perception_gate(env, bus), robot=robot, env=env)
     bus.emit("attempt.finished", env=env.name, skill=skill, version=version, ok=ok,
              error=error, duration_s=result.duration_s, reason=result.reason())
     return result
+
+
+def _attach_keyframes(result: AttemptResult, robot, env, bus: EventBus) -> None:
+    """One labelled picture per phase, from the frames the robot captured after each motion call, for
+    Droid (report + attached images) and the dashboard. Overhead: every object boxed where it is now,
+    a crosshair where the attempt expected the handled object and an arrow to where it ended up
+    ("moved X cm"), the gripper tip with its height. Wrist view beside it, labelled with the jaw opening.
+    A caption strip underneath: phase and verdict, failure class, the call that ran, the classifier's
+    summary and hint, and the error. Never fails the attempt."""
+    captures = getattr(robot, "captures", None)
+    run_dir = getattr(bus, "run_dir", None)
+    if not captures or run_dir is None:
+        return
+    try:
+        import math as _m
+
+        from skillsmith.perception.annotate import annotate_keyframe, caption_strip, side_by_side, write_image
+
+        camera = getattr(env.perception, "camera", None)
+        before, after = result.scene_before, result.scene_after or result.scene_before
+        calls = {c.index: c for c in result.trace}
+        cl = result.classification
+        verdict = cl.cls if cl else ("ok" if result.ok else "")
+        for phase in result.phases:
+            idx = max((i for i in captures if phase.start_index <= i <= phase.end_index), default=None)
+            if idx is None:
+                continue
+            front, wrist, tip, grip = (list(captures[idx]) + [None])[:4]
+            call = calls.get(idx)
+            name = call.args.get("obj") if call is not None else None
+            if not name and cl is not None:
+                name = (cl.evidence or {}).get("object")
+            obj0 = before.find(name) if (before is not None and name) else None
+            obj1 = after.find(name) if (after is not None and name) else None
+            overlays = {"gripper": tuple(tip), "title": ""}
+            moved = None
+            if obj0 is not None and obj1 is not None:
+                overlays["target"] = (obj0.x, obj0.y, obj0.top)
+                overlays["actual"] = (obj1.x, obj1.y, obj1.top)
+                moved = _m.hypot(obj1.x - obj0.x, obj1.y - obj0.y)
+                overlays["error_cm"] = round(moved * 100, 1)
+            img = annotate_keyframe(front, after, camera, overlays) if front is not None else None
+            jaw = "" if grip is None else f"jaws {grip:.0f}% open"
+            if wrist is not None:
+                img = wrist if img is None else side_by_side(
+                    img, wrist, (f"overhead (tip z={tip[2] * 100:.1f} cm)", f"wrist camera {jaw}"), height=420)
+            if img is None:
+                continue
+            args = "" if call is None else ", ".join(f"{k}={v}" for k, v in call.args.items() if v is not None)
+            lines = [f"PHASE {phase.phase.upper()}: {'OK' if phase.ok else 'FAILED'}  |  attempt: {verdict}"
+                     f"  |  after call #{idx} {call.name if call else '?'}({args})",
+                     f"phase check: {phase.detail}"]
+            if moved is not None and name:
+                lines.append(f"{name}: expected at ({obj0.x:.3f}, {obj0.y:.3f}) [crosshair], now at ({obj1.x:.3f}, "
+                             f"{obj1.y:.3f}) [arrow], moved {moved * 100:.1f} cm")
+            if cl is not None:
+                lines += [f"why: {cl.summary}", f"look at: {cl.hint}"]
+            if result.error:
+                lines.append(f"error: {result.error}")
+            img = caption_strip(img, lines)
+            path = write_image(Path(run_dir) / "frames" / f"{result.env}_v{result.version}_{int(time.time())}_"
+                                                          f"{phase.phase}.jpg", img)
+            phase.frame_path = path
+            result.keyframes[phase.phase] = path
+    except Exception as e:  # pictures are evidence, never a reason to lose the attempt
+        bus.emit("error", where="keyframes", message=f"{type(e).__name__}: {e}")
 
 
 def _stop_arm(env, bus: EventBus) -> None:
@@ -197,6 +265,13 @@ def _reset_perception_gate(env, bus: EventBus) -> None:
         bus.emit("error", where="perception.reset_gate", message=repr(e))
 
 
+def _still_holding(robot) -> bool:
+    try:
+        return bool(robot.holding())
+    except Exception:  # an arm that cannot answer is not holding as far as the gate goes
+        return False
+
+
 def _perception_gate(env, bus: EventBus) -> Optional[Tuple[bool, str]]:
     """`perception_ok()` from the live world model, if the env has one (fake and sim do not)."""
     check = getattr(env.perception, "perception_ok", None)
@@ -212,7 +287,8 @@ def _perception_gate(env, bus: EventBus) -> Optional[Tuple[bool, str]]:
     return bool(ok), str(reason)
 
 
-def _analyse(result: AttemptResult, cfg, bus: EventBus, perception: Optional[Tuple[bool, str]] = None) -> None:
+def _analyse(result: AttemptResult, cfg, bus: EventBus, perception: Optional[Tuple[bool, str]] = None,
+             robot=None, env=None) -> None:
     """Phase checks + failure classification (WS4.4/WS4.5)."""
     from skillsmith.analysis import analyse_attempt
 
@@ -224,6 +300,8 @@ def _analyse(result: AttemptResult, cfg, bus: EventBus, perception: Optional[Tup
     except Exception as e:  # analysis must never lose the attempt; the report falls back to the raw error
         bus.emit("error", where="analysis", message=f"{type(e).__name__}: {e}")
         return
+    if robot is not None and env is not None:
+        _attach_keyframes(result, robot, env, bus)
     for phase in result.phases:
         bus.emit("phase.check", **dataclasses.asdict(phase))
     if result.classification is not None:

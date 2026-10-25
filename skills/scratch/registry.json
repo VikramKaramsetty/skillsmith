@@ -1,0 +1,25 @@
+{
+  "pick_cup": {
+    "file": "pick_cup.py",
+    "successes": 4,
+    "uses": [],
+    "version": 4
+  },
+  "place_cup": {
+    "file": "place_cup.py",
+    "successes": 6,
+    "uses": [
+      "pick_cup"
+    ],
+    "version": 5
+  },
+  "stack_cups": {
+    "file": "stack_cups.py",
+    "successes": 3,
+    "uses": [
+      "pick_cup",
+      "place_cup"
+    ],
+    "version": 2
+  }
+}

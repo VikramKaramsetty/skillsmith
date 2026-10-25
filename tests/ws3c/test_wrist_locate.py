@@ -53,7 +53,7 @@ def test_approach_side_moves_the_grasp_to_the_wrist_fix_and_ignores_wild_ones():
     from skillsmith.types import Scene, SceneObject
 
     cfg = load_config()
-    cfg._data = {**cfg._data, "wrist": {**(cfg._data.get("wrist") or {}), "fovy_deg": FOVY}}
+    cfg._data = {**cfg._data, "wrist": {**(cfg._data.get("wrist") or {}), "fovy_deg": FOVY, "locate": True}}
     cup = SceneObject("pink_cup_0", "pink cup", "pink", "cup", 0.26, 0.0, 0.0, 0.0953, 0.0762, top_width=0.0508)
     src = ('SKILL = {"name": "t", "params": {"shift": "float"}}\n\n'
            'def run(robot, scene, skills, shift):\n'
@@ -62,16 +62,37 @@ def test_approach_side_moves_the_grasp_to_the_wrist_fix_and_ignores_wild_ones():
 
     def run(shift):
         env = make_env("fake", cfg, Scene((cup,), 0.0, "test"))
-        tip = env.kin.fk
-        env.kin.wrist_camera_pose = lambda q: _down_camera(*tip(q))
+        # a camera straight above the cup, WRIST_DEPTH over its top (the real one is FK-carried)
+        env.kin.wrist_camera_pose = lambda q: _down_camera(cup.x, cup.y, cup.top + WRIST_DEPTH)
         env.perception.wrist_frame = lambda: _frame((W - 1) / 2 + shift * F / WRIST_DEPTH, (H - 1) / 2)
         res = run_skill(src, env, {"shift": shift}, cfg, NullBus(), skill="t")
         assert res.ok, res.error
         return res.trace[0].result, res.trace[-1].ee_before
 
-    from skillsmith.primitives import WRIST_LOOK_HOVER
-    WRIST_DEPTH = WRIST_LOOK_HOVER  # camera at the look pose's tip, the cup top WRIST_LOOK_HOVER below
+    from skillsmith.primitives import SIDE_HOVER, SWING_CLEARANCE
+    WRIST_DEPTH = max(SIDE_HOVER, SWING_CLEARANCE)  # camera at the turn pose's tip, this far above the top
     fix, at = run(0.01)
-    assert fix == pytest.approx(0.01, abs=0.001) and at[0] == pytest.approx(0.27, abs=0.001)
+    from skillsmith.primitives import SIDE_GRASP_DEPTH
+    assert fix == pytest.approx(0.01, abs=0.001) and at[0] == pytest.approx(0.27 + SIDE_GRASP_DEPTH, abs=0.002)
     fix, at = run(0.05)  # 5 cm "fix" = a wrong camera model: ignored, overhead position used
-    assert fix == 0.0 and at[0] == pytest.approx(0.26, abs=0.001)
+    assert fix == 0.0 and at[0] == pytest.approx(0.26 + SIDE_GRASP_DEPTH, abs=0.002)
+
+
+def test_approach_side_stops_before_closing_when_the_cup_is_pushed():
+    from skillsmith.config import load_config
+    from skillsmith.events import NullBus
+    from skillsmith.hal.base import make_env
+    from skillsmith.skills.runtime import run_skill
+    from skillsmith.types import Scene, SceneObject
+
+    cfg = load_config()
+    cup = SceneObject("pink_cup_0", "pink cup", "pink", "cup", 0.29, 0.0, 0.0, 0.0953, 0.0762, top_width=0.0508)
+    env = make_env("fake", cfg, Scene((cup,), 0.0, "test"))
+    env.perception.displacement = lambda q, since: 0.04  # the camera saw it 4 cm off: pushed
+    src = ('SKILL = {"name": "t", "params": {}}\n\n'
+           'def run(robot, scene, skills):\n'
+           '    robot.approach_side("pink cup", speed=8)\n'
+           '    robot.grasp()\n')
+    res = run_skill(src, env, {}, cfg, NullBus(), skill="t")
+    assert not res.ok and "pushed 4.0 cm by the gripper" in res.error and "speed=4" in res.error
+    assert [c.name for c in res.trace] == ["approach_side"]  # never closed on it

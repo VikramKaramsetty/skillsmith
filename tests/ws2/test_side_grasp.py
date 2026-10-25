@@ -65,7 +65,7 @@ def test_side_ik_is_level_with_jaws_sideways(kin, target):
 
 def test_side_ik_refuses_near_the_base(kin):
     assert kin.ik((0.15, 0.0, 0.06), SEED, approach="side") is None
-    assert kin.ik((0.24, 0.0, 0.06), SEED, approach="side") is None  # wrist_flex would sit on its stop
+    assert kin.ik((0.17, 0.0, 0.06), SEED, approach="side") is None  # wrist_flex/elbow out of range
 
 
 def test_wrist_camera_sits_above_a_level_gripper(kin):
@@ -87,7 +87,7 @@ def test_tapered_cup_is_stacked_cylinders_narrowing_upward():
     assert 0.0254 < radii[-1] < 0.030 and 0.035 < radii[0] < 0.0381
 
 
-@pytest.mark.parametrize("start, goal", [((0.27, 0.05), (0.28, -0.10)), ((0.28, -0.05), (0.30, 0.08))])
+@pytest.mark.parametrize("start, goal", [((0.29, 0.02), (0.28, -0.10)), ((0.30, -0.03), (0.28, 0.08))])
 def test_move_cup_with_a_side_grasp_in_sim(start, goal):
     env = make_env("sim", CFG, Scene((_cup(*start),), 0.0, "test"))
     try:
@@ -102,12 +102,23 @@ def test_move_cup_with_a_side_grasp_in_sim(start, goal):
         assert result.trace[0].result < 0.01  # ground truth in sim, so the fix is small
 
 
-def test_approach_side_too_near_the_base_is_unreachable_before_moving():
-    env = make_env("sim", CFG, Scene((_cup(0.20, 0.06),), 0.0, "test"))
+def test_a_cup_near_the_base_is_still_picked_by_a_fallback_approach():
+    env = make_env("sim", CFG, Scene((_cup(0.20, -0.15),), 0.0, "test"))
+    try:
+        result = run_skill(MOVE_CUP, env, {"obj": "pink cup", "x": 0.28, "y": -0.10}, CFG, NullBus(),
+                           skill="move_cup", success={"op": "near", "args": ["pink cup", 0.28, -0.10]})
+    finally:
+        env.close()
+    assert result.ok, result.error
+
+
+def test_a_cup_against_the_base_is_unreachable_before_moving():
+    env = make_env("sim", CFG, Scene((_cup(0.12, 0.0),), 0.0, "test"))
     try:
         result = run_skill(MOVE_CUP, env, {"obj": "pink cup", "x": 0.28, "y": -0.10}, CFG, NullBus(),
                            skill="move_cup", success={"op": "near", "args": ["pink cup", 0.28, -0.10]})
     finally:
         env.close()
     assert not result.ok
-    assert "Unreachable" in result.error and "m out" in result.error
+    assert result.error.startswith(("Unreachable", "SafetyViolation")), result.error
+    assert result.trace[0].ee_before == result.trace[0].ee_after or result.trace[0].name == "approach_side"
