@@ -18,6 +18,7 @@ import sys
 import time
 import traceback
 from contextlib import contextmanager
+from pathlib import Path
 from typing import Any, Callable, Dict, Iterator, Optional, Tuple
 
 from skillsmith.events import EventBus
@@ -173,10 +174,52 @@ def run_skill(source: str, env, params: dict, cfg, bus: EventBus, *, skill: str,
                            error=error, verify=verify, safety=safety, scene_before=scene_before,
                            scene_after=scene_after, duration_s=round(duration, 3),
                            video_path=getattr(env.arm, "last_video_path", None))
-    _analyse(result, cfg, bus, None if result.ok else _perception_gate(env, bus))
+    _analyse(result, cfg, bus, None if result.ok else _perception_gate(env, bus), robot=robot, env=env)
     bus.emit("attempt.finished", env=env.name, skill=skill, version=version, ok=ok,
              error=error, duration_s=result.duration_s, reason=result.reason())
     return result
+
+
+def _attach_keyframes(result: AttemptResult, robot, env, bus: EventBus) -> None:
+    """One annotated picture per phase, from the frames the robot captured after each motion call:
+    the overhead view (objects boxed, gripper tip and the call's target drawn) beside the wrist view.
+    This is what Droid sees of the attempt (report + attached images), so it can reason about a cup
+    knocked over or squeezed out, not just read numbers. Never fails the attempt."""
+    captures = getattr(robot, "captures", None)
+    run_dir = getattr(bus, "run_dir", None)
+    if not captures or run_dir is None:
+        return
+    try:
+        from skillsmith.perception.annotate import annotate_keyframe, side_by_side, write_image
+
+        camera = getattr(env.perception, "camera", None)
+        scene = result.scene_after or result.scene_before
+        calls = {c.index: c for c in result.trace}
+        cls = result.classification.cls if result.classification else ("ok" if result.ok else "")
+        for phase in result.phases:
+            idx = max((i for i in captures if phase.start_index <= i <= phase.end_index), default=None)
+            if idx is None:
+                continue
+            front, wrist, tip = captures[idx]
+            call = calls.get(idx)
+            target = None
+            if call is not None and all(k in call.args for k in "xyz"):
+                target = (call.args["x"], call.args["y"], call.args["z"])
+            title = f"{phase.phase} {'ok' if phase.ok else 'FAIL'} · {cls} · after {call.name if call else '?'}"
+            img = None
+            if front is not None:
+                img = annotate_keyframe(front, scene, camera,
+                                        {"gripper": tuple(tip), "target": target, "title": title[:80]})
+            if wrist is not None:
+                img = wrist if img is None else side_by_side(img, wrist, ("overhead", "wrist"), height=360)
+            if img is None:
+                continue
+            path = write_image(Path(run_dir) / "frames" / f"{result.env}_v{result.version}_{int(time.time())}_"
+                                                          f"{phase.phase}.jpg", img)
+            phase.frame_path = path
+            result.keyframes[phase.phase] = path
+    except Exception as e:  # pictures are evidence, never a reason to lose the attempt
+        bus.emit("error", where="keyframes", message=f"{type(e).__name__}: {e}")
 
 
 def _stop_arm(env, bus: EventBus) -> None:
@@ -212,7 +255,8 @@ def _perception_gate(env, bus: EventBus) -> Optional[Tuple[bool, str]]:
     return bool(ok), str(reason)
 
 
-def _analyse(result: AttemptResult, cfg, bus: EventBus, perception: Optional[Tuple[bool, str]] = None) -> None:
+def _analyse(result: AttemptResult, cfg, bus: EventBus, perception: Optional[Tuple[bool, str]] = None,
+             robot=None, env=None) -> None:
     """Phase checks + failure classification (WS4.4/WS4.5)."""
     from skillsmith.analysis import analyse_attempt
 
@@ -224,6 +268,8 @@ def _analyse(result: AttemptResult, cfg, bus: EventBus, perception: Optional[Tup
     except Exception as e:  # analysis must never lose the attempt; the report falls back to the raw error
         bus.emit("error", where="analysis", message=f"{type(e).__name__}: {e}")
         return
+    if robot is not None and env is not None:
+        _attach_keyframes(result, robot, env, bus)
     for phase in result.phases:
         bus.emit("phase.check", **dataclasses.asdict(phase))
     if result.classification is not None:

@@ -294,6 +294,21 @@ class WorldModel:
                       confidence=result.confidence, fill=result.fill)
         return result.holding, reason
 
+    def keyframe_images(self) -> Tuple[Any, Any]:
+        """(front BGR, wrist BGR) right now, either None when unavailable: evidence for Droid (keyframes)."""
+        with self._lock:
+            frame = self._frame
+        front = wrist = None
+        try:
+            front = self._decode(frame) if frame is not None else None
+        except Exception:
+            front = None
+        try:
+            wrist = self._wrist_image() if self.wrist_frames is not None else None
+        except Exception:
+            wrist = None
+        return front, wrist
+
     def snapshot(self, path: str) -> Optional[str]:
         with self._lock:
             frame = self._frame

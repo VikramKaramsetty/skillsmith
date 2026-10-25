@@ -38,6 +38,7 @@ NEAR_DPS = 12.0             # deg/s; joint speed cap for approach_side's moves n
 MAX_STEP_JUMP_DEG = 25.0    # a non-turning waypoint moving any joint more than this = IK branch flip, refused
 PUSH_TOL = 0.015            # m; the camera seeing the object this far from where the approach planned = pushed
 PUSH_SETTLE_S = 0.4         # s; wait this long after stopping so the overhead frame shows the result
+CAPTURE_CALLS = {"approach_side", "align_over", "grasp", "move_to", "release", "home"}  # keyframe after these
 SWING_DPS = 25.0            # deg/s; joint speed cap while the gripper turns (no straight-line tip path then)
 
 
@@ -52,6 +53,7 @@ class Robot:
         self.trace: list[PrimitiveCall] = []
         self.last_scene: Optional[Scene] = None
         self._side = False  # gripper level instead of pointing down; read from the arm when kin can (_is_level)
+        self.captures: dict = {}  # call index -> (front BGR, wrist BGR, tip): phase keyframes for Droid
 
     # ---- public API (what skills call) ----------------------------------------------
     def move_to(self, x: float, y: float, z: float, speed: Optional[float] = None,
@@ -164,6 +166,17 @@ class Robot:
             self._check_not_pushed(target, near_dps, "sliding the jaws around it")
             return round(fix, 4)
         return self._record("approach_side", {"obj": obj, "grip_z": grip_z, "hover": hover, "speed": speed}, do)
+
+    def _capture(self, index: int, tip: Vec3) -> None:
+        grab = getattr(self._env.perception, "keyframe_images", None)
+        if not callable(grab):
+            return
+        try:
+            front, wrist = grab()
+        except Exception:
+            return
+        if front is not None or wrist is not None:
+            self.captures[index] = (front, wrist, tip)
 
     def _check_not_pushed(self, target: SceneObject, dps: float, phase: str) -> None:
         """Stop BEFORE closing when the camera sees the object pushed: the gripper touched it."""
@@ -333,6 +346,8 @@ class Robot:
         finally:
             call.ee_after = self._tip()
             self.trace.append(call)
+            if name in CAPTURE_CALLS:
+                self._capture(index, call.ee_after)
             self._bus.emit("primitive.call", **_call_dict(call))
 
     def _check_world(self) -> None:
