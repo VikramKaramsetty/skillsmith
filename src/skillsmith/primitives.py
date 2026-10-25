@@ -24,6 +24,7 @@ SIDE_GRIP_BELOW_TOP = 0.025  # m; default grip height under the object's top (de
 SIDE_GRASP_DEPTH = 0.025    # m; the grasp point (fingertips) ends this far PAST the object's centre: closing
 #                             on a cup at the fingertips squeezed it out forward on the real arm (the sim
 #                             attaches on contact, so it never showed)
+SIDE_GRASP_DEPTH_MIN = 0.015  # m; shallower near the reach limit, never less than this
 SIDE_STANDOFF = 0.06        # m; the level jaws start this far short of the object, then slide in
 SIDE_STANDOFF_MARGIN = 0.01  # m; ...and never closer than its radius + this
 SIDE_HOVER = 0.03           # m; open jaws come in level this far above the object's top, then go down
@@ -192,7 +193,8 @@ class Robot:
         object's centre (jaws either side of it), then the fixed jaw over to it."""
         step = self._cfg.safety.approach_step
         bx, by = x + shift[0] - back * a[0], y + shift[1] - back * a[1]
-        dx, dy = SIDE_GRASP_DEPTH * a[0], SIDE_GRASP_DEPTH * a[1]
+        depth = self._grasp_depth(x, y, shift)
+        dx, dy = depth * a[0], depth * a[1]
         sx, sy = x + shift[0] + dx, y + shift[1] + dy
         n_down = max(1, math.ceil((turn_z - gz) / step))
         n_in = max(1, math.ceil(math.hypot(sx - bx, sy - by) / step))
@@ -201,6 +203,12 @@ class Robot:
         pts += [(bx + (sx - bx) * k / n_in, by + (sy - by) * k / n_in, gz) for k in range(1, n_in + 1)]
         pts.append((x + dx, y + dy, gz))
         return pts
+
+    def _grasp_depth(self, x: float, y: float, shift) -> float:
+        """SIDE_GRASP_DEPTH, or less (not below SIDE_GRASP_DEPTH_MIN) so the fingertips stay inside
+        workspace.max_reach with a few mm to spare."""
+        room = float(self._cfg.workspace.max_reach) - 0.003 - math.hypot(x + shift[0], y + shift[1])
+        return max(SIDE_GRASP_DEPTH_MIN, min(SIDE_GRASP_DEPTH, room))
 
     def _side_path(self, pts: list, start, grasp_q):
         """Joint poses for `pts`, solved BACKWARD from the grasp pose (each from the next one), so the whole
