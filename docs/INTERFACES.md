@@ -271,6 +271,7 @@ JSON-able dicts evaluated on the post-attempt `Scene`:
 {"op": "on_top",  "args": ["blue cup", "red cup"]}        // xy < tol, a.z ≥ b.top - 1 cm
 {"op": "inside",  "args": ["red block", "green cup"]}     // xy < cup radius, a.z < cup.top
 {"op": "near",    "args": ["red block", 0.20, -0.10]}     // xy within tol of a point
+{"op": "lifted",  "args": ["pink cup", 0.03]}            // base at least 3 cm above the table (held)
 {"op": "all",     "args": [ <predicate>, ... ]}
 {"op": "any",     "args": [ <predicate>, ... ]}
 {"op": "not",     "args": [ <predicate> ]}

@@ -75,7 +75,8 @@ safety:
   max_joint_speed_dps: 60
   max_step_deg: 10                  # robotd per-command clamp (5-10 works; 2 stalled the elbow)
   settle_tol_deg: 2.5               # robotd: a move counts as reached within this (gravity sag)
-  grip_squeeze_pct: 12.0            # robotd soft grip: hold this far past contact (0 crushed the cup, 5 let it slip)
+  grip_squeeze_pct: 8.0             # robotd soft grip: hold this far past contact (0 crushed it; 12 crushed it too)
+  gripper_torque_limit: 250         # gripper servo Max_Torque_Limit /1000 (LeRobot 500 crushed the paper cup)
   joint_tol_deg: {wrist_roll: 7.0}  # level gripper: roll sags 4-5 deg under its own weight (2026-10-25)
   joint_limit_margin_deg: 2         # robotd refuses goals this close to a calibrated joint limit
   max_lag_deg: 10                   # robotd watchdog: a joint this far behind its goal halts the move

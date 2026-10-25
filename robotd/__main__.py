@@ -84,7 +84,8 @@ def open_bus(mock: bool, cfg: dict) -> Bus:
         return MockBus()
     robot = cfg["robot"]
     bus = feetech.connect_follower(robot["follower_port"], robot["calibration_id"],
-                                   p_gain=robot.get("position_p_gain"))
+                                   p_gain=robot.get("position_p_gain"),
+                                   gripper_torque_limit=(cfg.get("safety") or {}).get("gripper_torque_limit"))
     offsets = robot.get("joint_offsets_deg")
     return OffsetBus(bus, offsets) if offsets and any(offsets) else bus
 

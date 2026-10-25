@@ -80,7 +80,7 @@ class FeetechBus:
 
 def connect_follower(port: str, calibration_id: str,
                      make_robot: Optional[Callable[[str, str], Any]] = None,
-                     p_gain: Optional[int] = None) -> FeetechBus:
+                     p_gain: Optional[int] = None, gripper_torque_limit: Optional[int] = None) -> FeetechBus:
     """Open the follower without moving it. Raises on a calibration mismatch or a missing LeRobot.
     `p_gain` (config robot.position_p_gain) is the servos' position P coefficient; LeRobot's 16 lets the
     elbow sag ~2.3 deg under gravity at reach (~1 cm at the tip), so robotd refused the move."""
@@ -94,6 +94,9 @@ def connect_follower(port: str, calibration_id: str,
         present = robot.bus.sync_read("Present_Position", num_retry=RETRIES)
         robot.bus.sync_write("Goal_Position", present)  # a stale goal can no longer make the arm jump
         robot.configure()  # LeRobot's setup; ends with torque on, holding `present`
+        if gripper_torque_limit:  # LeRobot leaves the gripper at 500 (50 %): enough to crush a paper cup
+            robot.bus.write("Max_Torque_Limit", "gripper", int(gripper_torque_limit))
+            log.info("gripper torque limit %d / 1000", int(gripper_torque_limit))
     except Exception:
         robot.bus.disconnect(disable_torque=False)  # leave the torque as we found it
         raise
