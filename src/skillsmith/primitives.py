@@ -68,7 +68,17 @@ class Robot:
         """Close the gripper. True if something is held."""
         def do(_i):
             self._env.arm.set_gripper(self._cfg.robot.gripper_closed)
-            return self._env.arm.gripper_holding()
+            held = self._env.arm.gripper_holding()
+            state = getattr(self._env.arm, "state", None)
+            if callable(state):  # evidence: where the jaws stopped and how hard they push
+                try:
+                    st = state()
+                    self._bus.emit("note", text=f"grasp: jaws stopped at {float(st.get('gripper_pos', 0)):.1f} %, "
+                                   f"load {float(st.get('gripper_load', 0)):.0f} -> {'holding' if held else 'empty'}",
+                                   where="robot.grasp")
+                except Exception:
+                    pass
+            return held
         return self._record("grasp", {}, do)
 
     def release(self) -> None:

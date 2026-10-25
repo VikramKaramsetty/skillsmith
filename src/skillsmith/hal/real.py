@@ -44,7 +44,7 @@ from skillsmith.perception.frames import TOKEN_ENV, TOKEN_HEADER
 
 N_JOINTS = 6
 FRONT_CAM = "front"
-HOLD_WIDE_GAP = 12.0  # gripper %; jaws this far short of a commanded close are holding something
+HOLD_WIDE_GAP = 4.0  # gripper %; jaws this far short of a commanded close hold something (empty closes to ~1.6)
 START_HINT = "a human starts it: ~/robot/.venv/bin/python -m robotd --port 8100 (docs/RUNBOOK.md)"
 
 # robotd is on localhost or a link-local cable: never route it through an HTTP proxy from the environment
