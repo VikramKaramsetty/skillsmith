@@ -49,6 +49,7 @@ def never_open_real_cameras(monkeypatch):
 
     NoCapture.opened = []
     monkeypatch.setattr(cameras, "OpenCVCapture", NoCapture)
+    monkeypatch.setattr(cameras, "FFmpegCapture", NoCapture)
     return NoCapture
 
 
