@@ -44,6 +44,7 @@ from skillsmith.perception.frames import TOKEN_ENV, TOKEN_HEADER
 
 N_JOINTS = 6
 FRONT_CAM = "front"
+HOLD_WIDE_GAP = 12.0  # gripper %; jaws this far short of a commanded close are holding something
 START_HINT = "a human starts it: ~/robot/.venv/bin/python -m robotd --port 8100 (docs/RUNBOOK.md)"
 
 # robotd is on localhost or a link-local cable: never route it through an HTTP proxy from the environment
@@ -92,9 +93,17 @@ class RobotdArm:
 
     def set_gripper(self, pct: float) -> None:
         self._call("POST", "/gripper", {"pct": float(pct)}, self.move_timeout_s)
+        self._gripper_goal = float(pct)
 
     def gripper_holding(self) -> bool:
-        return bool(self._field(self.state(), "holding", "GET /state"))
+        """robotd's load-based signal, OR the jaws stopped well short of a commanded close: empty jaws
+        close to ~0-2 %, so >= HOLD_WIDE_GAP short means something is between them. A gently ramped
+        close on a paper cup never reached robotd's load threshold, so a real grasp read as a miss."""
+        st = self.state()
+        if bool(self._field(st, "holding", "GET /state")):
+            return True
+        goal = getattr(self, "_gripper_goal", None)
+        return goal is not None and goal < 50 and float(st.get("gripper_pos", 0.0)) - goal >= HOLD_WIDE_GAP
 
     def stop(self) -> None:
         self._call("POST", "/stop", {})

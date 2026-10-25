@@ -46,8 +46,10 @@ def test_move_leaves_the_gripper_where_the_gripper_command_put_it():
     bus = MockBus(object_at=30.0)
     ctl = ArmController(bus, max_speed_dps=1000)
     assert ctl.set_gripper(0) is True
+    soft = bus.goal[5]  # soft grip: the goal stops a few % past where the jaws met the object, not at 0
+    assert 30.0 - 10.0 <= soft < 30.0
     ctl.move_joints([20, 0, 0, 0, 0, OPEN], speed_dps=1000)  # gripper value copied from an old seed
-    assert bus.goal[5] == 0
+    assert bus.goal[5] == soft
     assert ctl.holding() is True
 
 
