@@ -114,3 +114,27 @@ def test_controller_takes_max_step_from_config():
     ctl = build_controller({"safety": {"max_step_deg": 5, "max_joint_speed_dps": 1000}}, bus)
     ctl.move_joints([20, 0, 0, 0, 0, 100], speed_dps=1000)
     assert goals(bus) == pytest.approx([5, 10, 15, 20])
+
+
+def test_profiles_merge_left_to_right_like_skillsmith(tmp_path):
+    from robotd.__main__ import load_config as robotd_config
+
+    (tmp_path / "robot.yaml").write_text("robot: {follower_port: /dev/a, robotd_url: u}\ncameras: {front: x}\n")
+    (tmp_path / "mac.yaml").write_text("robot: {follower_port: /dev/cu.b}\ncameras: {front: 0}\n")
+    (tmp_path / "stage.yaml").write_text("cameras: {front: 2}\n")
+    cfg = robotd_config(str(tmp_path / "robot.yaml"), "mac, stage")
+    assert cfg["robot"] == {"follower_port": "/dev/cu.b", "robotd_url": "u"}
+    assert cfg["cameras"]["front"] == 2
+    assert robotd_config(str(tmp_path / "robot.yaml"))["robot"]["follower_port"] == "/dev/a"
+
+
+def test_the_mac_profile_loads_in_robotd_and_skillsmith():
+    from robotd.__main__ import DEFAULT_CONFIG
+    from robotd.__main__ import load_config as robotd_config
+    from skillsmith.config import load_config
+
+    raw = robotd_config(str(DEFAULT_CONFIG), "mac")
+    assert raw["robot"]["follower_port"].startswith("/dev/cu.")
+    assert isinstance(raw["cameras"]["front"], int) and isinstance(raw["cameras"]["wrist"], int)
+    cfg = load_config(profile="mac,stage")
+    assert cfg.robot.follower_port == raw["robot"]["follower_port"] and cfg.profile == "mac,stage"
