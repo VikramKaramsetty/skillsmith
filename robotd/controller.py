@@ -42,7 +42,7 @@ STILL_PCT = 0.5  # gripper moved less than this between polls = not moving
 # MEASURE (WS1.7): replace with the thresholds from the gripper signal test on our real cups.
 HOLD_MIN_GAP = 5.0  # jaws stopped at least this far (0..100) short of the commanded position
 HOLD_MIN_LOAD = 200.0  # while the gripper servo pushes at least this hard (raw load)
-HOLD_PUSH_LOAD = 150.0  # ...or stopped short at all while pushing this hard
+HOLD_PUSH_LOAD = 100.0  # ...or stopped short at all while pushing this hard
 HOLD_WIDE_GAP = 4.0  # ...or the jaws stopped this far short of a close: something is between them (empty: ~1.6)
 
 log = logging.getLogger("robotd")
