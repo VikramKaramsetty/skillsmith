@@ -249,6 +249,7 @@ def test_ffmpeg_opens_the_camera_by_its_full_name_not_an_index(monkeypatch):
     assert cap.name == "Rohan’s iPhone Camera"
     i = proc.cmd.index("-i")
     assert proc.cmd[i + 1] == "Rohan’s iPhone Camera:none"
+    assert proc.cmd[proc.cmd.index("-video_size") + 1] == "1280x720" and proc.cmd.index("-video_size") < i
     assert "scale=1280:720" in proc.cmd and proc.cmd[-1] == "-"
 
 

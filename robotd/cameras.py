@@ -106,10 +106,13 @@ def device_name(source: str, devices: Optional[Callable[[], List[Tuple[int, str]
 
 
 def ffmpeg_command(exe: str, name: str, size: Optional[Tuple[int, int]] = None) -> List[str]:
-    """ffmpeg reading one AVFoundation camera by its exact name and writing JPEG frames to stdout."""
+    """ffmpeg reading one AVFoundation camera by its exact name and writing JPEG frames to stdout.
+    The size is asked of the camera too: a USB webcam rejects 30 fps at its default (largest) mode and
+    then delivers nothing; the scale keeps the output size right when a camera picks its own mode."""
+    mode = ["-video_size", f"{size[0]}x{size[1]}"] if size else []
     scale = ["-vf", f"scale={size[0]}:{size[1]}"] if size else []
     return [exe, "-hide_banner", "-loglevel", "error", "-f", "avfoundation", "-framerate", str(FFMPEG_FPS),
-            "-i", f"{name}:none", *scale, "-f", "image2pipe", "-c:v", "mjpeg", "-q:v", "3", "-"]
+            *mode, "-i", f"{name}:none", *scale, "-f", "image2pipe", "-c:v", "mjpeg", "-q:v", "3", "-"]
 
 
 class FFmpegCapture:
