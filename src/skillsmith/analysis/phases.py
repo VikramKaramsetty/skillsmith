@@ -60,6 +60,20 @@ def segment_phases(attempt: AttemptResult, cfg) -> List[PhaseCheck]:
     return checks
 
 
+def grasped(attempt: AttemptResult) -> Tuple[Optional[int], Optional[SceneObject], Optional[Vec3]]:
+    """(trace position of the grasp that held, the object under the tip, the tip there) for the
+    last pick cycle; position None when nothing was held. Used by the classifier (WS4.5)."""
+    trace: List[PrimitiveCall] = list(attempt.trace)
+    if not trace:
+        return None, None, None
+    spans = _spans(trace)
+    grasp = next((s for s in spans if s.phase == "grasp"), None)
+    if grasp is None:
+        return None, None, None
+    hand = _hand(attempt, trace, spans)
+    return (grasp.hi if _held(trace[grasp.hi]) else None), hand.obj, hand.tip
+
+
 # ---- segmentation ---------------------------------------------------------------------------
 
 def _spans(trace: Sequence[PrimitiveCall]) -> List[_Span]:
