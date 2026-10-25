@@ -24,8 +24,8 @@ The detail drawer (WS6.4) holds the annotated key frames, phase table, tool call
 |---|---|---|
 | 0:00 | Arm, two cups, dashboard | "This arm has a block-stacking skill. It has never stacked cups." |
 | 0:10 | Judge taps "stack the blue cup on the red cup" | "Its own failure is what triggers the AI." |
-| 0:15 | The cup slips. Banner: **FAIL · SLIP_IN_CARRY at call #8** | "The camera caught it, and the system says exactly where and why." |
-| 0:30 | Droid panel: diagnosis, its own sim test passing, a refused action, the short diff | "Droid, through the Factory SDK, can only edit this one file and call our tools. It just tested its fix in simulation." |
+| 0:25 | The cup slips. Banner: **FAIL · SLIP_IN_CARRY at call #8** | "The camera caught it, and the system says exactly where and why." |
+| 0:35 | Droid panel: diagnosis, its own sim test passing, a refused action, the short diff | "Droid, through the Factory SDK, can only edit this one file and call our tools. It just tested its fix in simulation." |
 | 1:15 | Gates go green | "We re-check everything ourselves; we never trust the AI's word." |
 | 1:25 | Demo owner presses **Approve** | "A human approves every real move." |
 | 1:30 | The arm stacks the cup: **PASS · stack v2 saved · lesson learned** | "Fixed, saved, and remembered for next time." |
@@ -62,10 +62,13 @@ succeeds outright, say so and ask the judge for a harder variant.
 
 ## Pre-demo checklist
 
-- [ ] GX10 up, `sudo dmesg | tail` clean; robotd `/state` responds; world model running at 10+ Hz.
-- [ ] Camera taped down; `config/camera.json` fresh (re-run after any bump); marker drift ≈ 0.
+- [ ] robotd running on the Mac (`~/robot/.venv/bin/python -m robotd`); `/state` responds; world model running at 10+ Hz.
+- [ ] Mac on power and awake; arm and wrist camera plugged in.
+- [ ] iPhone mounted overhead (landscape, high, centred), locked, on power (USB cable if possible).
+- [ ] Continuity Camera video effects **off**: Center Stage, Portrait, Studio Light, Desk View (they crop/zoom and break the calibration).
+- [ ] `config/camera.json` fresh (re-run `tools/calibrate_camera.py` after any bump); marker drift ≈ 0.
 - [ ] Lighting checked; detector finds both cups within 1 cm.
-- [ ] USB-Ethernet link up; dashboard loads on the Mac.
+- [ ] Dashboard loads on the Mac; internet up for Droid.
 - [ ] Droid logged in; stage profile on; **session warmed up**.
 - [ ] Library reset: `stack` is the block-tuned v1; `skills/lessons.md` in its pre-demo state.
 - [ ] Two rehearsals today; fallback recording on the desktop.

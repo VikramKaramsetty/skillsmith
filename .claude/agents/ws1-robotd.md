@@ -11,4 +11,4 @@ Serves line).
 
 This is safety-critical code you never run on hardware: develop and test with `--mock`. Put
 anything that needs the arm under "Needs hardware test" with the exact command. Never open
-`/dev/serial/*` or `/dev/video*`, and never `pkill -f` over SSH.
+a serial port (`/dev/cu.*`) or a real camera (iPhone, USB wrist camera), and never run `--env real`.

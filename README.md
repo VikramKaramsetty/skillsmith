@@ -23,7 +23,7 @@ criteria and the decision rule. It wins over every other doc.
 | Anyone on the team | `docs/PLAN.md` (gates, time budget, cut list), `docs/DEMO.md` (the 2-minute demo) |
 | A workstream agent | `AGENTS.md`, `docs/ARCHITECTURE.md`, `docs/INTERFACES.md`, your `docs/workstreams/*.md` |
 | The lead | `docs/WORKFLOW.md` (shared queue, CI, contract changes) |
-| Touching hardware | `docs/RUNBOOK_GX10.md`, `docs/SAFETY.md` |
+| Touching hardware | `docs/RUNBOOK.md`, `docs/SAFETY.md` |
 | Wanting proof it works | `docs/RESULTS.md` (measured with real Droid: 8/8 seeded bugs fixed in one round, median 15 s, with no hint where the bug is; demo repair; sandbox check) |
 | Asking "why X?" | `docs/DECISIONS.md` (decisions, hard truths, sources) |
 

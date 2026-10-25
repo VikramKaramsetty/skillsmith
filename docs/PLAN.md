@@ -64,14 +64,14 @@ not used, and those classes fall back to UNKNOWN.
 | Retry attempt | 15–20 s | |
 | **Total** | **≈ 70–125 s** | fits a 2-minute demo if the first attempt starts by 0:15 |
 
-The world model runs continuously at 10–15 Hz (YOLO-World ≈ 20–50 ms per frame on the GX10,
-HSV ≈ 5 ms; **measure both**).
+The world model runs continuously at 10–15 Hz (YOLO-World ≈ 20–50 ms per frame on the old GX10,
+not yet measured on the Mac; HSV ≈ 5 ms; **measure both**).
 
 ## Cost and compute
 
 | Item | Where | Cost |
 |---|---|---|
-| robotd, world model, sim, orchestrator, dashboard | GX10 (local) | free; YOLO + MuJoCo fit easily on the GB10 |
+| robotd, world model, sim, orchestrator, dashboard | the lead's Mac (local) | free; YOLO + MuJoCo run on the M5 Pro (48 GB) |
 | Droid rounds | Factory (via the SDK) | per-round credits, logged in `droid.result.credits`; WS5.6 reports cost per fix |
 | Frontier vision check (stretch) | API | cents per call |
 | Build-time agents | each teammate's Claude/Droid account | subscription usage, spread across accounts |
@@ -80,7 +80,7 @@ HSV ≈ 5 ms; **measure both**).
 
 | Hours | Humans | Agents (shared queue) |
 |---|---|---|
-| 0–1 | Lead: start loops on every machine. Arm operator: robotd on the GX10, mount the camera high and centred, tape the workspace, print the checkerboard and markers. | WS1.1, WS2.1, WS3.1, WS4.4, WS5.2, WS6.1 |
+| 0–1 | Lead: start loops on every machine. Arm operator: robotd on the Mac, mount the iPhone high and centred, tape the workspace, print the checkerboard and markers. | WS1.1, WS2.1, WS3.1, WS4.4, WS5.2, WS6.1 |
 | 1–4 | Arm operator: WS2.7 IK check, WS1.7 gripper signal test. Demo owner: choose non-nesting objects, measure cup vs jaw. | Wave 1 against `fake` |
 | 4–8 | Arm operator: camera calibration, WS3.9 accuracy, scripted pick at 0.05 m/s → **G3**. | WS2 → **G2**; WS4.5 classifier; WS5.1 real Droid |
 | 8–12 | Integrate on the real arm: world model + robotd + sim gate. | WS5.3 evidence v2 → **G4**; WS6.2 big screen |
@@ -93,7 +93,7 @@ HSV ≈ 5 ms; **measure both**).
 
 - **Lead**: owns `NORTH_STAR.md`, contracts, `config/robot.yaml` and contract changes (merged by
   hand). Watches `make status`, unblocks `blocked` issues, re-briefs agents.
-- **Arm operator**: owns the arm, the GX10, robotd, cameras and calibration. Runs every
+- **Arm operator**: owns the arm, the Mac's hardware setup, robotd, cameras and calibration. Runs every
   `needs-hardware` task. Hand on the power during real runs.
 - **Demo owner**: owns `DEMO.md`, objects and table setup, the big-screen view, the pitch, the
   fallback recording. Presses Approve on stage.

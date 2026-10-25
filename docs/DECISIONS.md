@@ -62,7 +62,7 @@ it coherent (`docs/WORKFLOW.md`).
 real-time control (RHO). The arm stops, Droid repairs, the gates re-run, the arm retries.
 Within an attempt, closed-loop alignment and step checks handle small corrections.
 
-**D13. Networking for the demo.** USB-Ethernet link-local between the Mac and the GX10 (the
+**D13. Networking for the demo.** *Superseded by D15 (2026-10-24): no network hop any more.* USB-Ethernet link-local between the Mac and the GX10 (the
 public Wi-Fi drops; Tailscale adds 125–235 ms). Droid needs internet; if the GX10 loses it, run
 the orchestrator on the Mac (robotd with `--host` + token).
 
@@ -77,6 +77,15 @@ function we wrote. `make droid-sandbox-check` (run with Droid's default instruct
 tries) showed shell, `require('fs')`, `fetch`, Deno/Bun/`process` and path traversal all blocked.
 Droid's fix also arrives as `skill_source` in its JSON result, and our code writes it. Re-run the
 sandbox check after any Droid CLI/SDK upgrade.
+
+**D15. Run everything on the Mac; iPhone via Continuity Camera as the overhead camera**
+(2026-10-24). robotd, the arm, both cameras, sim, dashboard and Droid run on the lead's MacBook
+Pro (M5 Pro, 48 GB); we stopped using the ASUS GX10. The overhead camera is an iPhone through
+Continuity Camera, opened by name. Why: one machine, so no network hop between robotd and the
+orchestrator and no flaky Wi-Fi or Tailscale (125–235 ms through a relay); and a real camera
+instead of the MacBook-webcam MJPEG stand-in. Supersedes D13 and the "GX10" placement in the
+architecture. *Gave up:* the GB10 GPU (YOLO speed on the Mac must be measured) and a fixed
+webcam: the phone must be locked, on power, with video effects off, and recalibrated after any bump.
 
 ## Hard truths
 
@@ -99,8 +108,10 @@ sandbox check after any Droid CLI/SDK upgrade.
 9. **`exec` with stripped builtins is not a sandbox.** It is fine only because the validator, the
    guard, the sim, human approval and robotd don't depend on it.
 10. **`demo-fake` proves plumbing, not robotics.** Confidence starts at G2 and G3.
-11. **The network is hostile and the GX10 has crashed before** (NVIDIA "bad register read").
-    Keep the fallback recording; watch `dmesg`.
+11. **The overhead camera is a phone.** Continuity Camera can drop, and its video effects
+    (Center Stage, Portrait, Studio Light, Desk View) crop and zoom. Mount it on power, use a
+    cable if possible, keep effects off, recalibrate after any bump, keep the fallback recording.
+    (Before D15: the network was hostile and the GX10 once crashed with NVIDIA "bad register read".)
 12. **One arm is a single point of failure.** The leader arm's six STS3215 motors are the spare kit.
 13. **Agents can write code that passes tests and is still wrong.** Behavioural acceptance tests,
     hourly `make status`, integrate on hardware early.
@@ -108,7 +119,7 @@ sandbox check after any Droid CLI/SDK upgrade.
 
 ## Open questions (answer at G3)
 
-- Overhead camera: which one, how high, how centred?
+- Overhead camera: the iPhone (D15); how high, how centred?
 - Is the wrist camera mounted and giving usable frames?
 - Jaw opening vs cup diameter: does a side grip fit, or must we grip the rim?
 - Real placement error open-loop: is wrist alignment needed?
