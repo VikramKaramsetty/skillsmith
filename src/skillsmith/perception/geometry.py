@@ -36,6 +36,7 @@ from typing import Dict, List, Mapping, Optional, Sequence, Tuple, Union
 MARKER_SIZE = 0.04
 MARKER_DICT = "DICT_4X4_50"
 MIN_BOARD_VIEWS = 8
+INITIAL_FOCAL = 0.55  # focal length / image width: a phone's main camera (~70 deg across)
 MIN_MARKERS = 3
 
 
@@ -152,7 +153,14 @@ def calibrate_intrinsics(frames_bgr: Sequence, pattern: Tuple[int, int], square:
     if len(image_pts) < MIN_BOARD_VIEWS:
         raise CalibrationError(f"checkerboard {pattern[0]}x{pattern[1]} found in {len(image_pts)} of "
                                f"{len(frames_bgr)} views; need at least {MIN_BOARD_VIEWS} (tilt it, fill the frame)")
-    rms, K, dist, _, _ = cv2.calibrateCamera(object_pts, image_pts, size, None, None)
+    # Constrained fit: views of a board lying near-flat under an overhead camera barely change depth, so a
+    # free fit cannot pin the focal length down (2026-10-25: fx 130474 vs fy 33041 at 1.06 px rms; the
+    # markers still checked out because they are coplanar). Square pixels, no tangential distortion, no k3,
+    # and a phone-camera starting focal length give f ~1049 px at 0.81 px on the same views.
+    guess = np.array([[INITIAL_FOCAL * size[0], 0, size[0] / 2], [0, INITIAL_FOCAL * size[0], size[1] / 2], [0, 0, 1]])
+    flags = (cv2.CALIB_USE_INTRINSIC_GUESS | cv2.CALIB_FIX_ASPECT_RATIO | cv2.CALIB_ZERO_TANGENT_DIST
+             | cv2.CALIB_FIX_K3)
+    rms, K, dist, _, _ = cv2.calibrateCamera(object_pts, image_pts, size, guess, None, flags=flags)
     return K.tolist(), dist.reshape(-1)[:5].tolist(), float(rms)
 
 

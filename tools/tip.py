@@ -45,7 +45,7 @@ def save_marker(path: Path, marker_id: int, xy: Sequence[float]) -> Dict[str, Li
 
 def main(argv=None) -> int:
     from skillsmith.config import load_config
-    from skillsmith.kinematics import make_kinematics
+    from skillsmith.kinematics import PlacoKinematics
 
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("--marker", type=int, help="save the tip's (x, y) as this ArUco marker's centre")
@@ -53,7 +53,9 @@ def main(argv=None) -> int:
     p.add_argument("--watch", action="store_true")
     args = p.parse_args(argv)
     cfg = load_config()
-    kin = make_kinematics(cfg)
+    # Raw URDF frame = the fixed jaw's tip, the point you touch markers with (make_kinematics adds the
+    # 3.5 cm grasp-point offset toward the moving jaw, which put every marker up to 3.5 cm off).
+    kin = PlacoKinematics(str(cfg.path(cfg.robot.urdf)), cfg.robot.ee_frame, cfg.robot.joint_names[:5], tip_offset=0)
     while True:
         try:
             x, y, z = kin.fk(read_joints(cfg.robot.robotd_url))

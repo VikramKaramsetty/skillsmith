@@ -283,3 +283,12 @@ def test_open_capture_uses_ffmpeg_for_names_on_macos_only(monkeypatch, never_ope
     monkeypatch.setattr(cameras.sys, "platform", "linux")
     cameras.open_capture("name:iPhone")
     assert picked == [("ffmpeg", "name:iPhone"), ("opencv", 0), ("opencv", "name:iPhone")]
+
+
+def test_ffmpeg_capture_never_repeats_a_frozen_frame(monkeypatch):
+    cap, proc = ffmpeg_capture(monkeypatch)
+    proc.feed(jpeg(1))
+    assert cap.read() == jpeg(1)
+    proc.feed(jpeg(1) + jpeg(1))  # the same bytes again: the camera stalled
+    assert cap.read() is None
+    assert "passthrough" in proc.cmd

@@ -57,6 +57,41 @@ class Bus(Protocol):
     def close(self) -> None: ...
 
 
+class OffsetBus:
+    """A Bus whose joint degrees are shifted by per-joint zero offsets (config robot.joint_offsets_deg).
+
+    LeRobot's calibration centres each joint on its own range, which is not exactly the URDF's zero:
+    on the Mac (2026-10-25) FK vs the printed mat needed pan +2.3, lift -3.0, elbow -5.0 deg. With the
+    offsets here, every client (FK/IK, sim gate, world model) sees URDF degrees. model = raw + offset."""
+
+    def __init__(self, bus: Bus, offsets_deg: Sequence[float]):
+        if len(offsets_deg) != 6 or float(offsets_deg[5]) != 0.0:
+            raise ValueError("joint_offsets_deg needs 6 values and a 0 for the gripper (0..100, not degrees)")
+        self._bus = bus
+        self._off = [float(v) for v in offsets_deg]
+
+    def read_present(self) -> List[float]:
+        return [v + o for v, o in zip(self._bus.read_present(), self._off)]
+
+    def read_gripper_load(self) -> float:
+        return self._bus.read_gripper_load()
+
+    def write_goal(self, goal: Sequence[float]) -> None:
+        self._bus.write_goal([float(g) - o for g, o in zip(goal, self._off)])
+
+    def set_torque(self, on: bool) -> None:
+        self._bus.set_torque(on)
+
+    def torque_enabled(self) -> bool:
+        return self._bus.torque_enabled()
+
+    def joint_limits(self) -> List[Tuple[float, float]]:
+        return [(lo + o, hi + o) for (lo, hi), o in zip(self._bus.joint_limits(), self._off)]
+
+    def close(self) -> None:
+        self._bus.close()
+
+
 class RobotdError(Exception):
     """A refused or failed command. `status` is the HTTP status the server answers with."""
 
