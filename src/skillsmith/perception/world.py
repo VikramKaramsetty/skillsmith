@@ -205,11 +205,14 @@ class WorldModel:
 
     def reset_gate(self) -> None:
         """Start a new gate window (call when an attempt starts): the next update is the baseline
-        for the object count, and latched low-confidence issues clear. Marker drift is a property
-        of the camera, so it stays until the markers are back in place."""
+        for the object count, and latched low-confidence issues clear, and so do bumps: a cup moved by
+        hand while the run waited (e.g. at the approval prompt) is where it is now, not a bump of this
+        attempt (each bump already re-anchored its track). Marker drift is a property of the camera,
+        so it stays until the markers are back in place."""
         with self._lock:
             self._baseline = None
             self._low_conf, self._low_conf_run = None, 0
+            self._bumps.clear()
 
     def align_offset(self, obj: SceneObject) -> Tuple[float, float]:
         """Wrist-camera fine correction (dx, dy) in metres, base frame. (0.0, 0.0) on any failure."""

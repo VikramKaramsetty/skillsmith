@@ -257,3 +257,19 @@ def test_a_split_top_is_one_cup_not_two():
     for _ in range(5):
         world.step()
     assert [o.id for o in world.observe().objects] == ["pink_cup_0"]
+
+
+def test_a_cup_moved_by_hand_before_an_attempt_is_not_a_bump_of_it():
+    det = FakeDetector([cup("red", 0.22, 0.08)])
+    world = make_world(detector=det)
+    world.step()
+    det.dets = [cup("red", 0.27, 0.05)]  # moved while the run waited at the approval prompt
+    for _ in range(5):
+        world.step()
+    world.reset_gate()  # the attempt starts
+    assert world.unexpected_motion() is None
+    assert obj(world, "red_cup_0").x == pytest.approx(0.27)
+    det.dets = [cup("red", 0.30, 0.05)]  # but a move during the attempt still is one
+    for _ in range(5):
+        world.step()
+    assert "moved" in (world.unexpected_motion() or "")

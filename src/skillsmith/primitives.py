@@ -14,17 +14,18 @@ from typing import TYPE_CHECKING, Any, Callable, Optional
 
 from skillsmith.events import EventBus
 from skillsmith.safety import SafetyGuard
-from skillsmith.types import PrimitiveCall, SafetyViolation, Scene, SceneObject, SkillError, Unreachable, Vec3, WorldChanged
+from skillsmith.types import PrimitiveCall, Scene, SceneObject, SkillError, Unreachable, Vec3, WorldChanged
 
 if TYPE_CHECKING:
     from skillsmith.hal.base import Env
 
 # approach_side (side grasp, gripper level). Measured in the MuJoCo sim on the tapered demo cup.
-SIDE_GRIP_BELOW_TOP = 0.02  # m; default grip height under the object's top (narrow end of a tapered cup)
+SIDE_GRIP_BELOW_TOP = 0.015  # m; default grip height under the object's top (narrow end; reaches nearer)
+SIDE_STANDOFF = 0.06        # m; the level jaws start this far short of the object, then slide in
+SIDE_STANDOFF_MARGIN = 0.01  # m; ...and never closer than its radius + this
 SIDE_HOVER = 0.03           # m; open jaws come in level this far above the object's top, then go down
 JAW_CENTRE_SHIFT = 0.03     # m; descend this far along +tool x, then slide back (sim: 0..6 cm pass, -2.5 hits)
-SIDE_MIN_REACH = 0.22       # m from the base axis; nearer, a level gripper folds the arm into itself (sim)
-WRIST_LOOK_HOVER = 0.04     # m; tip above the top when the wrist camera looks down (object ~mid-image)
+SIDE_MIN_REACH = 0.18       # m from the base axis; nearer, a side pose folds the arm into itself (sim)
 WRIST_MAX_FIX = 0.03        # m; a wrist-camera fix larger than this is ignored (wrong camera model)
 SWING_CLEARANCE = 0.06      # m; the gripper turns between down and level at least this far above the object
 SWING_DPS = 25.0            # deg/s; joint speed cap while the gripper turns (no straight-line tip path then)
@@ -110,66 +111,94 @@ class Robot:
         return self._record("align_over", {"obj": obj, "hover": hover}, do)
 
     def approach_side(self, obj: str, grip_z: Optional[float] = None, hover: float = SIDE_HOVER) -> float:
-        """Side grasp approach: open the jaws, fix the object's position with the wrist camera (looking
-        down from just above it, real arm only), bring the gripper in LEVEL (parallel to the table, jaws
-        opening sideways) above it, lower the open jaws around it to `grip_z` (default 2 cm under its
-        top) and slide the fixed jaw up to it. Call grasp() next; later move_to calls stay level.
-        Returns the wrist-camera correction in metres (0.0 when none was made)."""
+        """Side grasp approach, like a hand reaching for a cup: open the jaws, turn the gripper LEVEL
+        (parallel to the table, jaws opening sideways) high up behind the object (on the base side),
+        lower it to `grip_z` (default 1.5 cm under the top) a few cm short of the object, fix the
+        object's position with the wrist camera from there (real arm; sim renders it), then slide in
+        horizontally until the open jaws are around it and the fixed jaw touches it. Call grasp()
+        next; later move_to calls stay level. Returns the wrist-camera correction in metres."""
         def do(i):
             self._env.arm.set_gripper(self._cfg.robot.gripper_open)
             scene = self._env.perception.observe()
             self.last_scene = scene
             target = scene.require(obj)
-            x, y, fix = target.x, target.y, 0.0
-            located = self._wrist_locate(target, i)
-            if located is not None:
-                fix = math.hypot(located[0] - x, located[1] - y)
-                x, y = located
+            x, y = target.x, target.y
             gz = target.top - SIDE_GRIP_BELOW_TOP if grip_z is None else float(grip_z)
             gz = min(max(gz, target.z + 0.01), target.top - 0.005)
             q = None if math.hypot(x, y) < SIDE_MIN_REACH else self._ik((x, y, gz), self._env.arm.joints(), side=True)
-            if q is None:  # one solve above: reach check + jaw axis
+            if q is None:  # one solve: reach check + gripper axes at the grasp
                 raise Unreachable(f"no level (side) grasp of {target.label} at ({x:.3f}, {y:.3f}, z={gz:.3f}), "
-                                  f"{math.hypot(x, y):.3f} m from the base: a level gripper reaches about "
-                                  "0.23..0.34 m out, less the lower the grip (0.26 m at z=0.075). Move it outward")
-            jx, jy, _ = self._jaw_axis(q, x, y)
-            sx, sy = x + JAW_CENTRE_SHIFT * jx, y + JAW_CENTRE_SHIFT * jy  # object mid-gap on the way down
-            self._move((sx, sy, target.top + max(hover, SWING_CLEARANCE)), None, i, side=True)  # turn up high
-            self._move((sx, sy, gz), None, i)
-            self._move((x, y, gz), None, i)
+                                  f"{math.hypot(x, y):.3f} m from the base: a side grasp reaches about "
+                                  "0.22..0.33 m out. Move it outward")
+            (jx, jy, _), (ax, ay) = self._jaw_axis(q, x, y), self._reach_dir(q, x, y)
+            shift = (JAW_CENTRE_SHIFT * jx, JAW_CENTRE_SHIFT * jy)  # object mid-gap while the jaws come in
+            back = self._standoff(target, x, y, gz, shift, (ax, ay), q)
+            bx, by = x + shift[0] - back * ax, y + shift[1] - back * ay
+            self._move((bx, by, target.top + max(hover, SWING_CLEARANCE)), None, i, side=True)  # turn up high
+            fix = 0.0
+            located = self._wrist_locate(target)                  # from up here the camera sees all of its top
+            if located is not None:
+                fix = math.hypot(located[0] - x, located[1] - y)
+                x, y = located
+                bx, by = x + shift[0] - back * ax, y + shift[1] - back * ay
+            self._move((bx, by, gz), None, i)                     # down behind the object, jaws short of it
+            self._move((x + shift[0], y + shift[1], gz), None, i)  # slide in: jaws either side of it
+            self._move((x, y, gz), None, i)                       # fixed jaw up to it
             return round(fix, 4)
         return self._record("approach_side", {"obj": obj, "grip_z": grip_z, "hover": hover}, do)
 
     # ---- internals ------------------------------------------------------------------
-    def _ik(self, p: Vec3, seed, side: bool):
+    def _ik(self, p: Vec3, seed, side: bool, hold: bool = False):
         # only pass `approach` when it matters, so simple Kinematics doubles keep working
-        return self._env.kin.ik(p, seed, approach="side") if side else self._env.kin.ik(p, seed)
+        if not side:
+            return self._env.kin.ik(p, seed)
+        if hold and getattr(self._env.kin, "tool_axis", None) is not None:  # placo: keep the finger tilt
+            return self._env.kin.ik(p, seed, approach="side", keep_tilt=True)
+        return self._env.kin.ik(p, seed, approach="side")
 
-    def _jaw_axis(self, q, x: float, y: float) -> Vec3:
-        """The jaws' closing axis (gripper x) at q; tangential when kin cannot say (fake world)."""
+    def _axis_or(self, q, name: str, fallback: Vec3) -> Vec3:
         axis = getattr(self._env.kin, "tool_axis", None)
         try:
             if callable(axis):
-                return axis(q, "x")
+                return axis(q, name)
         except AttributeError:  # a wrapper around a kinematics without tool_axis
             pass
-        r = math.hypot(x, y) or 1.0
-        return (-y / r, x / r, 0.0)
+        return fallback
 
-    def _wrist_locate(self, target: SceneObject, index: int) -> Optional[tuple[float, float]]:
-        """Look down at `target` from WRIST_LOOK_HOVER above it and locate its top with the wrist
-        camera. None (overhead position stands) without a wrist camera, a blob or a sane answer."""
+    def _jaw_axis(self, q, x: float, y: float) -> Vec3:
+        """The jaws' closing axis (gripper x) at q; tangential when kin cannot say (fake world)."""
+        r = math.hypot(x, y) or 1.0
+        return self._axis_or(q, "x", (-y / r, x / r, 0.0))
+
+    def _reach_dir(self, q, x: float, y: float) -> tuple[float, float]:
+        """Horizontal unit direction a level gripper points at q (away from the base)."""
+        r = math.hypot(x, y) or 1.0
+        zx, zy, _ = self._axis_or(q, "z", (x / r, y / r, 0.0))
+        n = math.hypot(zx, zy) or 1.0
+        return zx / n, zy / n
+
+    def _standoff(self, target: SceneObject, x: float, y: float, gz: float, shift, a, seed) -> float:
+        """How far back (m, along the reach direction) the jaws start: SIDE_STANDOFF, or less where
+        a level gripper cannot reach that near the base (never below the object's radius + 1 cm)."""
+        least = target.width_at(gz) / 2 + SIDE_STANDOFF_MARGIN
+        back = SIDE_STANDOFF
+        while back >= least:
+            p = (x + shift[0] - back * a[0], y + shift[1] - back * a[1])
+            if math.hypot(*p) >= SIDE_MIN_REACH and self._ik((p[0], p[1], gz), seed, side=True) is not None:
+                return back
+            back -= 0.01
+        raise Unreachable(f"{target.label} at ({x:.3f}, {y:.3f}) is too near the base to reach in from the side: "
+                          f"a level gripper cannot start {least * 100:.0f} cm short of it. Move it outward")
+
+    def _wrist_locate(self, target: SceneObject) -> Optional[tuple[float, float]]:
+        """Locate `target`'s top with the wrist camera from the current pose. None (overhead position
+        stands) without a wrist camera, a blob or a sane answer."""
         frame_of = getattr(self._env.perception, "wrist_frame", None)
         pose_of = getattr(self._env.kin, "wrist_camera_pose", None)
         if not callable(frame_of) or not callable(pose_of):
             return None
         from skillsmith.perception import wrist
 
-        try:
-            self._move((target.x, target.y, target.top + WRIST_LOOK_HOVER), None, index, side=False)
-        except (Unreachable, SafetyViolation) as e:  # the look is optional: grasp on the overhead position
-            self._bus.emit("note", text=f"wrist look skipped ({e})"[:200], where="robot.approach_side")
-            return None
         frame = frame_of()
         if frame is None:
             return None
@@ -180,7 +209,8 @@ class Robot:
             self._bus.emit("note", text=f"wrist locate failed ({type(e).__name__}: {e}); overhead position used")
             return None
         fix = math.hypot(result.x - target.x, result.y - target.y) if result.found else 0.0
-        ok = result.found and result.confidence >= 0.3 and fix <= WRIST_MAX_FIX
+        partial = "image edge" in result.reason  # a cut-off blob's centroid is off by a cm or more
+        ok = result.found and not partial and result.confidence >= 0.3 and fix <= WRIST_MAX_FIX
         verdict = "used" if ok else "ignored, overhead position used"
         text = f"wrist locate {target.label}: {result.reason}; fix {fix * 100:.1f} cm ({verdict})"
         self._bus.emit("note", text=text[:200],
@@ -240,9 +270,10 @@ class Robot:
             raise Unreachable(f"({target[0]:.3f}, {target[1]:.3f}) is {math.hypot(target[0], target[1]):.3f} m "
                               f"from the base: with the gripper level it must stay {SIDE_MIN_REACH:.2f} m or more out")
         turning = want != level
-        for wp in self._waypoints(self._tip(), target):
+        hold = want and not turning and self._env.arm.gripper_holding()
+        for wp in self._waypoints(self._tip(), target, straight=want and not turning):
             seed = self._env.arm.joints()
-            q = self._ik(wp, seed, want)
+            q = self._ik(wp, seed, want, hold)
             if q is None:
                 how = " with the gripper level" if want else ""
                 raise Unreachable(f"no IK solution for ({wp[0]:.3f}, {wp[1]:.3f}, {wp[2]:.3f}){how}")
@@ -251,12 +282,17 @@ class Robot:
             turning = False
             self._side = want
 
-    def _waypoints(self, start: Vec3, end: Vec3) -> list[Vec3]:
-        """Mostly-vertical moves become straight lines in approach_step chunks."""
+    def _waypoints(self, start: Vec3, end: Vec3, straight: bool = False) -> list[Vec3]:
+        """Mostly-vertical moves (any move with `straight`, e.g. a level slide toward a cup) become
+        straight lines in approach_step chunks."""
         dx, dy, dz = (end[i] - start[i] for i in range(3))
-        if abs(dz) <= math.hypot(dx, dy) or abs(dz) <= self._cfg.safety.approach_step:
+        step = self._cfg.safety.approach_step
+        if straight:
+            n = max(1, math.ceil(math.dist(start, end) / step))
+            return [tuple(start[i] + (end[i] - start[i]) * k / n for i in range(3)) for k in range(1, n + 1)]
+        if abs(dz) <= math.hypot(dx, dy) or abs(dz) <= step:
             return [end]
-        n = math.ceil(abs(dz) / self._cfg.safety.approach_step)
+        n = math.ceil(abs(dz) / step)
         return [tuple(start[i] + (end[i] - start[i]) * k / n for i in range(3)) for k in range(1, n + 1)]
 
     def _joint_speed(self, q0, q1, wp: Vec3, tcp_speed: float) -> float:

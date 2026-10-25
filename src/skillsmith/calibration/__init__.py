@@ -109,11 +109,11 @@ class OffsetKinematics:
         x, y, z = self.inner.fk(joints)
         return (x + self.dx, y + self.dy, z)
 
-    def ik(self, target: Vec3, seed: Sequence[float], approach: str = "down") -> Optional[List[float]]:
+    def ik(self, target: Vec3, seed: Sequence[float], approach: str = "down", **kw) -> Optional[List[float]]:
         shifted = (target[0] - self.dx, target[1] - self.dy, target[2])
         if approach == "down":  # keep plain two-argument Kinematics working
             return self.inner.ik(shifted, seed)
-        return self.inner.ik(shifted, seed, approach=approach)
+        return self.inner.ik(shifted, seed, approach=approach, **kw)
 
     def tool_axis(self, joints: Sequence[float], axis: str = "z") -> Vec3:
         return self.inner.tool_axis(joints, axis)  # a pure xy shift leaves directions alone

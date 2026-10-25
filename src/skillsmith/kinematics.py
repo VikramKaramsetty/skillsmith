@@ -51,6 +51,9 @@ Side approach (`approach="side"`):
   A side solution tilted more than SIDE_MAX_TILT_DEG is rejected (None): a pitched gripper closes
   on a tapered cup at an angle.
   `last_tilt_deg` reports the tilt. The tip is still the grasp point between the jaws.
+- `keep_tilt=True` (side, while holding) aligns with the SEED's finger tilt instead of level: near
+  the base the tilt changes with height, and re-levelling on a lift swings the held cup about the
+  grip and digs its base into the table. The result must still be within SIDE_MAX_TILT_DEG of level.
 - Side solutions keep SIDE_LIMIT_MARGIN_DEG inside the URDF limits: near the base a level gripper
   sits on wrist_flex's -95 deg stop, and robotd refuses goals within 2 deg of a limit.
 
@@ -88,8 +91,9 @@ RESTART_POSTURES = ((-40.0, 40.0, 90.0), (0.0, 0.0, 90.0), (20.0, -20.0, 90.0), 
                     (40.0, -40.0, 90.0), (-80.0, 60.0, 90.0))
 APPROACHES = ("down", "side")
 SIDE_ROLL_DEG = -90.0     # wrist_roll for a side grasp: jaws open sideways, wrist camera on TOP (+90 hangs it under)
+SIDE_ELBOW_MAX_DEG = 85.0  # side: elbow_flex cap; folded further, the lower arm hits the shoulder (sim)
 SIDE_LIMIT_MARGIN_DEG = 3.0  # side solutions stay this far inside the URDF limits (robotd refuses < 2 deg)
-SIDE_MAX_TILT_DEG = 10.0  # a "level" gripper may pitch this much (wrist_flex limit near the base), else None
+SIDE_MAX_TILT_DEG = 30.0  # fingers may point this far below level (wrist_flex limit near the base), else None
 # (shoulder_lift, elbow_flex, wrist_flex): postures with the gripper level, low and far to near
 SIDE_POSTURES = ((0.0, 60.0, -60.0), (20.0, 30.0, -50.0), (-20.0, 80.0, -60.0), (40.0, 0.0, -40.0),
                  (30.0, 40.0, -70.0), (-40.0, 90.0, -50.0))
@@ -136,22 +140,34 @@ class PlacoKinematics:
         x, y, z = self._tip_pose()[:3, 3] - self._origin
         return (float(x), float(y), float(z))
 
-    def ik(self, target: Vec3, seed: Sequence[float], approach: str = "down") -> Optional[List[float]]:
+    def ik(self, target: Vec3, seed: Sequence[float], approach: str = "down",
+           keep_tilt: bool = False) -> Optional[List[float]]:
         if approach not in APPROACHES:
             raise ValueError(f"approach must be one of {APPROACHES}, got {approach!r}")
         target_arr = self._np.asarray(target, dtype=float) + self._origin  # robot frame -> URDF base_link
         self._pos_task.target_world = target_arr
         self._col, self._axis = self._approach_axis(approach)
+        if approach == "side" and keep_tilt:  # holding: keep the seed's finger tilt, don't re-level
+            self._set_arm(seed)
+            self._axis = self._tip_pose()[:3, 1].copy()
         self._margin = SIDE_LIMIT_MARGIN_DEG if approach == "side" else 0.0
         self._down_task.axis_frame = self._np.eye(3)[self._col]
         self._down_task.targetAxis_world = self._axis
         best = None
-        for start in self._starts(target, seed, approach):
-            cand = self._solve(target_arr, start, seed)
-            if cand is not None and (best is None or cand[:2] < best[:2]):
-                best = cand
-            if best is not None and best[0] < (SIDE_MAX_TILT_DEG if approach == "side" else VERTICAL_DEG):
-                break  # side: the first level-enough start wins (usually the seed), no extra solves
+        self._solver_limits(self._margin)  # side: the solver itself stays inside the margin
+        try:
+            for start in self._starts(target, seed, approach):
+                cand = self._solve(target_arr, start, seed)
+                if cand is not None and (best is None or cand[:2] < best[:2]):
+                    best = cand
+                if best is not None and best[0] < (SIDE_MAX_TILT_DEG if approach == "side" else VERTICAL_DEG):
+                    break  # side: the first level-enough start wins (usually the seed), no extra solves
+        finally:
+            self._solver_limits(0.0)
+        if best is not None and approach == "side" and keep_tilt:  # judge the result against level
+            self._set_arm(best[2])
+            level = float(self._tip_pose()[:3, 1] @ self._approach_axis("side")[1])
+            best = (round(math.degrees(math.acos(max(-1.0, min(1.0, level)))), 3), best[1], best[2])
         self.last_tilt_deg = None if best is None else best[0]
         max_tilt = SIDE_MAX_TILT_DEG if approach == "side" else self.max_tilt_deg
         if best is None or (max_tilt is not None and best[0] > max_tilt):
@@ -205,6 +221,23 @@ class PlacoKinematics:
         """+1 if positive shoulder_pan turns the tip toward +y (WS2.7 may flip it on the real arm)."""
         y = self.fk([10.0, 0.0, 0.0, 90.0, 0.0, 0.0])[1] - self.fk([0.0, 0.0, 0.0, 90.0, 0.0, 0.0])[1]
         return 1.0 if y >= 0 else -1.0
+
+    def _solver_limits(self, margin: float) -> None:
+        """Joint limits placo enforces: the URDF's shrunk by `margin` degrees."""
+        if margin == getattr(self, "_solver_margin", 0.0):
+            return
+        for n in self.joint_names[:4]:
+            lo, hi = self._bounds(n, margin)
+            self._robot.set_joint_limits(n, math.radians(lo), math.radians(hi))
+        self._solver_margin = margin
+
+    def _bounds(self, name: str, margin: float) -> tuple:
+        """(lo, hi) degrees for `name`: URDF limits shrunk by margin; side solves (margin > 0) also
+        cap the elbow at SIDE_ELBOW_MAX_DEG."""
+        lo, hi = self._limits[name][0] + margin, self._limits[name][1] - margin
+        if margin and name == self.joint_names[2]:
+            hi = min(hi, SIDE_ELBOW_MAX_DEG)
+        return lo, hi
 
     def _approach_axis(self, approach: str):
         """(gripper frame axis index, world direction it must point): z down, or y down/up (level)."""
@@ -278,7 +311,7 @@ class PlacoKinematics:
         return [min(max(v, self._limits[n][0]), self._limits[n][1]) for n, v in zip(self.joint_names, joints)]
 
     def _within_limits(self, joints: Sequence[float], margin: float = 0.0) -> bool:
-        return all(self._limits[n][0] + margin - LIMIT_EPS_DEG <= v <= self._limits[n][1] - margin + LIMIT_EPS_DEG
+        return all(self._bounds(n, margin)[0] - LIMIT_EPS_DEG <= v <= self._bounds(n, margin)[1] + LIMIT_EPS_DEG
                    for n, v in zip(self.joint_names, joints))
 
 
