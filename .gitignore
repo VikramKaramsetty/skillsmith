@@ -8,6 +8,7 @@ __pycache__/
 runs/
 skills/history/
 config/camera.json
+config/markers.json
 assets/so101/*.stl
 *.mp4
 uv.lock
