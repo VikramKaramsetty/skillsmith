@@ -30,6 +30,8 @@ Optional config section (defaults below apply when it is absent; MEASURE on the 
       v_axis: "-x"                    # tool axis for image +v (down)
       max_offset: 0.02                # m; larger corrections are clamped (and flagged)
       roll_sign: 1.0                  # sign of wrist_roll in the tool yaw (verify on the arm)
+      cam_height: 0.0                 # m; wrist camera above the FK tip (distance = tip z + this - obj top)
+      min_align_confidence: 0.3       # WorldModel.align_offset ignores (returns 0, 0) a weaker result
       hues: {...}                     # OpenCV hue ranges per colour; else detect.hsv.hues
 Imports cv2/numpy lazily: core tests must run without them.
 """
@@ -67,6 +69,8 @@ class WristConfig:
     v_axis: str = "-x"
     max_offset: float = 0.02
     roll_sign: float = 1.0
+    cam_height: float = 0.0
+    min_align_confidence: float = 0.3
     hues: dict[str, list[tuple[int, int]]] = field(default_factory=lambda: dict(DEFAULT_HUES))
 
     def __post_init__(self) -> None:
