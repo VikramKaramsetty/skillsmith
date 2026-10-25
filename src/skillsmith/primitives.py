@@ -38,6 +38,7 @@ NEAR_DPS = 12.0             # deg/s; joint speed cap for approach_side's moves n
 #                             shoved the cup on the real arm
 MAX_STEP_JUMP_DEG = 25.0    # a non-turning waypoint moving any joint more than this = IK branch flip, refused
 PUSH_TOL = 0.015            # m; the camera seeing the object this far from where the approach planned = pushed
+PUSH_TOL_OVER = 0.04        # m; push tolerance when the gripper is over the object (occludes its top)
 PUSH_SETTLE_S = 0.4         # s; wait this long after stopping so the overhead frame shows the result
 CAPTURE_CALLS = {"approach_side", "align_over", "grasp", "move_to", "release", "home"}  # keyframe after these
 SWING_DPS = 25.0            # deg/s; joint speed cap while the gripper turns (no straight-line tip path then)
@@ -186,9 +187,11 @@ class Robot:
             near_dps = NEAR_DPS if speed is None else max(2.0, min(NEAR_DPS, float(speed)))
             n_down = next(k for k in range(1, len(pts)) if abs(pts[k][2] - gz) < 1e-6)
             self._play(pts[1:n_down + 1], qs[1:n_down + 1], i, near_dps)  # down behind it, jaws short of it
-            self._check_not_pushed(target, near_dps, "lowering behind it")
+            over = self._back < 0  # straddling from above: the gripper hides part of its top
+            self._check_not_pushed(target, near_dps, "lowering over it" if over else "lowering behind it",
+                                   PUSH_TOL_OVER if over else PUSH_TOL)
             self._play(pts[n_down + 1:], qs[n_down + 1:], i, near_dps)     # slide in, fixed jaw up to it
-            self._check_not_pushed(target, near_dps, "sliding the jaws around it")
+            self._check_not_pushed(target, near_dps, "sliding the jaws around it", PUSH_TOL_OVER if over else PUSH_TOL)
             return round(fix, 4)
         return self._record("approach_side", {"obj": obj, "grip_z": grip_z, "hover": hover, "speed": speed}, do)
 
@@ -222,15 +225,17 @@ class Robot:
         kind = getattr(self, "_grasp_kind", None)
         return float(kinds.get(kind, self._cfg.robot.gripper_closed))
 
-    def _check_not_pushed(self, target: SceneObject, dps: float, phase: str) -> None:
-        """Stop BEFORE closing when the camera sees the object pushed: the gripper touched it."""
+    def _check_not_pushed(self, target: SceneObject, dps: float, phase: str, tol: float = PUSH_TOL) -> None:
+        """Stop BEFORE closing when the camera sees the object pushed: the gripper touched it. `tol` is
+        wider when the gripper is right over the object (it hides part of the top from the overhead camera
+        and shifts its estimate ~2 cm: a straddle on the real arm stopped on that false alarm)."""
         moved = getattr(self._env.perception, "displacement", None)
         if not callable(moved):
             return
         if self._env.name == "real":
             time.sleep(PUSH_SETTLE_S)  # a few camera frames after the arm stopped
         d = moved(target.id, (target.x, target.y))
-        if d is not None and d > PUSH_TOL:
+        if d is not None and d > tol:
             self._env.arm.stop()
             raise WorldChanged(f"{target.label} was pushed {d * 100:.1f} cm by the gripper while {phase} "
                                f"(joints at up to {dps:.0f} deg/s): the arm touched it before the grasp. "
@@ -298,9 +303,9 @@ class Robot:
                        "pointing down, jaws straddling its top", where="robot.approach_side")
         self._move((sx, sy, target.top + SWING_CLEARANCE), None, i, side=False, max_dps=SWING_DPS)
         self._move((sx, sy, gz), None, i, max_dps=near_dps)
-        self._check_not_pushed(target, near_dps, "lowering the open jaws over it")
+        self._check_not_pushed(target, near_dps, "lowering the open jaws over it", PUSH_TOL_OVER)
         self._move((x, y, gz), None, i, max_dps=near_dps)
-        self._check_not_pushed(target, near_dps, "closing the gap to the fixed jaw")
+        self._check_not_pushed(target, near_dps, "closing the gap to the fixed jaw", PUSH_TOL_OVER)
         return 0.0
 
     def _grasp_depth(self, x: float, y: float, shift) -> float:
