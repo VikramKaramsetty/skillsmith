@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Callable, Optional, Sequence
 
 from robotd import cameras, feetech
-from robotd.controller import ArmController, Bus
+from robotd.controller import ArmController, Bus, OffsetBus
 from robotd.mock import MockBus, MockCamera
 from robotd.server import create_app
 
@@ -80,7 +80,9 @@ def open_bus(mock: bool, cfg: dict) -> Bus:
     if mock:
         return MockBus()
     robot = cfg["robot"]
-    return feetech.connect_follower(robot["follower_port"], robot["calibration_id"])
+    bus = feetech.connect_follower(robot["follower_port"], robot["calibration_id"])
+    offsets = robot.get("joint_offsets_deg")
+    return OffsetBus(bus, offsets) if offsets and any(offsets) else bus
 
 
 def open_cameras(mock: bool, cfg: dict) -> dict:

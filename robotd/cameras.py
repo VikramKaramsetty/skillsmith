@@ -112,7 +112,8 @@ def ffmpeg_command(exe: str, name: str, size: Optional[Tuple[int, int]] = None) 
     mode = ["-video_size", f"{size[0]}x{size[1]}"] if size else []
     scale = ["-vf", f"scale={size[0]}:{size[1]}"] if size else []
     return [exe, "-hide_banner", "-loglevel", "error", "-f", "avfoundation", "-framerate", str(FFMPEG_FPS),
-            *mode, "-i", f"{name}:none", *scale, "-f", "image2pipe", "-c:v", "mjpeg", "-q:v", "3", "-"]
+            *mode, "-i", f"{name}:none", *scale, "-fps_mode", "passthrough",  # never repeat a frame
+            "-f", "image2pipe", "-c:v", "mjpeg", "-q:v", "3", "-"]
 
 
 class FFmpegCapture:
@@ -132,6 +133,7 @@ class FFmpegCapture:
         self.name = device_name(source, devices)
         self.timeout_s = timeout_s
         self._buf = b""
+        self._last: Optional[bytes] = None
         self._proc = popen(ffmpeg_command(exe, self.name, size), stdout=subprocess.PIPE,
                            stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL)
         log.info("camera %r opened by name through ffmpeg (%s)", source, self.name)
@@ -141,7 +143,8 @@ class FFmpegCapture:
         deadline = time.monotonic() + self.timeout_s
         while True:
             frame = self._take_newest()
-            if frame is not None:
+            if frame is not None and frame != self._last:  # a byte-identical JPEG is a frozen stream
+                self._last = frame
                 return frame
             left = deadline - time.monotonic()
             if left <= 0 or not self._fill(left):

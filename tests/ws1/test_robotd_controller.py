@@ -217,3 +217,27 @@ def test_state_has_the_contract_fields():
     assert state["gripper_load"] > 0
     assert state["torque"] is True
     assert abs(state["t"] - time.time()) < 5
+
+
+# ---- joint zero offsets (calibration vs URDF), applied at the bus -------------------------------
+
+def test_offset_bus_shifts_readings_goals_and_limits():
+    from robotd.controller import OffsetBus
+
+    raw = MockBus()
+    bus = OffsetBus(raw, [2.0, -3.0, -5.0, 0.0, 0.0, 0.0])
+    model = bus.read_present()
+    assert model[:3] == [r + o for r, o in zip(raw.read_present()[:3], [2.0, -3.0, -5.0])]
+    bus.write_goal([10.0, 20.0, 30.0, 0.0, 0.0, 50.0])
+    assert raw.log[-1] == ("goal", [8.0, 23.0, 35.0, 0.0, 0.0, 50.0])
+    (lo0, hi0), (lo1, _) = bus.joint_limits()[:2]
+    assert (lo0, hi0) == tuple(v + 2.0 for v in raw.joint_limits()[0]) and lo1 == raw.joint_limits()[1][0] - 3.0
+
+
+def test_offset_bus_never_offsets_the_gripper():
+    import pytest
+
+    from robotd.controller import OffsetBus
+
+    with pytest.raises(ValueError, match="gripper"):
+        OffsetBus(MockBus(), [0, 0, 0, 0, 0, 5.0])
