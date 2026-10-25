@@ -21,6 +21,7 @@ from typing import Any, Callable, List, Optional, Sequence, Tuple
 from robotd.controller import JOINT_NAMES
 
 RETRIES = 2  # Feetech buses sometimes return a corrupt status packet; LeRobot retries at once
+OVERLOAD_LOAD = 1000.0  # reported while the gripper servo flags an overload (it is squeezing at its limit)
 LOAD_SIGN_BIT = 1024  # STS3215 Present_Load: bit 10 is the direction, bits 0-9 the magnitude
 STS3215_STEPS = 4096  # ticks per turn; every SO101 motor is an STS3215 (LeRobot: degrees = (ticks - mid) * 360 / 4095)
 
@@ -39,8 +40,15 @@ class FeetechBus:
         return [float(present[name]) for name in JOINT_NAMES]
 
     def read_gripper_load(self) -> float:
-        """Magnitude of the gripper servo's load, in ~0.1 % of max torque."""
-        load = abs(int(self._bus.read("Present_Load", "gripper", num_retry=RETRIES)))
+        """Magnitude of the gripper servo's load, in ~0.1 % of max torque. An overloaded gripper (squeezing
+        hard, e.g. on a cup) flags every reply with "Overload error"; that is full load, not a dead bus,
+        so report OVERLOAD_LOAD instead of failing GET /state with a 500."""
+        try:
+            load = abs(int(self._bus.read("Present_Load", "gripper", num_retry=RETRIES)))
+        except RuntimeError as e:
+            if "Overload" not in str(e):
+                raise
+            return OVERLOAD_LOAD
         return float(load - LOAD_SIGN_BIT if load >= LOAD_SIGN_BIT else load)
 
     def write_goal(self, goal: Sequence[float]) -> None:
