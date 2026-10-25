@@ -141,6 +141,7 @@ def run_skill(source: str, env, params: dict, cfg, bus: EventBus, *, skill: str,
     deadline = _Deadline(attempt_timeout_s(cfg))
     robot = _TimedRobot(env, guard, bus, cfg, deadline)
     guard.bind(robot)  # WS4.3: carry-path check before every motion, on the robot the skill uses
+    _reset_perception_gate(env, bus)  # WS3.6: the confidence gate covers this attempt only
     scene_before = env.perception.observe()
     robot.last_scene = scene_before
     skills = SkillCaller(library, robot, scene_before, depth=1,
@@ -183,6 +184,17 @@ def _stop_arm(env, bus: EventBus) -> None:
         env.arm.stop()
     except Exception as stop_err:
         bus.emit("error", where="arm.stop", message=repr(stop_err))
+
+
+def _reset_perception_gate(env, bus: EventBus) -> None:
+    """Start the world model's gate window (`reset_gate()`), if the env has one (fake and sim do not)."""
+    reset = getattr(env.perception, "reset_gate", None)
+    if not callable(reset):
+        return
+    try:
+        reset()
+    except Exception as e:  # the attempt still runs; perception_ok() afterwards judges the scene
+        bus.emit("error", where="perception.reset_gate", message=repr(e))
 
 
 def _perception_gate(env, bus: EventBus) -> Optional[Tuple[bool, str]]:

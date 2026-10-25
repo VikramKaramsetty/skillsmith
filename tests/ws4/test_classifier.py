@@ -310,6 +310,10 @@ def _slip_on(world):
     ((False, "camera moved: markers shifted 12 px"), "CAMERA_MOVED"),
     ((False, "calibration residual 2.4 cm"), "CALIBRATION_DRIFT"),
     ((False, "detections flickering"), "PERCEPTION_UNCERTAIN"),
+    # WS3.6 WorldModel.perception_ok() wording
+    ((False, "marker drift 1.8 cm (limit 1.0 cm): camera moved, recalibrate"), "CAMERA_MOVED"),
+    ((False, "world model stale: no frames"), "PERCEPTION_UNCERTAIN"),
+    ((False, "low confidence: blue cup at 0.31 (< 0.50) for 5 frames"), "PERCEPTION_UNCERTAIN"),
 ])
 def test_a_failed_perception_gate_is_never_a_skill_label(gate, cls):
     r = _slip_on(_demo(GatedWorld, rim_slip=True, gate=gate))
@@ -338,6 +342,36 @@ def test_a_gate_that_crashes_counts_as_failed_and_emits_an_error(tmp_path):
     bus.close()
     assert r.classification.cls == "PERCEPTION_UNCERTAIN"
     assert any(e["type"] == "error" and e["data"]["where"] == "perception_ok" for e in events)
+
+
+class ResettingWorld(GatedWorld):
+    """Records when the runtime starts the gate window (WS3.6 `reset_gate()`)."""
+
+    def __init__(self, *a, fail_reset=False, **kw):
+        super().__init__(*a, **kw)
+        self.fail_reset, self.resets = fail_reset, []
+
+    def reset_gate(self):
+        self.resets.append(self.observed)  # how many scenes were observed before the reset
+        if self.fail_reset:
+            raise RuntimeError("world model not running")
+
+
+def test_the_runtime_starts_the_gate_window_once_per_attempt():
+    world = _demo(ResettingWorld, rim_slip=True)
+    r = _slip_on(world)
+    assert world.resets == [0] and r.classification.cls == "SLIP_IN_CARRY"
+
+
+def test_a_crashing_gate_reset_emits_an_error_and_the_attempt_still_runs(tmp_path):
+    events = []
+    bus = EventBus("reset-crash", tmp_path)
+    bus.subscribe(events.append)
+    world = _demo(ResettingWorld, rim_slip=True, fail_reset=True)
+    r = _run(demo_sources()[0], CUPS, world=world, success=ON_TOP, skill="stack", bus=bus)
+    bus.close()
+    assert r.trace and r.classification.cls == "SLIP_IN_CARRY"
+    assert any(e["type"] == "error" and e["data"]["where"] == "perception.reset_gate" for e in events)
 
 
 def test_a_passing_gate_keeps_the_skill_label():
