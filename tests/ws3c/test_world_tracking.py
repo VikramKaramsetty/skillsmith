@@ -3,9 +3,9 @@
 import time
 
 import pytest
-from ws3c_fakes import Det, FakeArm, FakeDetector, FakeFrames, PassCamera, cup, make_world
+from ws3c_fakes import Det, FakeArm, FakeDetector, FakeFrames, PassCamera, _fixture_config, cup, make_world
 
-from skillsmith.config import Config, load_config
+from skillsmith.config import Config
 from skillsmith.events import NullBus
 from skillsmith.hal.base import Env
 from skillsmith.hal.fake import FakeWorld
@@ -167,7 +167,7 @@ def test_snapshot_writes_latest_frame(tmp_path):
 
 
 def test_object_sizes_from_config():
-    cfg = load_config()
+    cfg = _fixture_config()
     data = dict(cfg.raw())
     data["world"] = {**data["world"], "objects": {"cup": {"height": 0.1, "width": 0.07}}}
     world = make_world([cup("red", 0.22, 0.08)], cfg=Config(data))
@@ -189,7 +189,7 @@ def test_background_loop_runs_at_configured_rate():
 
 def test_drops_into_fake_env_and_robot_raises_world_changed():
     """WorldModel as the Perception of a fake Env; detections come from the fake world's truth."""
-    cfg = load_config()
+    cfg = _fixture_config()
     truth = FakeWorld.demo(cfg)
 
     def detections():
@@ -219,3 +219,41 @@ def test_drops_into_fake_env_and_robot_raises_world_changed():
     with pytest.raises(WorldChanged, match="red cup moved 3.0 cm toward \\+y while not held"):
         robot.move_to(0.2, 0.0, 0.12)
     env.close()
+
+
+def test_default_detector_prompts_yolo_with_the_configured_labels(monkeypatch):
+    from skillsmith.perception import color, world
+
+    built = []
+    monkeypatch.setattr(color, "make_detector", lambda cfg, labels=None, bus=None: built.append(labels) or "det")
+    assert world._default_detector({"detect": {"labels": ["white cup", "red cup"]}}) == "det"
+    assert world._default_detector({}) == "det"
+    assert built == [["white cup", "red cup"], None]  # no labels: make_detector falls back to HSV
+
+
+def test_the_arm_hovering_over_a_cup_is_not_a_bump():
+    arm = FakeArm(tip=(0.10, 0.15, 0.20))  # far from the cup
+    det = FakeDetector([cup("white", 0.15, -0.10)])
+    world = make_world(detector=det, arm=arm)
+    world.step()
+    arm.move_tip(0.15, -0.10, 0.18)  # over the cup: its detection shifts 1.5 cm (arm merged with it)
+    det.dets = [cup("white", 0.165, -0.093)]
+    for _ in range(10):
+        world.step()
+    white = obj(world, "white_cup_0")
+    assert (white.x, white.y) == pytest.approx((0.15, -0.10))
+    assert world.unexpected_motion() is None
+    arm.move_tip(0.10, 0.15, 0.20)  # the arm leaves: a real move is a bump again
+    for _ in range(10):
+        world.step()
+    assert world.unexpected_motion() is not None
+
+
+def test_a_split_top_is_one_cup_not_two():
+    det = FakeDetector([cup("pink", 0.20, 0.06)])
+    world = make_world(detector=det)
+    world.step()
+    det.dets = [cup("pink", 0.19, 0.05), cup("pink", 0.215, 0.075)]  # the gripper splits the pink top
+    for _ in range(5):
+        world.step()
+    assert [o.id for o in world.observe().objects] == ["pink_cup_0"]

@@ -96,7 +96,7 @@ class FakeWorld:
     def fk(self, joints: Sequence[float]) -> Vec3:
         return (joints[0], joints[1], joints[2])
 
-    def ik(self, target: Vec3, seed: Sequence[float]) -> Optional[List[float]]:
+    def ik(self, target: Vec3, seed: Sequence[float], approach: str = "down") -> Optional[List[float]]:
         ws = self.cfg.workspace
         r = math.hypot(target[0], target[1])
         if r > ws.max_reach + 0.01 or r < ws.min_reach - 0.01 or target[2] < -0.001:

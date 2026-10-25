@@ -398,6 +398,8 @@ def _refused(f: _Facts) -> Optional[Classification]:
 
 
 def _target(call: Optional[PrimitiveCall]) -> Optional[Vec3]:
+    if call is not None and call.name == "approach_side":  # aimed at its object: the tip got no further
+        return call.ee_after
     if call is None or call.name != "move_to" or not all(k in call.args for k in "xyz"):
         return None
     return (float(call.args["x"]), float(call.args["y"]), float(call.args["z"]))

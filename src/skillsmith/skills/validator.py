@@ -13,7 +13,8 @@ import re
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Set
 
-ROBOT_API = {"move_to", "grasp", "release", "look", "home", "position", "holding", "note", "align_over"}
+ROBOT_API = {"move_to", "grasp", "release", "look", "home", "position", "holding", "note", "align_over",
+             "approach_side"}
 SCENE_API = {"find", "require", "objects"}
 SKILLS_API = {"call"}
 HANDLES: Dict[str, set] = {"robot": ROBOT_API, "scene": SCENE_API, "skills": SKILLS_API}

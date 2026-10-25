@@ -11,6 +11,7 @@ robot:
   # 2026-10-25 on Rohan's Mac from 9 jaw-tip touches on the printed mat (T1-T5, markers 0-3):
   # 0.3 cm mean / 0.4 cm max error after, 4.9 cm before. Redo after any lerobot-calibrate (runs/fit_offsets.py).
   joint_offsets_deg: [2.32, -3.0, -4.96, -0.64, 0.0, 0.0]
+  position_p_gain: 32                # servo stiffness (LeRobot default 16 let the elbow sag 2.3 deg at reach)
   joint_names: [shoulder_pan, shoulder_lift, elbow_flex, wrist_flex, wrist_roll, gripper]
   urdf: assets/so101/so101_new_calib.urdf      # WS2 vendors this from TheRobotStudio SO-ARM100
   mjcf: assets/so101/scene.xml                 # WS2 vendors from mujoco_menagerie/robotstudio_so101
@@ -39,6 +40,17 @@ world:                              # live world model (WS3.5)
   rate_hz: 12
   bump_threshold: 0.01              # m; a not-held object moving more than this = WorldChanged
   min_confidence: 0.5               # below this a detection is 'uncertain' (confidence gate)
+  objects:                          # measured: the demo's paper cup, used upside down (mouth on the table)
+    cup: {height: 0.0953, width: 0.0762, top_width: 0.0508}   # 3.75 in tall; 3 in mouth on the table; 2 in base on top
+
+detect:                             # object detector for the world model (perception/color.py make_detector)
+  backend: hsv                      # the demo cup's top is painted bright pink: plain colour blobs
+  labels: ["pink cup"]
+  hsv:
+    min_s: 120
+    hues: {pink: [[150, 169]]}      # measured on the rig: the pink top is hue 163-168 (red starts at 170)
+  diff: {background: runs/background.png,   # backend: diff (model-free, white cups) if the paint comes off
+         top_height: 0.0953, min_radius: 0.030, max_radius: 0.045}
 
 workspace:                          # tip must stay inside this box (robot frame, metres). MEASURE
   x: [0.08, 0.34]
@@ -55,6 +67,7 @@ safety:
   carry_clearance: 0.01              # m: a held object must clear known objects by this (WS4.3)
   max_joint_speed_dps: 60
   max_step_deg: 10                  # robotd per-command clamp (5-10 works; 2 stalled the elbow)
+  settle_tol_deg: 2.5               # robotd: a move counts as reached within this (gravity sag)
   joint_limit_margin_deg: 2         # robotd refuses goals this close to a calibrated joint limit
   max_lag_deg: 10                   # robotd watchdog: a joint this far behind its goal halts the move
   max_calls: 80                     # primitive calls per attempt (includes nested skills)

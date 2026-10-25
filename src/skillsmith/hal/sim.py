@@ -23,6 +23,12 @@ Scene builder (WS2.3):
   (diameter = width), anything else = box. Cups are solid on purpose: a stacked object rests on
   the cup's top, which is what `verify.on_top` and the fake world assume. The sim checks
   geometry, reach and collisions, not friction, slip or a cup's hollow inside.
+- A cup with `top_width` (tapered, e.g. the demo's upside-down paper cup: 7.6 cm on the table,
+  5.1 cm at the top) is TAPER_SEGMENTS stacked cylinders, each as wide as the real cup at its
+  middle. A solid 7.6 cm cylinder hid a real miss: jaws closing on the narrow top in sim touched
+  the wide model and "held" it, while the real tip was 6 mm outside the cup wall. Like the demo cup
+  (white paper, painted top) its walls are white and only a thin visual top disc has its colour, so
+  the sim wrist camera sees what the real one sees.
 - Body and geom names are the SceneObject ids, so contacts read "blue_cup_0 vs table".
 - `SimWorld.observe(data)` reads the ground-truth poses back into a Scene (source "sim").
 
@@ -51,6 +57,9 @@ Sim Env (WS2.4):
   lands the fixed jaw on an object gets a CollisionError.
 - `snapshot()` returns None and there is no `last_video_path` until WS2.5 renders frames and video
   (the runtime reads it with getattr, and QA's video test skips while it is absent).
+- `wrist_frame()` renders the MJCF's `wrist_cam` (BGR, `cameras.wrist_size`) on demand, so
+  robot.approach_side runs its wrist-camera fix in sim like on the real arm. Only that call renders
+  (once per approach); None when offscreen GL is unavailable.
 """
 
 from __future__ import annotations
@@ -71,7 +80,7 @@ DEFAULT_MASS = 0.03
 COLORS = {
     "red": (0.85, 0.15, 0.15), "blue": (0.15, 0.35, 0.85), "green": (0.15, 0.65, 0.25),
     "yellow": (0.95, 0.85, 0.15), "orange": (0.95, 0.55, 0.10), "purple": (0.55, 0.25, 0.70),
-    "white": (0.92, 0.92, 0.92), "black": (0.10, 0.10, 0.10), "pink": (0.95, 0.55, 0.70),
+    "white": (0.92, 0.92, 0.92), "black": (0.10, 0.10, 0.10), "pink": (0.95, 0.20, 0.60),  # hue ~164: the rig's cup top
 }
 UNKNOWN_COLOR = (0.55, 0.55, 0.55)
 
@@ -152,12 +161,22 @@ def _add_object(spec, obj: SceneObject, origin: Vec3) -> None:
 
     if obj.height <= 0 or obj.width <= 0:
         raise ValueError(f"{obj.id}: height and width must be > 0 (got {obj.height}, {obj.width})")
-    gtype, size = _shape(obj)
     body = spec.worldbody.add_body(name=obj.id, pos=list(_center_world(obj, origin)))
     body.add_freejoint()
-    body.add_geom(name=obj.id, type=getattr(mujoco.mjtGeom, gtype), size=size,
-                  rgba=[*COLORS.get(obj.color.lower(), UNKNOWN_COLOR), 1.0],
-                  mass=OBJECT_MASS.get(obj.kind, DEFAULT_MASS))
+    rgba = [*COLORS.get(obj.color.lower(), UNKNOWN_COLOR), 1.0]
+    mass = OBJECT_MASS.get(obj.kind, DEFAULT_MASS)
+    if obj.kind == "cup" and obj.top_width is not None and obj.top_width != obj.width:
+        n, seg = TAPER_SEGMENTS, obj.height / TAPER_SEGMENTS
+        for i in range(n):  # body origin at the cup's centre; segment i spans base + [i, i+1] * seg
+            mid = obj.z + (i + 0.5) * seg
+            body.add_geom(name=obj.id if i == 0 else f"{obj.id}_{i}", type=mujoco.mjtGeom.mjGEOM_CYLINDER,
+                          size=[obj.width_at(mid) / 2, seg / 2], pos=[0.0, 0.0, (i + 0.5) * seg - obj.height / 2],
+                          rgba=[*COLORS["white"], 1.0], mass=mass / n)
+        body.add_geom(name=f"{obj.id}_paint", type=mujoco.mjtGeom.mjGEOM_CYLINDER, contype=0, conaffinity=0,
+                      size=[obj.top_width / 2, PAINT_HALF], pos=[0.0, 0.0, obj.height / 2], rgba=rgba, mass=0.0)
+        return
+    gtype, size = _shape(obj)
+    body.add_geom(name=obj.id, type=getattr(mujoco.mjtGeom, gtype), size=size, rgba=rgba, mass=mass)
 
 
 def _shape(obj: SceneObject) -> Tuple[str, list]:
@@ -190,6 +209,9 @@ SETTLE_S = 1.0         # s; extra time allowed after the trajectory before move_
 GRIPPER_S = 0.6        # s; time the jaws get to open or close
 DROP_S = 0.4           # s; time a released object gets to land
 HOME_SEED = (0.0, 0.0, 0.0, 90.0, 0.0)
+TAPER_SEGMENTS = 4     # stacked cylinders that model a tapered cup (few: contacts stay cheap)
+PAINT_HALF = 0.0005    # m; half thickness of a tapered cup's painted top disc (visual only)
+WRIST_CAMERA = "wrist_cam"
 
 
 class SimArm:
@@ -219,6 +241,7 @@ class SimArm:
         if _has_geom(m, FLOOR_NAME):
             self._ground.add(int(m.geom(FLOOR_NAME).id))
         self._free_ok = self._free_contact_table()
+        self._renderer = None  # wrist camera, made on the first wrist_frame()
         self.reset_scene()
 
     # ---- ArmBackend ---------------------------------------------------------------------------
@@ -290,6 +313,22 @@ class SimArm:
 
     def snapshot(self, path: str) -> Optional[str]:
         return None
+
+    def wrist_frame(self):
+        """The wrist camera's view (BGR uint8), rendered offscreen on demand; None without offscreen GL."""
+        try:
+            if self._renderer is None:
+                width, height = (int(v) for v in self.cfg.cameras.get("wrist_size", [640, 480]))
+                self._renderer = self._mj.Renderer(self.model, height, width)
+            self._renderer.update_scene(self.data, camera=WRIST_CAMERA)
+            return self._renderer.render()[..., ::-1].copy()
+        except Exception:
+            return None
+
+    def close(self) -> None:
+        if self._renderer is not None:
+            self._renderer.close()
+            self._renderer = None
 
     # ---- physics ------------------------------------------------------------------------------
     def _n(self, seconds: float) -> int:

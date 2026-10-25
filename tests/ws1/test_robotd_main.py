@@ -35,7 +35,7 @@ def test_without_mock_it_opens_the_follower_port_named_in_the_config(monkeypatch
 
     robot = yaml.safe_load(DEFAULT_CONFIG.read_text())["robot"]
     opened = []
-    monkeypatch.setattr(feetech, "connect_follower", lambda port, cid: opened.append((port, cid)) or ClosingBus())
+    monkeypatch.setattr(feetech, "connect_follower", lambda port, cid, **kw: opened.append((port, cid)) or ClosingBus())
     serve = Recorder()
     assert main([], serve=serve) == 0
     assert opened == [(robot["follower_port"], robot["calibration_id"])]
@@ -45,7 +45,7 @@ def test_without_mock_it_opens_the_follower_port_named_in_the_config(monkeypatch
 
 def test_real_cameras_come_from_the_config(monkeypatch, never_open_real_cameras):
     cams = yaml.safe_load(DEFAULT_CONFIG.read_text())["cameras"]
-    monkeypatch.setattr(feetech, "connect_follower", lambda port, cid: ClosingBus())
+    monkeypatch.setattr(feetech, "connect_follower", lambda port, cid, **kw: ClosingBus())
     assert main([], serve=Recorder()) == 0
     assert sorted(never_open_real_cameras.opened, key=str) == sorted(
         [(cams[n], tuple(cams[f"{n}_size"]) if cams.get(f"{n}_size") else None) for n in ("front", "wrist")], key=str)
@@ -53,14 +53,14 @@ def test_real_cameras_come_from_the_config(monkeypatch, never_open_real_cameras)
 
 def test_cameras_only_never_opens_the_arm(monkeypatch, never_open_real_cameras):
     opened = []
-    monkeypatch.setattr(feetech, "connect_follower", lambda port, cid: opened.append(port) or ClosingBus())
+    monkeypatch.setattr(feetech, "connect_follower", lambda port, cid, **kw: opened.append(port) or ClosingBus())
     assert main(["--cameras-only"], serve=Recorder()) == 0
     assert opened == []
     assert len(never_open_real_cameras.opened) == 2
 
 
 def test_when_the_arm_cannot_be_opened_it_exits_1_with_the_reason(monkeypatch, capsys):
-    def fail(port, cid):
+    def fail(port, cid, **kw):
         raise RuntimeError("calibration mismatch on shoulder_lift")
 
     monkeypatch.setattr(feetech, "connect_follower", fail)
@@ -72,14 +72,14 @@ def test_when_the_arm_cannot_be_opened_it_exits_1_with_the_reason(monkeypatch, c
 
 def test_the_bus_is_closed_when_the_server_stops(monkeypatch):
     bus = ClosingBus()
-    monkeypatch.setattr(feetech, "connect_follower", lambda port, cid: bus)
+    monkeypatch.setattr(feetech, "connect_follower", lambda port, cid, **kw: bus)
     assert main([], serve=Recorder()) == 0
     assert bus.closed is True
 
 
 def test_a_refused_host_never_opens_the_arm(monkeypatch):
     opened = []
-    monkeypatch.setattr(feetech, "connect_follower", lambda port, cid: opened.append(port) or ClosingBus())
+    monkeypatch.setattr(feetech, "connect_follower", lambda port, cid, **kw: opened.append(port) or ClosingBus())
     assert main(["--host", "0.0.0.0"], serve=Recorder()) != 0
     assert opened == []
 

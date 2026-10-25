@@ -271,7 +271,7 @@ def _segment(call: PrimitiveCall, cfg) -> Optional[Tuple[Vec3, Vec3]]:
         return start, (call.args["x"], call.args["y"], call.args["z"])
     if call.name == "home":
         return start, tuple(cfg.robot.home_xyz)
-    if call.name == "align_over" and call.ee_after is not None:
+    if call.name in ("align_over", "approach_side") and call.ee_after is not None:
         return start, call.ee_after
     return None
 

@@ -256,7 +256,7 @@ def get_object_track(attempt: Optional[AttemptResult], name: str) -> str:
         elif held and call.name == "release":
             held = False
             gripper(call, "released", "under the gripper")
-        elif held and call.name in ("move_to", "home", "align_over"):
+        elif held and call.name in ("move_to", "home", "align_over", "approach_side"):
             gripper(call, f"held: {call.name}" + ("" if call.ok else f" ✗ {call.error}"), "with gripper (inferred)")
         if held and call.ee_after is not None:
             last_tip = (call.index, call.ee_after)

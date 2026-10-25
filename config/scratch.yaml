@@ -1,0 +1,6 @@
+# Droid builds every skill from scratch: an empty library (its own registry and lessons), so there is
+# nothing to copy. Approved skills land in skills/scratch/library and later tasks reuse them.
+repair:
+  library_dir: skills/scratch/library   # registry: skills/scratch/registry.json
+  lessons_file: skills/scratch/lessons.md
+  audit_commit: never                   # commit Droid's skills deliberately, not on every save

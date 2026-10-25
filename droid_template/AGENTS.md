@@ -111,9 +111,32 @@ def run(robot, scene, skills, top, bottom):
 Metres, seconds. Robot base frame: **x forward, y left, z up**, origin on the table
 surface under the arm's base. `z = 0` is the table. Object `z` is the height of its
 **base**; `top = z + height`. `robot.move_to(x, y, z)` places the **gripper tip**,
-pointing straight down.
+pointing straight down, or LEVEL (parallel to the table) after `robot.approach_side`.
 
 ## Grasping heuristics that work on this arm
+
+**Cups: grasp from the side, gripper level.** The demo cup is upside down (closed top), tapered
+(7.6 cm on the table, 5.1 cm at the top), 9.5 cm tall. Top-down grips miss it. Use:
+
+```python
+robot.approach_side(obj)        # wrist-camera fix, level open jaws lowered around the cup, 2 cm under its top
+if not robot.grasp():
+    raise SkillError("side grasp missed")
+held_z = robot.position()[2]
+robot.move_to(robot.position()[0], robot.position()[1], cup.top + 0.03)   # stays level
+robot.move_to(x, y, cup.top + 0.03)
+robot.move_to(x, y, held_z + 0.003)   # set it down at the height it was picked at
+robot.release()
+robot.move_to(x, y, cup.top + 0.03)
+robot.home()                          # home points down again
+```
+
+- A level gripper only reaches about **0.26–0.33 m from the base** for this cup (grip 2 cm under
+  its top; higher grips reach a little nearer). Nearer is `Unreachable` before moving: report it,
+  don't tune heights. Keep level moves at ≥ 0.23 m too.
+- While holding a cup level, travel at `cup.top + 0.03`, not 0.18 (too high to stay level).
+
+Blocks and other small objects (top-down):
 
 - `robot.release()` first so the gripper is open before descending.
 - Travel between places at `TRAVEL_Z = 0.18`, high enough to clear a held cup over

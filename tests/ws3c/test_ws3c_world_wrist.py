@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 import pytest
-from ws3c_fakes import Det, FakeArm, FakeFrames, make_world
+from ws3c_fakes import Det, FakeArm, FakeFrames, _fixture_config, make_world
 
-from skillsmith.config import load_config
 from skillsmith.events import NullBus
 from skillsmith.hal.base import Env
 from skillsmith.hal.fake import FakeWorld
@@ -14,7 +13,7 @@ from skillsmith.perception.world import _default_wrist_frames
 from skillsmith.skills.runtime import run_skill
 from skillsmith.types import SceneObject
 
-cfg = load_config()
+cfg = _fixture_config()  # without the rig's pink-only colour table
 # These tests exercise the wrist logic, not the product setting: robot.yaml keeps fine alignment off
 # (min_align_confidence 1.1) until the wrist camera is measured, so use the code's default threshold.
 cfg._data = {**cfg._data, "wrist": {**(cfg._data.get("wrist") or {}), "min_align_confidence": 0.3}}

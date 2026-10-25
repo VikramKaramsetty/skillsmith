@@ -35,6 +35,9 @@ Tracking rules (WS3.5):
 - Association is greedy nearest-neighbour per (color, kind) within `world.assoc_radius`. A new
   detection gets a stable id `<color>_<kind>_<n>`; ids are never reused.
 - A track with no detection this frame is hidden: `visible=False`, last position kept, never "moved".
+  A resting track within ARM_RADIUS (xy) of the gripper tip, while not holding, keeps its position
+  and counts no bump: the arm over a cup occludes and shifts its detection (a false 1.5 cm "bump"
+  stopped the first real pick). Re-anchoring after a release still takes the first detection.
 - When the arm reports holding, the track nearest the tip becomes held; it follows the FK tip with
   the offset it had at grasp time, and detections near it are absorbed. On release it re-anchors
   on its next detection (where it really landed is not a bump).
@@ -69,7 +72,7 @@ from skillsmith.events import EventBus, NullBus
 from skillsmith.types import Scene, SceneObject, Vec3
 
 # kind -> (height, width) in metres. Measure yours and override with `world.objects` in robot.yaml:
-#   objects: {cup: {height: 0.08, width: 0.065}}
+#   objects: {cup: {height: 0.08, width: 0.065}}   (+ top_width: tapered, width at the top)
 KNOWN_OBJECTS: Dict[str, Tuple[float, float]] = {
     "cup": (0.08, 0.065),
     "block": (0.03, 0.03),
@@ -88,6 +91,7 @@ LOST_S = 5.0  # s of updates a baseline object may stay unseen before it counts 
 ARM_RADIUS = 0.08  # m; uncertain detections this close to the tip are the arm's occlusion, not doubt
 
 
+WRIST_SETTLE_S = 0.4  # s; wrist_frame waits this long so the frame shows the arm at rest
 _AUTO = object()  # WorldModel(wrist_frames=...) default: robotd's wrist camera when the front one is robotd's
 
 
@@ -120,9 +124,12 @@ class WorldModel:
         self.drift_every = max(1, int(_opt(world, "drift_every", round(self.rate_hz))))
         self.lost_frames = max(1, round(float(_opt(world, "lost_s", LOST_S)) * self.rate_hz))
         self.sizes = dict(KNOWN_OBJECTS)
+        self.top_widths: Dict[str, float] = {}
         objects = _opt(world, "objects", None)
         for kind, size in (objects.raw() if objects is not None else {}).items():
             self.sizes[kind] = (float(size["height"]), float(size["width"]))
+            if size.get("top_width") is not None:
+                self.top_widths[kind] = float(size["top_width"])
 
         self.frames = frame_source if frame_source is not None else _default_frames(cfg)
         self.detector = detector if detector is not None else _default_detector(cfg)
@@ -227,6 +234,27 @@ class WorldModel:
                       dx=dx, dy=dy, confidence=result.confidence, reason=result.reason)
         return dx, dy
 
+    def wrist_frame(self) -> Any:
+        """A fresh wrist-camera frame (BGR) for robot.approach_side, or None (error event) when there is
+        none. Waits `wrist.settle_s` first so the frame is from after the arm stopped (camera latency)."""
+        try:
+            from skillsmith.perception import wrist
+
+            stopped = time.time()
+            time.sleep(max(0.0, float((self.cfg.raw().get("wrist") or {}).get("settle_s", WRIST_SETTLE_S))))
+            if not wrist.WristConfig.from_cfg(self.cfg).locate:
+                raise WristUnusable("wrist.locate is off")
+            if self.wrist_frames is None:
+                raise WristUnusable("no wrist camera configured")
+            frame = self.wrist_frames.read()
+            t = getattr(frame, "t", None)
+            if t is not None and t < stopped:  # a stalled camera hands back an image from mid-move
+                raise WristUnusable(f"wrist frame is {stopped - t:.1f} s older than the arm's stop")
+            return self._wrist_decode(frame)
+        except Exception as e:
+            self._wrist_error(f"wrist_frame: {_why(e)}; using the overhead position only")
+            return None
+
     def holding_check(self) -> Tuple[bool, str]:
         """Wrist-camera grasp check; falls back to the gripper signal when the camera cannot judge."""
         try:
@@ -309,6 +337,7 @@ class WorldModel:
             self._steps += 1
             self._frame = frame
             self._update_held(tip, holding)
+            self._arm_now = (tip, holding)
             self._associate(self._localise(detections))
             self._update_gate(detections, tip, drift)
             self._scene = Scene(tuple(t.obj for t in self._tracks.values()), frame.t, _source(frame))
@@ -415,7 +444,8 @@ class WorldModel:
                 base = below.top
                 x, y = self.camera.pixel_to_table(u, v, base + height)
             out.append(SceneObject(id="", label=det.label, color=det.color, kind=det.kind, x=x, y=y,
-                                   z=base, height=height, width=width, confidence=confidence))
+                                   z=base, height=height, width=width, confidence=confidence,
+                                   top_width=self.top_widths.get(det.kind)))
         return out
 
     def _support(self, kind: str, color: str, x: float, y: float, width: float) -> Optional[SceneObject]:
@@ -449,6 +479,8 @@ class WorldModel:
                 self._update_track(tid, seen[i])
         for i, obj in enumerate(seen):
             if i not in used:
+                if self._fragment_of(obj) is not None:
+                    continue  # a second piece of a tracked object (the gripper split its top): not a new one
                 tid = self._new_id(obj)
                 self._tracks[tid] = _Track(replace(obj, id=tid), anchor=(obj.x, obj.y))
                 matched.add(tid)
@@ -461,6 +493,17 @@ class WorldModel:
                 track.obj = replace(track.obj, visible=False)
                 track.over = 0
 
+    def _fragment_of(self, obj: SceneObject) -> Optional[str]:
+        """A tracked object of the same colour and kind whose footprint this detection lies inside.
+        A gripper over a cup's painted top splits it into two blobs; the second one used to become a
+        new cup, which tripped the confidence gate ("object count changed") and sent real skill failures
+        to the human as environment problems."""
+        for tid, track in self._tracks.items():
+            o = track.obj
+            if (o.color, o.kind) == (obj.color, obj.kind) and math.hypot(o.x - obj.x, o.y - obj.y) < o.width:
+                return tid
+        return None
+
     def _update_track(self, tid: str, obj: SceneObject) -> None:
         track = self._tracks[tid]
         track.obj = replace(obj, id=tid, visible=True)
@@ -469,6 +512,11 @@ class WorldModel:
             track.anchor = (obj.x, obj.y)
             return
         ax, ay = track.anchor
+        tip, holding = getattr(self, "_arm_now", (None, False))
+        if tip is not None and not holding and math.hypot(ax - tip[0], ay - tip[1]) <= ARM_RADIUS:
+            track.obj = replace(track.obj, x=ax, y=ay)  # occluded by the arm: keep where it was
+            track.over = 0
+            return
         if math.hypot(obj.x - ax, obj.y - ay) <= self.bump_threshold:
             track.over = 0
             return
@@ -606,9 +654,14 @@ def _why(e: BaseException) -> str:
 
 
 def _default_detector(cfg):
-    from skillsmith.perception.color import HsvDetector
+    """`make_detector` with config `detect.labels` (the objects to prompt YOLO-World with): YOLO with the
+    HSV backup when labels are set and ultralytics loads, HSV alone otherwise. It always built HSV
+    alone before, so YOLO never ran even when installed, and HSV cannot see a white or printed cup."""
+    from skillsmith.perception.color import make_detector
 
-    return HsvDetector(cfg)
+    raw = cfg.raw() if hasattr(cfg, "raw") else (cfg or {})
+    labels = (raw.get("detect") or {}).get("labels") or None
+    return make_detector(cfg, labels)
 
 
 def _default_camera(cfg):

@@ -199,7 +199,7 @@ def run(robot, scene, skills, top, bottom):
 
 | Call | Meaning |
 |---|---|
-| `robot.move_to(x, y, z, speed=None)` | gripper tip to (x, y, z), pointing down. Long vertical moves are split into ≤ 2 cm steps. `speed` in m/s, capped by config. |
+| `robot.move_to(x, y, z, speed=None, side=None)` | gripper tip to (x, y, z); `side=None` keeps the orientation (level after `approach_side`, else pointing down), True = level, False = down. Long vertical moves are split into ≤ 2 cm steps. `speed` in m/s, capped by config. |
 | `robot.grasp() -> bool` | close the gripper; True if something is held |
 | `robot.release()` | open the gripper fully |
 | `robot.look() -> Scene` | fresh detection |
@@ -208,6 +208,7 @@ def run(robot, scene, skills, top, bottom):
 | `robot.holding() -> bool` | gripper load check (read-only) |
 | `robot.note(text)` | message to the dashboard ("lowering onto red cup") |
 | `robot.align_over(obj, hover=0.08) -> float` | hover above the object's **latest** position, fine-align with the wrist camera if available; returns the remaining xy error (m). Use before descending to grasp or place. |
+| `robot.approach_side(obj, grip_z=None, hover=0.03) -> float` | side grasp: wrist-camera fix (`perception.wrist_frame()` + `kin.wrist_camera_pose()`, when both exist), then level open jaws lowered around the object to `grip_z` (default top - 2 cm). Returns the wrist correction (m). `grasp()` next. |
 
 Before every call the Robot asks the world model for unexpected motion; if a not-held object
 moved, the skill stops with `WorldChanged` (skills must not try to catch it).

@@ -6,7 +6,7 @@ Everything a skill can use. Anything else is rejected by the static check.
 
 | Call | Meaning |
 |---|---|
-| `robot.move_to(x, y, z, speed=None)` | Gripper tip to (x, y, z) metres, pointing down. Long vertical moves are split into ≤ 2 cm steps. `speed` in m/s, capped by config. Refused (SafetyViolation) if outside the workspace; Unreachable if IK fails. |
+| `robot.move_to(x, y, z, speed=None, side=None)` | Gripper tip to (x, y, z) metres. `side=None` keeps the current orientation (level after `approach_side`, else pointing down); `True` = level, `False` = pointing down. Long vertical moves are split into ≤ 2 cm steps. `speed` in m/s, capped by config. Refused (SafetyViolation) if outside the workspace; Unreachable if IK fails (level: nearer than about 0.23 m from the base). |
 | `robot.grasp() -> bool` | Close the gripper. True if something is held. |
 | `robot.release()` | Open the gripper fully. |
 | `robot.look() -> Scene` | Fresh object detection. |
@@ -15,6 +15,7 @@ Everything a skill can use. Anything else is rejected by the static check.
 | `robot.holding() -> bool` | Gripper load check (read-only). |
 | `robot.note(text)` | Show a short message on the dashboard. |
 | `robot.align_over(obj, hover=0.08) -> float` | Hover `hover` m above the object's top at its **latest** position, then fine-align with the wrist camera if available. Returns the remaining xy error in metres. Use it right before descending to grasp or place. |
+| `robot.approach_side(obj, grip_z=None, hover=0.03) -> float` | **Side grasp (use for cups).** Opens the jaws, locates the object's top with the wrist camera from just above it (real arm), brings the gripper in **level** with jaws opening sideways, lowers them around the object to `grip_z` (default 2 cm under its top) and closes the gap to the fixed jaw. Call `grasp()` next; later `move_to` calls stay level. Returns the wrist-camera correction (m). Unreachable nearer than about 0.26 m from the base (for this cup). |
 
 Every call is recorded in the trace you see in `failure.md`.
 
@@ -70,6 +71,32 @@ def run(robot, scene, skills, obj, x, y, place_z=0.0):
     robot.move_to(x, y, place_z + grip_offset + 0.005)
     robot.release()
     robot.move_to(x, y, TRAVEL_Z)
+```
+
+## Example: move a cup (side grasp)
+
+```python
+"""move_cup: pick a cup up from the side and set it down at (x, y)."""
+
+SKILL = {"name": "move_cup", "params": {"obj": "str", "x": "float", "y": "float"}, "uses": []}
+
+
+def run(robot, scene, skills, obj, x, y):
+    cup = scene.require(obj)
+    carry_z = cup.top + 0.03
+    robot.note(f"side grasp on {cup.label}")
+    robot.approach_side(obj)
+    if not robot.grasp():
+        raise SkillError(f"side grasp missed {cup.label}")
+    hx, hy, held_z = robot.position()
+    robot.move_to(hx, hy, carry_z)
+    robot.move_to(x, y, carry_z)
+    if not robot.holding():
+        raise SkillError(f"lost {cup.label} while carrying it")
+    robot.move_to(x, y, held_z + 0.003)
+    robot.release()
+    robot.move_to(x, y, carry_z)
+    robot.home()
 ```
 
 ## Example: stack (reuses pick_place)

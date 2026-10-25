@@ -13,6 +13,13 @@ Two pure functions over one wrist frame (BGR uint8, H x W x 3, as decoded from r
   the tool frame (`u_axis`, `v_axis`). `tool_to_base()` rotates that into the robot base frame
   (what `robot.align_over` adds to the tip). Corrections are clamped to `wrist.max_offset`.
 
+- `locate_on_plane(frame, color, cam_pose, plane_z, cfg) -> LocateResult`: where is the object
+  in the ROBOT frame? The colour blob's centroid becomes a ray from the wrist camera (pose from
+  `kin.wrist_camera_pose(joints)`, intrinsics from `wrist.fovy_deg`) and the ray meets the plane
+  z = plane_z (the object's top). Needs no px_per_m, axis signs or roll sign: the arm's FK carries
+  the camera, so it works from any pose that sees the object (a tilted gripper included). Used by
+  `robot.approach_side` to correct the overhead estimate from ~5 cm away just before a grasp.
+
 `holding_check()` / `align_offset()` give the contract shapes ((bool, str) and (dx, dy)).
 Geometry still decides pass/fail; these are fine corrections and a second opinion on the grasp.
 
@@ -32,6 +39,8 @@ Optional config section (defaults below apply when it is absent; MEASURE on the 
       roll_sign: 1.0                  # sign of wrist_roll in the tool yaw (verify on the arm)
       cam_height: 0.0                 # m; wrist camera above the FK tip (distance = tip z + this - obj top)
       min_align_confidence: 0.3       # WorldModel.align_offset ignores (returns 0, 0) a weaker result
+      fovy_deg: 61                    # vertical field of view (MJCF wrist_cam; MEASURE the real one)
+      locate: true                    # robot.approach_side uses locate_on_plane (false = overhead only)
       hues: {...}                     # OpenCV hue ranges per colour; else detect.hsv.hues
 Imports cv2/numpy lazily: core tests must run without them.
 """
@@ -71,12 +80,16 @@ class WristConfig:
     roll_sign: float = 1.0
     cam_height: float = 0.0
     min_align_confidence: float = 0.3
+    fovy_deg: float = 61.0
+    locate: bool = True
     hues: dict[str, list[tuple[int, int]]] = field(default_factory=lambda: dict(DEFAULT_HUES))
 
     def __post_init__(self) -> None:
         x0, y0, x1, y1 = self.roi
         if not (0.0 <= x0 < x1 <= 1.0 and 0.0 <= y0 < y1 <= 1.0):
             raise ValueError(f"wrist.roi must be fractions x0<x1, y0<y1 in [0, 1], got {self.roi}")
+        if not 10.0 <= self.fovy_deg <= 150.0:
+            raise ValueError(f"wrist.fovy_deg must be in [10, 150], got {self.fovy_deg}")
         if self.px_per_m <= 0 or self.ref_distance <= 0:
             raise ValueError("wrist.px_per_m and wrist.ref_distance must be > 0")
         if not 0.0 < self.min_fill < 1.0:
@@ -120,6 +133,17 @@ class AlignResult:
     dy: float
     du: float  # centroid minus target pixel
     dv: float
+    confidence: float  # 0..1
+    reason: str
+
+
+@dataclass(frozen=True)
+class LocateResult:
+    found: bool
+    x: float  # robot frame, metres, on the plane z = plane_z
+    y: float
+    u: float  # blob centroid, pixels
+    v: float
     confidence: float  # 0..1
     reason: str
 
@@ -261,6 +285,39 @@ def fine_offset(frame_bgr: Any, color: Optional[str] = None, cfg: Any = None,
         notes.append(f"clamped from {math.hypot(raw_dx, raw_dy) * 100:.1f} cm to {wc.max_offset * 100:.1f} cm")
     return AlignResult(True, round(dx, 4), round(dy, 4), round(du, 1), round(dv, 1), round(confidence, 3),
                        "; ".join(notes))
+
+
+def pixel_ray(u: float, v: float, width: int, height: int, fovy_deg: float) -> tuple[float, float, float]:
+    """Camera-frame direction through pixel (u, v), MuJoCo axes (looks along -z, +y up), square pixels."""
+    f = (height / 2.0) / math.tan(math.radians(fovy_deg) / 2.0)
+    return (u - (width - 1) / 2.0) / f, -(v - (height - 1) / 2.0) / f, -1.0
+
+
+def locate_on_plane(frame_bgr: Any, color: Optional[str], cam_pose: Any, plane_z: float,
+                    cfg: Any = None) -> LocateResult:
+    """Robot-frame (x, y) where the ray through the object's colour centroid meets z = plane_z.
+    `cam_pose` is the camera's 4x4 pose in the robot frame (kin.wrist_camera_pose)."""
+    wc = WristConfig.from_cfg(cfg)
+    width, height = _check_frame(frame_bgr)
+    what = color or "coloured object"
+    blob = _largest_blob(colour_mask(frame_bgr, color, wc), wc.min_area)
+    if blob is None:
+        return LocateResult(False, 0.0, 0.0, 0.0, 0.0, 0.0, f"no {what} in the wrist view (min {wc.min_area} px)")
+    cu, cv, area, border = blob
+    ray = pixel_ray(cu, cv, width, height, wc.fovy_deg)
+    rot = [[float(cam_pose[r][c]) for c in range(3)] for r in range(3)]
+    origin = [float(cam_pose[r][3]) for r in range(3)]
+    d = [sum(rot[r][c] * ray[c] for c in range(3)) for r in range(3)]
+    if d[2] > -1e-6 or origin[2] <= plane_z:
+        return LocateResult(False, 0.0, 0.0, cu, cv, 0.0,
+                            f"{what} at {cu:.0f},{cv:.0f} px: its ray never reaches z={plane_z:.3f} (camera too low)")
+    s = (plane_z - origin[2]) / d[2]
+    x, y = origin[0] + s * d[0], origin[1] + s * d[1]
+    confidence = min(1.0, area / (4.0 * wc.min_area)) * (0.5 if border else 1.0)
+    reason = f"{what} at {cu:.0f},{cv:.0f} px ({area} px) -> ({x:.3f}, {y:.3f}) at z={plane_z:.3f}"
+    if border:
+        reason += "; blob touches the image edge (partial view)"
+    return LocateResult(True, round(x, 4), round(y, 4), round(cu, 1), round(cv, 1), round(confidence, 3), reason)
 
 
 # ---------------------------------------------------------------- contract-shaped wrappers

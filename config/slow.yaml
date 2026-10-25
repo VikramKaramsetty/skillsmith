@@ -1,0 +1,4 @@
+# First runs on a newly calibrated arm (docs/RUNBOOK.md G3 step 6): 5 cm/s, operator's hand near the stop.
+safety:
+  default_tcp_speed: 0.05
+  max_tcp_speed: 0.05

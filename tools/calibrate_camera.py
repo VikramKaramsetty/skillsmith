@@ -5,6 +5,8 @@
     python tools/calibrate_camera.py --board shots/ --markers markers.json [--frame overhead.jpg]
     # 2. check (after any bump): re-detected marker centres vs measured, per marker, in cm
     python tools/calibrate_camera.py --check [--frame overhead.jpg]
+    # 3. the camera moved a little (check fails): re-solve its pose from the markers, keep the lens model
+    python tools/calibrate_camera.py --repose [--frame overhead.jpg]
 
 Without --frame the overhead frame is grabbed from robotd (cfg.robot.robotd_url, camera `front`).
 Writes/reads config/camera.json (cameras.calibration in config/robot.yaml).
@@ -17,7 +19,7 @@ from pathlib import Path
 
 from skillsmith.config import load_config
 from skillsmith.perception.frames import make_frame_source
-from skillsmith.perception.geometry import CalibrationError, CameraModel, calibrate
+from skillsmith.perception.geometry import CalibrationError, CameraModel, calibrate, calibrate_pose
 
 CHECK_LIMIT_M = 0.01
 
@@ -56,12 +58,24 @@ def main(argv=None) -> int:
     p.add_argument("--marker-size", type=float, default=0.04, help="black square edge (m)")
     p.add_argument("--out", help="camera.json path (default: config cameras.calibration)")
     p.add_argument("--check", action="store_true", help="check the saved calibration instead")
+    p.add_argument("--repose", action="store_true", help="re-solve the pose from the markers, keep K and dist")
     args = p.parse_args(argv)
     cfg = load_config()
     out = Path(args.out) if args.out else cfg.path(cfg.cameras.calibration)
 
     if args.check:
         return run_check(CameraModel.load(out), overhead(args, cfg))
+    if args.repose:
+        old = CameraModel.load(out)
+        frame = overhead(args, cfg)
+        try:
+            model = calibrate_pose(frame, old.K, old.dist, {int(k): tuple(v) for k, v in old.markers.items()},
+                                   old.marker_size)
+        except CalibrationError as e:
+            print(f"repose failed: {e}", file=sys.stderr)
+            return 1
+        print(f"saved {model.save(out)} (marker reprojection {model.reprojection_px:.2f} px)")
+        return run_check(model, frame)
     if not (args.board and args.markers):
         p.error("--board and --markers are required to calibrate (or use --check)")
     shots = sorted(f for f in Path(args.board).iterdir() if f.suffix.lower() in (".jpg", ".jpeg", ".png"))
