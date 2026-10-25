@@ -36,9 +36,9 @@ class Kinematics(Protocol):
     def fk(self, joints: Sequence[float]) -> Vec3:
         """Gripper tip position for a joint vector."""
 
-    def ik(self, target: Vec3, seed: Sequence[float]) -> Optional[List[float]]:
-        """Joints that put the tip at target pointing down, or None if unreachable.
-        The gripper value is copied from seed."""
+    def ik(self, target: Vec3, seed: Sequence[float], approach: str = "down") -> Optional[List[float]]:
+        """Joints that put the tip at target pointing down (approach="side": gripper level), or None
+        if unreachable. The gripper value is copied from seed. Callers pass `approach` only for "side"."""
 
 
 class Perception(Protocol):

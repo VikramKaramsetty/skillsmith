@@ -47,10 +47,19 @@ class SceneObject:
     width: float
     confidence: float = 1.0
     visible: bool = True  # False = hidden (e.g. behind the arm); position is the last one seen
+    top_width: Optional[float] = None  # width at the top for a tapered object; None = same as width
 
     @property
     def top(self) -> float:
         return self.z + self.height
+
+    def width_at(self, z: float) -> float:
+        """Width (diameter) at height z above the table: linear from `width` at the base to
+        `top_width` at the top, clamped to the object's span."""
+        if self.top_width is None or self.height <= 0:
+            return self.width
+        f = min(max((z - self.z) / self.height, 0.0), 1.0)
+        return self.width + (self.top_width - self.width) * f
 
     def xy_dist(self, other: SceneObject) -> float:
         return math.hypot(self.x - other.x, self.y - other.y)

@@ -72,7 +72,7 @@ from skillsmith.events import EventBus, NullBus
 from skillsmith.types import Scene, SceneObject, Vec3
 
 # kind -> (height, width) in metres. Measure yours and override with `world.objects` in robot.yaml:
-#   objects: {cup: {height: 0.08, width: 0.065}}
+#   objects: {cup: {height: 0.08, width: 0.065}}   (+ top_width: tapered, width at the top)
 KNOWN_OBJECTS: Dict[str, Tuple[float, float]] = {
     "cup": (0.08, 0.065),
     "block": (0.03, 0.03),
@@ -91,6 +91,7 @@ LOST_S = 5.0  # s of updates a baseline object may stay unseen before it counts 
 ARM_RADIUS = 0.08  # m; uncertain detections this close to the tip are the arm's occlusion, not doubt
 
 
+WRIST_SETTLE_S = 0.4  # s; wrist_frame waits this long so the frame shows the arm at rest
 _AUTO = object()  # WorldModel(wrist_frames=...) default: robotd's wrist camera when the front one is robotd's
 
 
@@ -123,9 +124,12 @@ class WorldModel:
         self.drift_every = max(1, int(_opt(world, "drift_every", round(self.rate_hz))))
         self.lost_frames = max(1, round(float(_opt(world, "lost_s", LOST_S)) * self.rate_hz))
         self.sizes = dict(KNOWN_OBJECTS)
+        self.top_widths: Dict[str, float] = {}
         objects = _opt(world, "objects", None)
         for kind, size in (objects.raw() if objects is not None else {}).items():
             self.sizes[kind] = (float(size["height"]), float(size["width"]))
+            if size.get("top_width") is not None:
+                self.top_widths[kind] = float(size["top_width"])
 
         self.frames = frame_source if frame_source is not None else _default_frames(cfg)
         self.detector = detector if detector is not None else _default_detector(cfg)
@@ -229,6 +233,27 @@ class WorldModel:
                       f"(confidence {result.confidence:.2f})", where="perception.wrist", obj=obj.id,
                       dx=dx, dy=dy, confidence=result.confidence, reason=result.reason)
         return dx, dy
+
+    def wrist_frame(self) -> Any:
+        """A fresh wrist-camera frame (BGR) for robot.approach_side, or None (error event) when there is
+        none. Waits `wrist.settle_s` first so the frame is from after the arm stopped (camera latency)."""
+        try:
+            from skillsmith.perception import wrist
+
+            stopped = time.time()
+            time.sleep(max(0.0, float((self.cfg.raw().get("wrist") or {}).get("settle_s", WRIST_SETTLE_S))))
+            if not wrist.WristConfig.from_cfg(self.cfg).locate:
+                raise WristUnusable("wrist.locate is off")
+            if self.wrist_frames is None:
+                raise WristUnusable("no wrist camera configured")
+            frame = self.wrist_frames.read()
+            t = getattr(frame, "t", None)
+            if t is not None and t < stopped:  # a stalled camera hands back an image from mid-move
+                raise WristUnusable(f"wrist frame is {stopped - t:.1f} s older than the arm's stop")
+            return self._wrist_decode(frame)
+        except Exception as e:
+            self._wrist_error(f"wrist_frame: {_why(e)}; using the overhead position only")
+            return None
 
     def holding_check(self) -> Tuple[bool, str]:
         """Wrist-camera grasp check; falls back to the gripper signal when the camera cannot judge."""
@@ -419,7 +444,8 @@ class WorldModel:
                 base = below.top
                 x, y = self.camera.pixel_to_table(u, v, base + height)
             out.append(SceneObject(id="", label=det.label, color=det.color, kind=det.kind, x=x, y=y,
-                                   z=base, height=height, width=width, confidence=confidence))
+                                   z=base, height=height, width=width, confidence=confidence,
+                                   top_width=self.top_widths.get(det.kind)))
         return out
 
     def _support(self, kind: str, color: str, x: float, y: float, width: float) -> Optional[SceneObject]:

@@ -41,7 +41,7 @@ world:                              # live world model (WS3.5)
   bump_threshold: 0.01              # m; a not-held object moving more than this = WorldChanged
   min_confidence: 0.5               # below this a detection is 'uncertain' (confidence gate)
   objects:                          # measured: the demo's paper cup, used upside down (mouth on the table)
-    cup: {height: 0.0953, width: 0.0762}   # 3.75 in tall; 3 in mouth (the widest part); 2 in base on top
+    cup: {height: 0.0953, width: 0.0762, top_width: 0.0508}   # 3.75 in tall; 3 in mouth on the table; 2 in base on top
 
 detect:                             # object detector for the world model (perception/color.py make_detector)
   backend: hsv                      # the demo cup's top is painted bright pink: plain colour blobs

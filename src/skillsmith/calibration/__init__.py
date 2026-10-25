@@ -109,9 +109,20 @@ class OffsetKinematics:
         x, y, z = self.inner.fk(joints)
         return (x + self.dx, y + self.dy, z)
 
-    def ik(self, target: Vec3, seed: Sequence[float]) -> Optional[List[float]]:
+    def ik(self, target: Vec3, seed: Sequence[float], approach: str = "down") -> Optional[List[float]]:
         shifted = (target[0] - self.dx, target[1] - self.dy, target[2])
-        return self.inner.ik(shifted, seed)
+        if approach == "down":  # keep plain two-argument Kinematics working
+            return self.inner.ik(shifted, seed)
+        return self.inner.ik(shifted, seed, approach=approach)
+
+    def tool_axis(self, joints: Sequence[float], axis: str = "z") -> Vec3:
+        return self.inner.tool_axis(joints, axis)  # a pure xy shift leaves directions alone
+
+    def wrist_camera_pose(self, joints: Sequence[float]):
+        pose = self.inner.wrist_camera_pose(joints).copy()
+        pose[0, 3] += self.dx
+        pose[1, 3] += self.dy
+        return pose
 
     def close(self) -> None:
         close = getattr(self.inner, "close", None)

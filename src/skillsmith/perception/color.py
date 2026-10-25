@@ -293,7 +293,7 @@ def make_detector(cfg: Any, labels: Optional[Sequence[str]] = None, bus: Any = N
 
         try:
             return DiffDetector(cfg, labels)
-        except OSError as e:  # no background image (CI, a fresh checkout): say so, keep running on HSV
+        except (OSError, ImportError, RuntimeError) as e:  # no background, cv2 or camera calibration: HSV
             _emit(bus, f"diff detector unavailable, using HSV only: {e}")
             return HsvDetector(cfg, labels)
     hsv = HsvDetector(cfg, labels)
