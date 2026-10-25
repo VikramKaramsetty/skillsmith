@@ -15,6 +15,15 @@ from skillsmith.skills.runtime import run_skill
 from skillsmith.types import SceneObject
 
 cfg = load_config()
+# These tests exercise the wrist logic, not the product setting: robot.yaml keeps fine alignment off
+# (min_align_confidence 1.1) until the wrist camera is measured, so use the code's default threshold.
+cfg._data = {**cfg._data, "wrist": {**(cfg._data.get("wrist") or {}), "min_align_confidence": 0.3}}
+_fake_world = make_world
+
+
+def make_world(*args, **kw):
+    kw.setdefault("cfg", cfg)
+    return _fake_world(*args, **kw)
 BLOCK = SceneObject("blue_block_0", "blue block", "blue", "block", 0.2, 0.0, 0.0, 0.03, 0.03)
 
 
