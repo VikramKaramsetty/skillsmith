@@ -130,7 +130,7 @@ def test_release_reanchors_without_bump_then_bump_detectable():
         world.step()
     assert world.unexpected_motion() is None
     assert obj(world, "red_cup_0").x == pytest.approx(0.185)
-    det.dets = [cup("red", 0.185, 0.006), cup("blue", 0.19, -0.15)]  # blue (beyond OCCLUDE_NEAR of the tip) is knocked toward -x
+    det.dets = [cup("red", 0.185, 0.006), cup("blue", 0.19, -0.15)]  # blue (past OCCLUDE_NEAR) knocked toward -x
     world.step()
     world.step()
     assert world.unexpected_motion() == "blue cup moved 3.0 cm toward -x while not held"
