@@ -40,6 +40,11 @@ world:                              # live world model (WS3.5)
   bump_threshold: 0.01              # m; a not-held object moving more than this = WorldChanged
   min_confidence: 0.5               # below this a detection is 'uncertain' (confidence gate)
 
+detect:                             # object detector for the world model (perception/color.py make_detector)
+  backend: diff                     # model-free: empty-table difference + rim fit with measured height
+  labels: ["white cup"]             # the demo's white printed cup (HSV can't see it; YOLO not installed)
+  diff: {background: runs/background.png}   # tools/capture_background.py with the mat EMPTY
+
 workspace:                          # tip must stay inside this box (robot frame, metres). MEASURE
   x: [0.08, 0.34]
   y: [-0.20, 0.20]

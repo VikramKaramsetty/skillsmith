@@ -286,8 +286,12 @@ def make_detector(cfg: Any, labels: Optional[Sequence[str]] = None, bus: Any = N
     load (an `error` event says why); `yolo` = YOLO with the backup, raising if it can't load;
     `hsv` = HSV only. YOLO needs labels to prompt with; without them auto means HSV."""
     backend = _section(cfg).get("backend", "auto")
-    if backend not in ("auto", "yolo", "hsv"):
-        raise ValueError(f"detect.backend must be auto, yolo or hsv, not '{backend}'")
+    if backend not in ("auto", "yolo", "hsv", "diff"):
+        raise ValueError(f"detect.backend must be auto, yolo, hsv or diff, not '{backend}'")
+    if backend == "diff":  # model-free: empty-table difference + top-rim circle fit (perception/diffdetect.py)
+        from skillsmith.perception.diffdetect import DiffDetector
+
+        return DiffDetector(cfg, labels)
     hsv = HsvDetector(cfg, labels)
     if backend == "hsv" or (backend == "auto" and not labels):
         return hsv
