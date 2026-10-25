@@ -76,3 +76,23 @@ def test_approach_side_moves_the_grasp_to_the_wrist_fix_and_ignores_wild_ones():
     assert fix == pytest.approx(0.01, abs=0.001) and at[0] == pytest.approx(0.27 + SIDE_GRASP_DEPTH, abs=0.002)
     fix, at = run(0.05)  # 5 cm "fix" = a wrong camera model: ignored, overhead position used
     assert fix == 0.0 and at[0] == pytest.approx(0.26 + SIDE_GRASP_DEPTH, abs=0.002)
+
+
+def test_approach_side_stops_before_closing_when_the_cup_is_pushed():
+    from skillsmith.config import load_config
+    from skillsmith.events import NullBus
+    from skillsmith.hal.base import make_env
+    from skillsmith.skills.runtime import run_skill
+    from skillsmith.types import Scene, SceneObject
+
+    cfg = load_config()
+    cup = SceneObject("pink_cup_0", "pink cup", "pink", "cup", 0.29, 0.0, 0.0, 0.0953, 0.0762, top_width=0.0508)
+    env = make_env("fake", cfg, Scene((cup,), 0.0, "test"))
+    env.perception.displacement = lambda q, since: 0.04  # the camera saw it 4 cm off: pushed
+    src = ('SKILL = {"name": "t", "params": {}}\n\n'
+           'def run(robot, scene, skills):\n'
+           '    robot.approach_side("pink cup", speed=8)\n'
+           '    robot.grasp()\n')
+    res = run_skill(src, env, {}, cfg, NullBus(), skill="t")
+    assert not res.ok and "pushed 4.0 cm by the gripper" in res.error and "speed=4" in res.error
+    assert [c.name for c in res.trace] == ["approach_side"]  # never closed on it

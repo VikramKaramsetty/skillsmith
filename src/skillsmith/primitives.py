@@ -36,6 +36,8 @@ NEAR_DPS = 12.0             # deg/s; joint speed cap for approach_side's moves n
 #                             slide, close-up): a 1.7 cm tip step swung shoulder+wrist 19 deg at 57 deg/s and
 #                             shoved the cup on the real arm
 MAX_STEP_JUMP_DEG = 25.0    # a non-turning waypoint moving any joint more than this = IK branch flip, refused
+PUSH_TOL = 0.015            # m; the camera seeing the object this far from where the approach planned = pushed
+PUSH_SETTLE_S = 0.4         # s; wait this long after stopping so the overhead frame shows the result
 SWING_DPS = 25.0            # deg/s; joint speed cap while the gripper turns (no straight-line tip path then)
 
 
@@ -118,7 +120,8 @@ class Robot:
             return round(math.hypot(dx, dy), 4)
         return self._record("align_over", {"obj": obj, "hover": hover}, do)
 
-    def approach_side(self, obj: str, grip_z: Optional[float] = None, hover: float = SIDE_HOVER) -> float:
+    def approach_side(self, obj: str, grip_z: Optional[float] = None, hover: float = SIDE_HOVER,
+                      speed: Optional[float] = None) -> float:
         """Side grasp approach, like a hand reaching for a cup: open the jaws, turn the gripper LEVEL
         (parallel to the table, jaws opening sideways) high up behind the object (on the base side),
         lower it to `grip_z` (default 1.5 cm under the top) a few cm short of the object, fix the
@@ -153,9 +156,28 @@ class Robot:
                     pts, qs = new
                 else:  # no smooth path to the corrected spot: keep the checked plan
                     self._bus.emit("note", text="wrist fix ignored: no smooth path to it", where="robot.approach_side")
-            self._play(pts[1:], qs[1:], i, NEAR_DPS)        # down behind it, slide in, fixed jaw up to it
+            near_dps = NEAR_DPS if speed is None else max(2.0, min(NEAR_DPS, float(speed)))
+            n_down = next(k for k in range(1, len(pts)) if abs(pts[k][2] - gz) < 1e-6)
+            self._play(pts[1:n_down + 1], qs[1:n_down + 1], i, near_dps)  # down behind it, jaws short of it
+            self._check_not_pushed(target, near_dps, "lowering behind it")
+            self._play(pts[n_down + 1:], qs[n_down + 1:], i, near_dps)     # slide in, fixed jaw up to it
+            self._check_not_pushed(target, near_dps, "sliding the jaws around it")
             return round(fix, 4)
-        return self._record("approach_side", {"obj": obj, "grip_z": grip_z, "hover": hover}, do)
+        return self._record("approach_side", {"obj": obj, "grip_z": grip_z, "hover": hover, "speed": speed}, do)
+
+    def _check_not_pushed(self, target: SceneObject, dps: float, phase: str) -> None:
+        """Stop BEFORE closing when the camera sees the object pushed: the gripper touched it."""
+        moved = getattr(self._env.perception, "displacement", None)
+        if not callable(moved):
+            return
+        if self._env.name == "real":
+            time.sleep(PUSH_SETTLE_S)  # a few camera frames after the arm stopped
+        d = moved(target.id, (target.x, target.y))
+        if d is not None and d > PUSH_TOL:
+            self._env.arm.stop()
+            raise WorldChanged(f"{target.label} was pushed {d * 100:.1f} cm by the gripper while {phase} "
+                               f"(joints at up to {dps:.0f} deg/s): the arm touched it before the grasp. "
+                               f"Approach slower, e.g. approach_side(obj, speed={max(2, int(dps / 2))})")
 
     # ---- internals ------------------------------------------------------------------
     def _ik(self, p: Vec3, seed, side: bool, hold: bool = False):

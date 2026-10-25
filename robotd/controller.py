@@ -32,6 +32,9 @@ from typing import Any, Dict, Iterator, List, Optional, Protocol, Sequence, Tupl
 JOINT_NAMES = ("shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper")
 ARM = 5  # indices 0..4 are the arm joints; index 5 is the gripper
 POLL_S = 0.01
+MOTION_DT = 0.03  # s between goal updates: the servo tracks a smooth ramp instead of snapping max_step_deg at
+#                   full servo speed and waiting (that made every "slow" move a series of lurches)
+GRIPPER_PCT_S = 60.0  # gripper goal ramp speed (0..100 per s): closing at once slammed the moving jaw into cups
 STILL_PCT = 0.5  # gripper moved less than this between polls = not moving
 # MEASURE (WS1.7): replace with the thresholds from the gripper signal test on our real cups.
 HOLD_MIN_GAP = 5.0  # jaws stopped at least this far (0..100) short of the commanded position
@@ -147,7 +150,7 @@ class ArmController:
         with self._motion("move_joints"):
             start = self._read()[:ARM]
             biggest = max(abs(g - s) for g, s in zip(goal, start))
-            steps = max(1, math.ceil(biggest / self.max_step_deg))
+            steps = max(1, math.ceil(biggest / self.max_step_deg), math.ceil(biggest / (speed * MOTION_DT)))
             for k in range(1, steps + 1):
                 self._write(arm=[s + (g - s) * k / steps for s, g in zip(start, goal)])
                 self._pause(biggest / steps / speed, "move_joints")
@@ -159,7 +162,11 @@ class ArmController:
         if not 0 <= pct <= 100:
             raise RobotdError(400, f"pct must be 0..100 (0 = closed), got {pct}")
         with self._motion("gripper"):
-            self._write(gripper=pct)
+            start = float(self._goal[ARM])
+            steps = max(1, math.ceil(abs(pct - start) / (GRIPPER_PCT_S * MOTION_DT)))
+            for k in range(1, steps + 1):  # ramp the goal: the jaw closes at GRIPPER_PCT_S, not servo top speed
+                self._write(gripper=start + (pct - start) * k / steps)
+                self._pause(MOTION_DT, "gripper")
             self._wait_gripper()
         return self.holding()
 

@@ -111,6 +111,7 @@ class _Track:
     over: int = 0  # consecutive frames beyond the bump threshold
     seen: int = 1  # frames with a detection
     missed: int = 0  # consecutive frames without one
+    raw: Optional[Tuple[float, float]] = None  # latest detected xy, even while the arm 'occludes' it
 
 
 class WorldModel:
@@ -179,6 +180,17 @@ class WorldModel:
             with self._lock:
                 scene = self._scene
         return scene if scene is not None else Scene((), time.time(), "camera:none")
+
+    def displacement(self, query: str, since: Tuple[float, float]) -> Optional[float]:
+        """How far (m) the camera last saw `query` from `since`, using its RAW detection: near the arm a
+        moved object is otherwise kept where it was (occlusion rule), which hid the gripper pushing a cup
+        away. None when it has no fresh detection."""
+        with self._lock:
+            hits = [t for t in self._tracks.values() if t.raw is not None and t.missed == 0
+                    and (t.obj.id == query or t.obj.label == query)]
+        if not hits:
+            return None
+        return min(math.hypot(t.raw[0] - since[0], t.raw[1] - since[1]) for t in hits)
 
     def unexpected_motion(self) -> Optional[str]:
         with self._lock:
@@ -525,6 +537,7 @@ class WorldModel:
 
     def _update_track(self, tid: str, obj: SceneObject) -> None:
         track = self._tracks[tid]
+        track.raw = (obj.x, obj.y)
         track.obj = replace(obj, id=tid, visible=True)
         track.seen += 1
         if track.anchor is None:

@@ -289,3 +289,14 @@ def test_a_lifted_held_cup_is_neither_a_new_cup_nor_a_bump_and_survives_a_holdin
         world.step()
     assert world.unexpected_motion() is None
     assert len(world.observe().objects) == 1
+
+
+def test_displacement_sees_a_cup_pushed_while_the_arm_occludes_it():
+    det = FakeDetector([cup("red", 0.29, 0.0)])
+    arm = FakeArm(tip=(0.29, 0.0, 0.07))  # tip right at it: the occlusion rule keeps the track in place
+    world = make_world(detector=det, arm=arm)
+    world.step()
+    det.dets = [cup("red", 0.29, -0.06)]
+    for _ in range(3):
+        world.step()
+    assert world.displacement("red_cup_0", (0.29, 0.0)) == pytest.approx(0.06, abs=0.002)
