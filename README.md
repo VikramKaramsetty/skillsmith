@@ -1,5 +1,7 @@
 # Skillsmith — a robot arm that writes its own skills
 
+🏆 **Winner, Best Use of Factory Droid SDK at Cal Hacks 13.0**
+
 Code-as-policies on an SO-ARM101. The arm knows five safe primitives. Factory Droid
 writes and repairs short Python skills that combine them. Every repair is checked
 statically, simulated in MuJoCo, safety-checked, and approved by a human before the
@@ -11,6 +13,13 @@ judge task ─▶ try skill ─▶ camera verifies ─▶ FAIL ─▶ Droid edit
                   │        approve ◀─ safety ◀─ MuJoCo ◀─ AST check
                   └──────── real arm ◀──────────┘
 ```
+
+## Cal Hacks 13.0 winners 🏆
+
+Skillsmith won the **Factory Droid SDK track** at Cal Hacks 13.0. Built by Rohan Pejaver,
+Vikram Karamsetty, Nishanth Sathisha and Vedansh Wadhwani from Carnegie Mellon University.
+
+![Team Skillsmith at Cal Hacks 13.0](docs/images/calhacks-win.jpg)
 
 ## Start here
 
