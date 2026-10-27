@@ -95,12 +95,6 @@ ENUMS: dict[tuple[str, str], set] = {
 
 # Mismatches found by this suite, keyed by the violation string `_violations` produces.
 KNOWN_GAPS: dict[str, str] = {
-    "attempt.finished: missing data keys ['perception', 'safety', 'scene_after', 'scene_before']":
-        "ws4: runtime.run_skill emits attempt.finished without scene_before/scene_after/safety/perception "
-        "(added to §7 from PR #150's contract change request)",
-    "src/skillsmith/skills/runtime.py attempt.finished: missing data keys "
-    "['perception', 'safety', 'scene_after', 'scene_before']":
-        "ws4: the same gap, seen at the emit site in runtime.run_skill",
     "src/skillsmith/repair/droid_client.py droid.started: missing data keys "
     "['autonomy', 'disabled_tools', 'via', 'workspace']":
         "ws5: the CLI fallback (DroidAuthor) emits droid.started with `cmd` instead of §7's "
